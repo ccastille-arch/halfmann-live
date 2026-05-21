@@ -17,7 +17,7 @@ app.use(express.json())
 const DATA_DIR = existsSync('/data') ? '/data' : join(__dirname, '../data')
 const SETTINGS_PATH = join(DATA_DIR, 'settings.json')
 
-const DEFAULT_SETTINGS = { wellTargetPct: 5, recycleOpenPct: 5 }
+const DEFAULT_SETTINGS = { wellTargetPct: 5, recycleOpenPct: 5, recycleAlertThreshold: 0 }
 
 function loadSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_PATH, 'utf8')) } }

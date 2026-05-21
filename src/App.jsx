@@ -20,29 +20,42 @@ export default function App() {
     setPage(p)
   }
 
-  const btnBase = {
-    padding: '0 18px', height: 38, fontSize: 10, fontWeight: 700,
-    letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
-    background: 'none', border: 'none', transition: 'color 0.15s',
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#080810' }}>
       <nav style={{
         display: 'flex', alignItems: 'center',
-        background: '#05050f', borderBottom: '1px solid #1a1a2a',
-        padding: '0 12px', height: 38, flexShrink: 0,
+        background: '#05050f', borderBottom: '2px solid #1a1a2a',
+        padding: '0 16px', height: 48, flexShrink: 0, gap: 4,
       }}>
-        <button onClick={() => goTo('live')} style={{
-          ...btnBase,
-          color: page === 'live' ? '#49D0E2' : '#444',
-          borderBottom: page === 'live' ? '2px solid #49D0E2' : '2px solid transparent',
-        }}>Live View</button>
-        <button onClick={() => goTo('telemetry')} style={{
-          ...btnBase,
-          color: page === 'telemetry' ? '#49D0E2' : '#444',
-          borderBottom: page === 'telemetry' ? '2px solid #49D0E2' : '2px solid transparent',
-        }}>Telemetry Dashboard</button>
+        <button
+          onClick={() => goTo('live')}
+          style={{
+            padding: '0 20px', height: 48, fontSize: 11, fontWeight: 800,
+            letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
+            background: 'none', border: 'none', transition: 'color 0.15s',
+            color: page === 'live' ? '#49D0E2' : '#8888a8',
+            borderBottom: page === 'live' ? '2px solid #49D0E2' : '2px solid transparent',
+            marginBottom: -2,
+          }}
+        >
+          Live View
+        </button>
+        <button
+          onClick={() => goTo('telemetry')}
+          style={{
+            padding: '0 20px', height: 48, fontSize: 11, fontWeight: 800,
+            letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
+            background: 'none', border: 'none', transition: 'color 0.15s',
+            color: page === 'telemetry' ? '#49D0E2' : '#8888a8',
+            borderBottom: page === 'telemetry' ? '2px solid #49D0E2' : '2px solid transparent',
+            marginBottom: -2,
+          }}
+        >
+          All Parameters
+        </button>
+        <div style={{ marginLeft: 'auto', fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+          Halfmann 1214
+        </div>
       </nav>
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         {page === 'live' ? <HalfmannLiveView /> : <HalfmannTelemetryView />}
