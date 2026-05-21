@@ -315,10 +315,13 @@ export default function HalfmannLiveView() {
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const actual = parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
-    // Use true setpoint registers only — NOT the injection flow rate register (same as actual)
+    // True setpoint registers first; fall back to injection flow rate (same register as actual
+    // until Jim configures separate setpoint registers in MLink)
     const desiredDatapoint = resolvePreferredDatapoint(panel, [
       `Wellhead #${wellNumber} Setpoint From Customer PLC`,
+      `Well ${wellNumber} Setpoint From Customer PLC`,
       `Well ${wellNumber} Setpoint`,
+      `Wellhead #${wellNumber} Injection Flow Rate From Customer PLC`,
     ])
     const desired = parseLiveNumeric(desiredDatapoint?.value) ?? perWellTarget
     const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
@@ -380,10 +383,8 @@ export default function HalfmannLiveView() {
     ? Math.max(0, 100 - (Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite) * 100) : null
 
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
-  const wellsWithDesired = activeWells.filter(w => w.desired != null)
-  const wellsAtTargetCount = wellsWithDesired.filter(w => w.atTarget).length
-  // Only show YES/NO if we actually have desired-rate data
-  const allOnTarget = wellsWithDesired.length === 0 ? null : wellsAtTargetCount === wellsWithDesired.length
+  const wellsAtTargetCount = activeWells.filter(w => w.atTarget).length
+  const allOnTarget = activeWells.length > 0 ? wellsAtTargetCount === activeWells.length : null
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
@@ -437,9 +438,9 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={allOnTarget}
-                  detail={wellsWithDesired.length > 0
-                    ? `${wellsAtTargetCount} of ${wellsWithDesired.length} wells within 5% of target`
-                    : 'Waiting for setpoint data from Jim…'}
+                  detail={activeWells.length > 0
+                    ? `${wellsAtTargetCount} of ${activeWells.length} wells within 5% of target`
+                    : 'Waiting for flow data…'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
@@ -636,8 +637,8 @@ export default function HalfmannLiveView() {
                           </div>
                         )}
 
-                        {/* Status */}
-                        {hasData && (
+                        {/* Status — only show when we have a desired target to compare against */}
+                        {hasData && well.desired != null && (
                           <div className="text-[14px] font-black mb-3"
                             style={{ color: onTarget ? '#22c55e' : '#f59e0b', fontFamily: "'Arial Black'" }}>
                             {onTarget ? 'ON TARGET' : 'LOW'}

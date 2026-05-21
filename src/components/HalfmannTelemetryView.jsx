@@ -30,6 +30,7 @@ const WELL_SETPOINT_KEYS = [1,2,3,4,5].map(n => [
   `Wellhead #${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint`,
+  `Wellhead #${n} Injection Flow Rate From Customer PLC`,
 ])
 const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Well ${n} Yesterdays Flow`,
