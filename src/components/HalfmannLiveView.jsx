@@ -419,6 +419,7 @@ export default function HalfmannLiveView() {
 
   const visibleRegisters = getVisibleLiveRegisters(panel, registerCatalog, {})
   const hourMeterRegister = visibleRegisters.find(meta => meta.label === 'Hour Meter')
+  const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
 
   const totalActualFlow = liveWellPerformance.reduce((sum, w) => sum + (w.actual ?? 0), 0)
   // Derive total desired from per-well data (works even when panel register is missing)
@@ -469,6 +470,13 @@ export default function HalfmannLiveView() {
               {formatHourMeterValue(hourMeterRegister?.datapoint?.value ?? panel['\t Hour Meter']?.value ?? panel['Hour Meter']?.value)}
             </span>
           </span>
+          {recommendedCompressors != null && (
+            <span className="rounded-full border border-[#2f2f40] bg-[#111120] px-2 py-0.5 text-[8px] uppercase tracking-[0.18em] text-[#777]">
+              Rec. Comp <span className="ml-1 text-[10px] font-bold normal-case tracking-normal" style={{ color: '#49D0E2' }}>
+                {Math.round(recommendedCompressors)}
+              </span>
+            </span>
+          )}
         </div>
       </header>
 

@@ -537,6 +537,15 @@ export default function HalfmannTelemetryView() {
               <Gauge label="Altronic Discharge SP"
                 value={dischargeSP != null ? fmt(dischargeSP, 0) : null} unit="PSI"
                 sub={dischargeSP == null ? 'Pending MLink config' : undefined} />
+              <Gauge label="Recommended Compressors"
+                value={getN(panel, ['Recommended Number Of Compressors']) != null ? fmt(getN(panel, ['Recommended Number Of Compressors']), 0) : null}
+                status={(() => {
+                  const rec = getN(panel, ['Recommended Number Of Compressors'])
+                  const running = unitMaps.filter((dm, i) => { const r = getN(dm, ['RPM','Driver Speed']); return r != null && r > 100 }).length
+                  if (rec == null) return 'unknown'
+                  return running >= rec ? 'good' : running === rec - 1 ? 'warn' : 'bad'
+                })()}
+                sub={getN(panel, ['Recommended Number Of Compressors']) == null ? 'Pending MLink config' : 'Panel system recommendation'} />
             </GaugeGrid>
           </Section>
 
