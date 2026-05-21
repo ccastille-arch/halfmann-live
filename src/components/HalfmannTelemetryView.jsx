@@ -570,42 +570,54 @@ export default function HalfmannTelemetryView() {
 
           {/* GROUP 4 — WELL DATA */}
           <Section id="wells" title="Group 4 — Well Data">
-            {wellData.map(w => (
-              <SubSection key={w.n} title={`Well ${w.n}`} accent="#49D0E2">
-                <GaugeGrid>
-                  <Gauge label={`Well ${w.n} Setpoint`}
-                    value={w.desired != null ? fmt(w.desired) : null} unit="MMSCFD"
-                    sub={w.desired == null ? 'Pending MLink config' : undefined} />
-                  <Gauge label={`Well ${w.n} Injection Flow`}
-                    value={w.actual != null ? fmt(w.actual) : null} unit="MMSCFD"
-                    status={(() => {
-                      const t = w.desired ?? perWellTarget
-                      if (w.actual == null || !t) return 'unknown'
-                      const d = Math.abs(w.actual - t) / t * 100
-                      return d <= wellTargetPct ? 'good' : d <= wellTargetPct * 2 ? 'warn' : 'bad'
-                    })()} />
-                  <Gauge label={`Well ${w.n} Choke Position`}
-                    value={w.choke != null ? fmt(w.choke, 1) : null} unit="%"
-                    sub={w.choke == null ? 'Pending MLink config' : undefined} />
-                  <Gauge label={`Well ${w.n} Casing Pressure`}
-                    value={w.casing != null ? fmt(w.casing, 0) : null} unit="PSI"
-                    sub={w.casing == null ? 'Pending MLink config' : undefined} />
-                  <Gauge label={`Well ${w.n} Tubing Pressure`}
-                    value={w.tubing != null ? fmt(w.tubing, 0) : null} unit="PSI"
-                    sub={w.tubing == null ? 'Pending MLink config' : undefined} />
-                </GaugeGrid>
-              </SubSection>
-            ))}
+            {wellData.map(w => {
+              const wellOffline = w.actual == null && w.desired == null && w.choke == null && w.casing == null && w.tubing == null && w.yesterday == null
+              return (
+                <SubSection key={w.n} title={`Well ${w.n}`} accent="#49D0E2">
+                  {wellOffline ? (
+                    <div style={{ padding: '16px 20px', borderRadius: 10, border: '1px solid #2a1a1a', background: '#120808', color: '#ef4444', fontSize: 12, fontWeight: 700 }}>
+                      ⚠ Well {w.n} not published by MLink panel — register missing from Jim's current config. Will auto-populate when added.
+                    </div>
+                  ) : (
+                    <GaugeGrid>
+                      <Gauge label={`Well ${w.n} Setpoint`}
+                        value={w.desired != null ? fmt(w.desired) : null} unit="MMSCFD"
+                        sub={w.desired == null ? 'Pending MLink config' : undefined} />
+                      <Gauge label={`Well ${w.n} Injection Flow`}
+                        value={w.actual != null ? fmt(w.actual) : null} unit="MMSCFD"
+                        status={(() => {
+                          const t = w.desired ?? perWellTarget
+                          if (w.actual == null || !t) return 'unknown'
+                          const d = Math.abs(w.actual - t) / t * 100
+                          return d <= wellTargetPct ? 'good' : d <= wellTargetPct * 2 ? 'warn' : 'bad'
+                        })()} />
+                      <Gauge label={`Well ${w.n} Choke Position`}
+                        value={w.choke != null ? fmt(w.choke, 1) : null} unit="%"
+                        sub={w.choke == null ? 'Pending MLink config' : undefined} />
+                      <Gauge label={`Well ${w.n} Casing Pressure`}
+                        value={w.casing != null ? fmt(w.casing, 0) : null} unit="PSI"
+                        sub={w.casing == null ? 'Pending MLink config' : undefined} />
+                      <Gauge label={`Well ${w.n} Tubing Pressure`}
+                        value={w.tubing != null ? fmt(w.tubing, 0) : null} unit="PSI"
+                        sub={w.tubing == null ? 'Pending MLink config' : undefined} />
+                    </GaugeGrid>
+                  )}
+                </SubSection>
+              )
+            })}
           </Section>
 
           {/* GROUP 5 — YESTERDAYS FLOW */}
           <Section id="yesterday" title="Group 5 — Yesterdays Flow Volumes">
             <GaugeGrid>
-              {wellData.map(w => (
-                <Gauge key={w.n} label={`Well ${w.n} Yesterdays Flow`}
-                  value={w.yesterday != null ? fmt(w.yesterday) : null} unit="MMSCFD"
-                  sub={w.yesterday == null ? 'Pending MLink config' : undefined} />
-              ))}
+              {wellData.map(w => {
+                const offline = w.actual == null && w.yesterday == null
+                return offline
+                  ? <div key={w.n} style={{ padding: '12px 14px', borderRadius: 8, border: '1px dashed #2a1a1a', background: '#0f0808', color: '#555', fontSize: 10, display: 'flex', alignItems: 'center', minHeight: 80 }}>Well {w.n} offline</div>
+                  : <Gauge key={w.n} label={`Well ${w.n} Yesterdays Flow`}
+                      value={w.yesterday != null ? fmt(w.yesterday) : null} unit="MMSCFD"
+                      sub={w.yesterday == null ? 'Pending MLink config' : undefined} />
+              })}
             </GaugeGrid>
           </Section>
 
