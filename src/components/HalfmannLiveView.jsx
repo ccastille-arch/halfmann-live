@@ -17,6 +17,7 @@ const HALFMANN_DEVICES = {
   unit2127: '2504-504108',
   unit2129: '2504-504102',
   unit2128: '2507-500076',
+  unit1396: null, // MLink device ID needed from Jim — add once confirmed
 }
 
 const HALFMANN_UNITS = [
@@ -24,7 +25,7 @@ const HALFMANN_UNITS = [
   { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127 },
   { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128 },
   { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129 },
-  // Unit 1396 (Standby) — add deviceId once known from MLink/Jim
+  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396 },
 ]
 
 const LIVE_WELL_FLOW_KEYS = [
@@ -247,7 +248,7 @@ function PressureCell({ label, value, unit = 'PSI', warn, danger }) {
 
 export default function HalfmannLiveView() {
   const [panelData, setPanelData] = useState(null)
-  const [unitDataRaw, setUnitDataRaw] = useState({ unit2130: null, unit2127: null, unit2129: null, unit2128: null })
+  const [unitDataRaw, setUnitDataRaw] = useState({ unit2130: null, unit2127: null, unit2129: null, unit2128: null, unit1396: null })
   const [registerCatalog, setRegisterCatalog] = useState([])
   const [loading, setLoading] = useState(true)
   const [liveError, setLiveError] = useState('')
@@ -272,7 +273,7 @@ export default function HalfmannLiveView() {
     setLiveError('')
     const [panelResult, ...unitResults] = await Promise.all([
       fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...HALFMANN_UNITS.map(u => fetchDeviceFull(u.deviceId)),
+      ...HALFMANN_UNITS.map(u => u.deviceId ? fetchDeviceFull(u.deviceId) : Promise.resolve({ data: null, error: '' })),
     ])
     setPanelData(panelResult.data)
     const newUnitData = {}
@@ -316,13 +317,13 @@ export default function HalfmannLiveView() {
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const actual = parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
-    // True setpoint registers first; fall back to injection flow rate (same register as actual
-    // until Jim configures separate setpoint registers in MLink)
+    // True setpoint registers (separate Modbus addresses — Jim needs to configure them in MLink).
+    // NOT falling back to "Injection Flow Rate" — that desc is an alias of the actual flow register.
+    // Using it as desired would make desired = actual (misleading). Show null until real setpoints arrive.
     const desiredDatapoint = resolvePreferredDatapoint(panel, [
       `Wellhead #${wellNumber} Setpoint From Customer PLC`,
       `Well ${wellNumber} Setpoint From Customer PLC`,
       `Well ${wellNumber} Setpoint`,
-      `Wellhead #${wellNumber} Injection Flow Rate From Customer PLC`,
     ])
     const desired = parseLiveNumeric(desiredDatapoint?.value) ?? perWellTarget
     const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
@@ -386,8 +387,10 @@ export default function HalfmannLiveView() {
   const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
 
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
-  const wellsAtTargetCount = activeWells.filter(w => w.atTarget).length
-  const allOnTarget = activeWells.length > 0 ? wellsAtTargetCount === activeWells.length : null
+  // Only compare wells where we have BOTH actual AND a real setpoint (avoids false YES/NO without targets)
+  const wellsWithTarget = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
+  const wellsAtTargetCount = wellsWithTarget.filter(w => w.atTarget).length
+  const allOnTarget = wellsWithTarget.length > 0 ? wellsAtTargetCount === wellsWithTarget.length : null
 
   // Site on target: derived from per-well comparison (no separate panel register needed)
   const siteOnTarget = wellsWithBoth.length > 0 && totalDesiredFromWells > 0
@@ -444,16 +447,20 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={allOnTarget}
-                  detail={activeWells.length > 0
-                    ? `${wellsAtTargetCount} of ${activeWells.length} wells within 5% of target`
-                    : 'Waiting for flow data…'}
+                  detail={wellsWithTarget.length > 0
+                    ? `${wellsAtTargetCount} of ${wellsWithTarget.length} wells within 5% of setpoint`
+                    : activeWells.length > 0
+                      ? 'Setpoints pending — not yet in Jim\'s MLink config'
+                      : 'Waiting for flow data…'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
                   good={siteOnTarget}
                   detail={wellsWithBoth.length > 0
                     ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
-                    : 'Waiting for desired-rate data…'}
+                    : activeWells.length > 0
+                      ? 'Setpoints pending — add Wellhead Setpoint registers to MLink'
+                      : 'Waiting for flow data…'}
                 />
                 <StatusCard
                   question="Is the recycle valve closed?"
@@ -619,14 +626,16 @@ export default function HalfmannLiveView() {
                           {hasData && <div className="text-[9px] mt-0.5" style={{ color: onTarget ? '#4ade80' : '#fbbf24' }}>MMSCFD actual</div>}
                         </div>
 
-                        {/* Desired flow */}
-                        {well.desired != null && (
+                        {/* Desired flow — only shown when a real setpoint register is in MLink */}
+                        {well.desired != null ? (
                           <div className="mb-2">
                             <div className="text-[16px] font-black leading-none text-[#4fc3f7]" style={{ fontFamily: "'Arial Black'" }}>
                               {well.desired.toFixed(3)}
                             </div>
-                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD desired</div>
+                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD setpoint</div>
                           </div>
+                        ) : (
+                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint pending MLink config</div>
                         )}
 
                         {/* Progress bar */}

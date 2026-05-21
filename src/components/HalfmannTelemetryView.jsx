@@ -10,14 +10,15 @@ const HALFMANN_DEVICES = {
   unit2127: '2504-504108',
   unit2129: '2504-504102',
   unit2128: '2507-500076',
+  unit1396: null, // MLink device ID needed from Jim — add once confirmed
 }
 
 const HALFMANN_UNITS = [
   { key: 'unit2130', label: 'Unit 2130', deviceId: HALFMANN_DEVICES.unit2130, type: 'asc' },
   { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127, type: 'asc' },
   { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129, type: 'c4' },
-  // Unit 1396 (Standby) — add deviceId once known from MLink/Jim
   { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128, type: 'asc' },
+  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, type: 'asc' },
 ]
 
 const WELL_FLOW_KEYS = [
@@ -27,11 +28,12 @@ const WELL_FLOW_KEYS = [
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
   ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
+// NOT falling back to "Injection Flow Rate" — that desc is an alias of the actual flow register.
+// Desired = actual when that fallback is used (misleading). Show null until Jim configures real setpoints in MLink.
 const WELL_SETPOINT_KEYS = [1,2,3,4,5].map(n => [
   `Wellhead #${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint`,
-  `Wellhead #${n} Injection Flow Rate From Customer PLC`,
 ])
 const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Well ${n} Yesterdays Flow`,
@@ -387,7 +389,7 @@ export default function HalfmannTelemetryView() {
     setLoading(true); setLiveError('')
     const [panelResult, ...unitResults] = await Promise.all([
       fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...HALFMANN_UNITS.map(u => fetchDeviceFull(u.deviceId)),
+      ...HALFMANN_UNITS.map(u => u.deviceId ? fetchDeviceFull(u.deviceId) : Promise.resolve({ data: null, error: '' })),
     ])
     setPanelData(panelResult.data)
     const raw = {}; HALFMANN_UNITS.forEach((u, i) => { raw[u.key] = unitResults[i].data }); setUnitDataRaw(raw)
