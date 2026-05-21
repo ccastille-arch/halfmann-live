@@ -38,7 +38,7 @@ const LIVE_WELL_FLOW_KEYS = [
   ['Well 2 Injection Gas Flow Rate', 'Well #2 Flow Rate'],
   ['Well 3 Injection Gas Flow Rate', 'Well #3 Flow Rate'],
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
-  ['Well 5 Injection Gas Flow Rate', 'Well #5 Flow Rate'],
+  ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
 
 const LIVE_WELL_YESTERDAY_KEYS = [
@@ -301,7 +301,7 @@ function LivePerformanceHero({ metrics, wells, timestamp, recycleVal }) {
         <StatusCard
           question="Is the recycle valve closed?"
           good={recycleOpen === null ? null : !recycleOpen}
-          detail={recycleVal == null ? 'No data from panel' : recycleOpen ? `OPEN — valve at ${recycleVal.toFixed(1)}% — gas is being recycled` : `Closed — valve at ${recycleVal.toFixed(1)}%`}
+          detail={recycleVal == null ? 'Not monitored by this panel' : recycleOpen ? `OPEN — valve at ${recycleVal.toFixed(1)}% — gas is being recycled` : `Closed — valve at ${recycleVal.toFixed(1)}%`}
         />
         <StatusCard
           question="Is site injection on target?"
@@ -481,6 +481,7 @@ export default function HalfmannLiveView() {
       'Flow Rate PV',
       'Flow PID PV',
       'Compressor Flow Rate PID PV',
+      'Flow Rate',
     ])
   )
 
