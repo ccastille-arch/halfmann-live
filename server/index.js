@@ -2,6 +2,8 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { randomBytes } from 'crypto'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -10,10 +12,65 @@ const app = express()
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
+// ─── Settings persistence ─────────────────────────────────────────────────────
+// Stored in /data/settings.json (Railway volume) or ./settings.json as fallback.
+const DATA_DIR = existsSync('/data') ? '/data' : join(__dirname, '../data')
+const SETTINGS_PATH = join(DATA_DIR, 'settings.json')
+
+const DEFAULT_SETTINGS = { wellTargetPct: 5, recycleOpenPct: 5 }
+
+function loadSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_PATH, 'utf8')) } }
+  catch { return { ...DEFAULT_SETTINGS } }
+}
+
+function saveSettings(s) {
+  try {
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+    writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2))
+  } catch {}
+}
+
+// ─── Admin sessions (in-memory, cleared on restart) ──────────────────────────
+const ADMIN_SESSIONS = new Map() // token -> expiry timestamp
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() })
 })
 
+app.get('/api/settings', (_req, res) => {
+  res.json(loadSettings())
+})
+
+app.post('/api/settings', (req, res) => {
+  const token = req.headers['x-admin-token']
+  const session = ADMIN_SESSIONS.get(token)
+  if (!session || Date.now() > session) {
+    ADMIN_SESSIONS.delete(token)
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  const updated = { ...loadSettings(), ...req.body }
+  saveSettings(updated)
+  res.json(updated)
+})
+
+app.post('/api/admin/login', (req, res) => {
+  const pw = process.env.ADMIN_PASSWORD
+  if (!pw) return res.status(503).json({ error: 'ADMIN_PASSWORD not configured' })
+  if (!req.body?.password || req.body.password !== pw) {
+    return res.status(401).json({ error: 'Invalid password' })
+  }
+  const token = randomBytes(32).toString('hex')
+  ADMIN_SESSIONS.set(token, Date.now() + 8 * 3600 * 1000) // 8-hr session
+  res.json({ token })
+})
+
+app.post('/api/admin/logout', (req, res) => {
+  ADMIN_SESSIONS.delete(req.headers['x-admin-token'])
+  res.json({ ok: true })
+})
+
+// ─── MLink proxy ──────────────────────────────────────────────────────────────
 const MLINK_BASE = 'https://api.fwmurphy-iot.com/api'
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
