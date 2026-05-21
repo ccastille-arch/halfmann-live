@@ -143,6 +143,12 @@ function getCompressorColor(label, value) {
   return '#fff'
 }
 
+function cleanUnit(u) {
+  if (!u) return ''
+  // MLink API sometimes double-encodes UTF-8: °F arrives as Â°F — strip it
+  return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
+}
+
 function DataPoint({ label, value, unit, color, compact = false }) {
   return (
     <div className="bg-[#0a0a14] rounded border border-[#2a2a3a] p-2">
@@ -151,7 +157,7 @@ function DataPoint({ label, value, unit, color, compact = false }) {
         <span className={compact ? 'text-[16px] font-bold' : 'text-[14px] font-bold'} style={{ color: color || '#fff', fontFamily: "'Arial Black'" }}>
           {value || '--'}
         </span>
-        <span className="text-[8px] text-[#666]">{unit}</span>
+        <span className="text-[8px] text-[#666]">{cleanUnit(unit)}</span>
       </div>
     </div>
   )
@@ -192,18 +198,23 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
           {isRunning ? 'RUNNING' : 'STOPPED'}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="mb-3">
         {standby ? (
-          <>
+          <div className="grid grid-cols-2 gap-2">
             <DataPoint label="Desired RPM" value={desiredRpmStr} unit="RPM" color="#4fc3f7" compact />
             <DataPoint label="Actual RPM" value={actualRpmStr} unit="RPM"
               color={actualRpmNum != null && Number.isFinite(actualRpmNum) && actualRpmNum > 100 ? '#22c55e' : '#555'} compact />
-          </>
+          </div>
+        ) : desiredFlow != null ? (
+          <div className="grid grid-cols-2 gap-2">
+            <DataPoint label="Desired Flow" value={desiredFlowValue} unit={cleanUnit(desiredFlow?.units) || 'MMSCFD'} color="#4fc3f7" compact />
+            <DataPoint label="Actual Flow" value={actualFlowValue} unit={cleanUnit(actualFlow?.units) || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
+          </div>
         ) : (
-          <>
-            <DataPoint label="Desired Flow" value={desiredFlowValue} unit={desiredFlow?.units || 'MMSCFD'} color="#4fc3f7" compact />
-            <DataPoint label="Actual Flow" value={actualFlowValue} unit={actualFlow?.units || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
-          </>
+          <div>
+            <DataPoint label="Actual Flow" value={actualFlowValue} unit={cleanUnit(actualFlow?.units) || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
+            <div className="text-[8px] mt-1" style={{ color: '#3a3a55' }}>Desired flow setpoint not in MLink config</div>
+          </div>
         )}
       </div>
       {visibleRegisters.length > 0 && (

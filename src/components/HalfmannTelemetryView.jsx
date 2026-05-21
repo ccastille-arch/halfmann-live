@@ -126,6 +126,10 @@ async function fetchDeviceFull(deviceId) {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
+function cleanUnit(u) {
+  if (!u) return ''
+  return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
+}
 function parseLiveNumeric(v) { const n = Number(v); return Number.isFinite(n) ? n : null }
 function resolveDP(dataMap, labels) {
   for (const label of labels) {
@@ -184,7 +188,7 @@ function Gauge({ label, value, unit, status = 'unknown', sub, isAdmin, settingKe
       <div style={{ fontSize, fontWeight: 900, color: v ? c.val : '#1e1e30', fontFamily: "'Arial Black', sans-serif", lineHeight: 1.05 }}>
         {v || '—'}
       </div>
-      {unit && v && <div style={{ fontSize: 10, color: c.lbl, fontWeight: 700, letterSpacing: '0.04em' }}>{unit}</div>}
+      {unit && v && <div style={{ fontSize: 10, color: c.lbl, fontWeight: 700, letterSpacing: '0.04em' }}>{cleanUnit(unit)}</div>}
       {sub && <div style={{ fontSize: 8, color: c.sub, marginTop: 2, lineHeight: 1.4 }}>{sub}</div>}
     </div>
   )
@@ -423,12 +427,13 @@ export default function HalfmannTelemetryView() {
   const perWellTarget = !hasSetpoints && totalDesiredSite ? totalDesiredSite / 5 : null
 
   const activeWells = wellData.filter(w => w.actual != null).length
-  const wellsOnTarget = wellData.filter(w => {
-    if (w.actual == null) return false
+  // Only evaluate wells that have an actual target to compare against — avoids false NO when MLink has no setpoints
+  const wellsWithTarget = wellData.filter(w => w.actual != null && (w.desired != null || perWellTarget != null))
+  const wellsOnTarget = wellsWithTarget.filter(w => {
     const t = w.desired ?? perWellTarget
     return t != null && t > 0 && Math.abs(w.actual - t) <= t * (wellTargetPct / 100)
   }).length
-  const allOnTarget = activeWells > 0 ? wellsOnTarget === activeWells : null
+  const allOnTarget = wellsWithTarget.length > 0 ? wellsOnTarget === wellsWithTarget.length : null
   const padMatchPct = totalDesired != null && totalDesired > 0 ? Math.max(0, 100 - (Math.abs(totalActual - totalDesired) / totalDesired) * 100) : null
 
   const casingList = wellData.map((w, i) => w.casing != null ? { v: w.casing, n: i+1 } : null).filter(Boolean)
@@ -504,11 +509,14 @@ export default function HalfmannTelemetryView() {
           <Section id="site-summary" title="Group 1 — Site Summary">
             <GaugeGrid>
               <YesNoGauge label="All Wells Meeting Desired Rate?" good={allOnTarget}
-                detail={activeWells > 0 ? `${wellsOnTarget} of ${activeWells} within ${wellTargetPct}%` : 'Awaiting data'}
+                detail={wellsWithTarget.length > 0
+                  ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}%`
+                  : activeWells > 0 ? 'Setpoints not yet in MLink config' : 'Awaiting data'}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Wells Meeting Rate"
-                value={activeWells > 0 ? `${wellsOnTarget}/${activeWells}` : null}
-                status={activeWells > 0 ? (wellsOnTarget === activeWells ? 'good' : wellsOnTarget >= activeWells * 0.6 ? 'warn' : 'bad') : 'unknown'}
+                value={wellsWithTarget.length > 0 ? `${wellsOnTarget}/${wellsWithTarget.length}` : null}
+                status={wellsWithTarget.length > 0 ? (wellsOnTarget === wellsWithTarget.length ? 'good' : wellsOnTarget >= wellsWithTarget.length * 0.6 ? 'warn' : 'bad') : 'unknown'}
+                sub={wellsWithTarget.length === 0 && activeWells > 0 ? 'No setpoints in MLink' : undefined}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Total Desired Flow"
                 value={totalDesired != null ? fmt(totalDesired) : null} unit="MMSCFD"
@@ -691,7 +699,7 @@ export default function HalfmannTelemetryView() {
                             const display = Number.isFinite(rawVal)
                               ? rawVal.toFixed(rawVal % 1 === 0 ? 0 : 2)
                               : String(ep.value)
-                            return <Gauge key={ep.name} label={ep.name} value={display} unit={ep.units} status="unknown" />
+                            return <Gauge key={ep.name} label={ep.name} value={display} unit={cleanUnit(ep.units)} status="unknown" />
                           })}
                         </GaugeGrid>
                       </SubSection>
