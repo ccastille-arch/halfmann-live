@@ -380,8 +380,10 @@ export default function HalfmannLiveView() {
     ? Math.max(0, 100 - (Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite) * 100) : null
 
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
-  const wellsAtTargetCount = activeWells.filter(w => w.atTarget).length
-  const allOnTarget = activeWells.length > 0 ? wellsAtTargetCount === activeWells.length : null
+  const wellsWithDesired = activeWells.filter(w => w.desired != null)
+  const wellsAtTargetCount = wellsWithDesired.filter(w => w.atTarget).length
+  // Only show YES/NO if we actually have desired-rate data
+  const allOnTarget = wellsWithDesired.length === 0 ? null : wellsAtTargetCount === wellsWithDesired.length
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
@@ -435,9 +437,9 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={allOnTarget}
-                  detail={activeWells.length > 0
-                    ? `${wellsAtTargetCount} of ${activeWells.length} wells within 5% of target`
-                    : 'Waiting for flow data…'}
+                  detail={wellsWithDesired.length > 0
+                    ? `${wellsAtTargetCount} of ${wellsWithDesired.length} wells within 5% of target`
+                    : 'Waiting for setpoint data from Jim…'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
