@@ -650,11 +650,53 @@ export default function HalfmannTelemetryView() {
                       </div>
                     )}
                   </div>
+                  {!u.deviceId && (
+                    <div style={{ padding: '14px 18px', background: '#0f0a00', border: '1px solid #5a3a00', borderRadius: 10, marginBottom: 18, fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>
+                      ⚠ MLink Device ID not configured for {u.label}. Contact Jim or Murphy Field Services to get the MLink device ID, then update HALFMANN_DEVICES.unit1396 in the code. All live registers will appear automatically once the ID is set.
+                    </div>
+                  )}
                   {groups.map(g => (
                     <SubSection key={g.title} title={g.title}>
                       <ParamGauges params={g.params} dataMap={dm} isAdmin={isAdmin} onSettings={openSettings} />
                     </SubSection>
                   ))}
+                  {/* Dynamic catch-all: show every raw datapoint NOT already covered by the groups above */}
+                  {(() => {
+                    const rawDps = unitDataRaw[u.key]?.datapoints
+                    if (!rawDps?.length) return null
+                    // Collect all register keys the predefined groups already look up
+                    const coveredKeys = new Set()
+                    for (const g of groups) {
+                      for (const p of g.params) {
+                        for (const k of p.keys) coveredKeys.add(k.toLowerCase().trim())
+                      }
+                    }
+                    const extra = []
+                    const seenNames = new Set()
+                    for (const dp of rawDps) {
+                      const name = dp.alias || dp.desc || dp.dataSourceName || dp.Name || dp.name
+                      if (!name || seenNames.has(name)) continue
+                      seenNames.add(name)
+                      if (coveredKeys.has(name.toLowerCase().trim())) continue
+                      const v = dp.value ?? (Array.isArray(dp.values) ? dp.values[0] : undefined)
+                      if (v == null || v === '' || String(v).toLowerCase() === 'n/a') continue
+                      extra.push({ name, value: v, units: dp.units || dp.unit || '' })
+                    }
+                    if (!extra.length) return null
+                    return (
+                      <SubSection title="Additional Live Registers">
+                        <GaugeGrid>
+                          {extra.map(ep => {
+                            const rawVal = Number(ep.value)
+                            const display = Number.isFinite(rawVal)
+                              ? rawVal.toFixed(rawVal % 1 === 0 ? 0 : 2)
+                              : String(ep.value)
+                            return <Gauge key={ep.name} label={ep.name} value={display} unit={ep.units} status="unknown" />
+                          })}
+                        </GaugeGrid>
+                      </SubSection>
+                    )
+                  })()}
                 </div>
               )
             })}

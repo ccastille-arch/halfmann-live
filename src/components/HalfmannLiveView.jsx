@@ -25,7 +25,7 @@ const HALFMANN_UNITS = [
   { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127 },
   { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128 },
   { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129 },
-  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396 },
+  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, standby: true },
 ]
 
 const LIVE_WELL_FLOW_KEYS = [
@@ -157,14 +157,30 @@ function DataPoint({ label, value, unit, color, compact = false }) {
   )
 }
 
-function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers }) {
-  const rpm = data['RPM'] || data['Compressor Speed'] || data['Driver Speed'] || data['Engine Speed']
+function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers, standby = false }) {
+  const rpm = data['RPM'] || data['Compressor Speed'] || data['Driver Speed'] || data['Engine Speed'] || data['Engine Speed From EICS']
   const shutdown = data['Skid - Shutdown']
   const isShutdown = shutdown && String(shutdown.value).toLowerCase().includes('shutdown')
   const hasRpm = rpm && parseFloat(rpm.value) > 100
   const hasFlow = actualFlow != null && parseFloat(actualFlow?.value) > 0.01
   const isRunning = (hasRpm || hasFlow) && !isShutdown
-  const visibleRegisters = registers.filter(meta => meta.label !== 'Flow Rate PID PV')
+
+  // Standby (RPM-controlled) units: show speed as primary metric, not flow
+  const desiredRpmDp = data['Speed Control SP'] || data['RPM Setpoint'] || data['Speed Setpoint']
+    || data['Altronic Speed Control SP'] || data['Speed Discharge SP'] || data['Desired Speed']
+  const actualRpmNum = rpm ? parseFloat(rpm.value) : null
+  const desiredRpmNum = desiredRpmDp ? parseFloat(desiredRpmDp.value) : null
+  const actualRpmStr = actualRpmNum != null && Number.isFinite(actualRpmNum) ? Math.round(actualRpmNum).toLocaleString() : '--'
+  const desiredRpmStr = desiredRpmNum != null && Number.isFinite(desiredRpmNum) ? Math.round(desiredRpmNum).toLocaleString() : '--'
+
+  // Filter registers shown in the detail grid — skip what's already shown in the primary metric row
+  const skipLabels = standby
+    ? new Set(['RPM', 'Engine Speed', 'Engine Speed From EICS', 'Driver Speed', 'Compressor Speed',
+               'Speed Control SP', 'RPM Setpoint', 'Speed Setpoint', 'Altronic Speed Control SP',
+               'Speed Discharge SP', 'Desired Speed', 'Flow Rate PID PV'])
+    : new Set(['Flow Rate PID PV'])
+  const visibleRegisters = registers.filter(meta => !skipLabels.has(meta.label))
+
   const desiredFlowValue = formatFlowValue(desiredFlow?.value)
   const actualFlowValue = formatFlowValue(actualFlow?.value)
   return (
@@ -177,8 +193,18 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers 
         </span>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-3">
-        <DataPoint label="Desired Flow" value={desiredFlowValue} unit={desiredFlow?.units || 'MMSCFD'} color="#4fc3f7" compact />
-        <DataPoint label="Actual Flow" value={actualFlowValue} unit={actualFlow?.units || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
+        {standby ? (
+          <>
+            <DataPoint label="Desired RPM" value={desiredRpmStr} unit="RPM" color="#4fc3f7" compact />
+            <DataPoint label="Actual RPM" value={actualRpmStr} unit="RPM"
+              color={actualRpmNum != null && Number.isFinite(actualRpmNum) && actualRpmNum > 100 ? '#22c55e' : '#555'} compact />
+          </>
+        ) : (
+          <>
+            <DataPoint label="Desired Flow" value={desiredFlowValue} unit={desiredFlow?.units || 'MMSCFD'} color="#4fc3f7" compact />
+            <DataPoint label="Actual Flow" value={actualFlowValue} unit={actualFlow?.units || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
+          </>
+        )}
       </div>
       {visibleRegisters.length > 0 && (
         <div className="grid grid-cols-2 gap-2">
@@ -192,6 +218,9 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers 
             />
           ))}
         </div>
+      )}
+      {standby && !isRunning && (
+        <div className="mt-2 text-[9px] text-[#444] italic">Unit on standby — will activate if primary units fault</div>
       )}
       {time && <div className="text-[8px] text-[#444] mt-2 text-right">Updated: {time.toLocaleString()}</div>}
     </div>
@@ -695,6 +724,7 @@ export default function HalfmannLiveView() {
                     desiredFlow={unitDesiredFlows[i]}
                     actualFlow={unitActualFlows[i]}
                     registers={getVisibleCompressorRegisters(unitDataMaps[i], {})}
+                    standby={u.standby || false}
                   />
                 ))}
               </div>
