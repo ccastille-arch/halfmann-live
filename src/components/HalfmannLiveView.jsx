@@ -20,10 +20,11 @@ const HALFMANN_DEVICES = {
 }
 
 const HALFMANN_UNITS = [
-  { key: 'unit2130', label: 'Unit 2130',          deviceId: HALFMANN_DEVICES.unit2130 },
-  { key: 'unit2127', label: 'Unit 2127',          deviceId: HALFMANN_DEVICES.unit2127 },
-  { key: 'unit2128', label: 'Unit 2128',          deviceId: HALFMANN_DEVICES.unit2128 },
-  { key: 'unit2129', label: 'Unit 2129 (Standby)', deviceId: HALFMANN_DEVICES.unit2129 },
+  { key: 'unit2130', label: 'Unit 2130', deviceId: HALFMANN_DEVICES.unit2130 },
+  { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127 },
+  { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128 },
+  { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129 },
+  // Unit 1396 (Standby) — add deviceId once known from MLink/Jim
 ]
 
 const LIVE_WELL_FLOW_KEYS = [
