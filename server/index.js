@@ -102,6 +102,6 @@ app.get('/api/mlink/device/keys', async (req, res) => {
 })
 
 app.use(express.static(join(__dirname, '../dist')))
-app.get('*', (_req, res) => res.sendFile(join(__dirname, '../dist/index.html')))
+app.use((_req, res) => res.sendFile(join(__dirname, '../dist/index.html')))
 
 app.listen(PORT, () => console.log(`halfmann-live running on port ${PORT}`))
