@@ -254,81 +254,91 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers 
   )
 }
 
-function LivePerformanceHero({ metrics, wells, timestamp }) {
+function StatusCard({ question, answer, detail, good }) {
+  const isGood = good === true
+  const isUnknown = good === null
   return (
-    <div className="mb-5 overflow-hidden rounded-2xl border border-[#1a1a2a] bg-[#0c0c16]">
-      <div className="grid gap-5 p-5 lg:grid-cols-[1.15fr_0.85fr]">
-        <div>
-          <div className="mb-4 flex items-center gap-3">
-            <span className="text-[13px] font-bold uppercase tracking-[0.18em] text-[#49D0E2]">Halfmann 1214 — Injection Telemetry</span>
-            {timestamp && <span className="text-[10px] text-[#5e6b80]">Updated {timestamp.toLocaleString()}</span>}
-          </div>
-          <div className="grid gap-3 md:grid-cols-4">
-            <WowMetricCard
-              label="Live Injection Match"
-              value={formatPercent(metrics.currentMatch, 1)}
-              tone="green"
-              helper={metrics.totalDesired ? `${metrics.totalActual?.toFixed(3)} actual vs ${metrics.totalDesired.toFixed(3)} desired` : 'Waiting on desired-rate tags'}
-            />
-            <WowMetricCard
-              label="Wells On Target"
-              value={metrics.wellsAtTarget != null ? `${metrics.wellsAtTarget}/${wells.length}` : '--'}
-              tone="blue"
-              helper={metrics.wellsAtTarget != null ? 'Within 5% of desired injection' : 'Per-well targets not in API feed'}
-            />
-            <WowMetricCard
-              label="30-Day Under Target"
-              value={formatPercent(metrics.historicalUnderTarget, 1)}
-              tone={metrics.historicalUnderTarget != null && metrics.historicalUnderTarget <= 8 ? 'green' : 'amber'}
-              helper={metrics.historicalUnderTarget != null ? 'Time spent not meeting desired injection' : 'No 30-day history available for this pad'}
-            />
-            <WowMetricCard
-              label="Compressor Flow Match"
-              value={formatPercent(metrics.compressorMatch, 1)}
-              tone="purple"
-              helper="Desired flow vs actual compressor flow"
-            />
-          </div>
-        </div>
+    <div className={`rounded-2xl border p-5 flex flex-col gap-2 ${isUnknown ? 'border-[#2a2a3a] bg-[#0e0e1a]' : isGood ? 'border-[#1d6c3d] bg-[#0a1a10]' : 'border-[#7a1a1a] bg-[#1a0a0a]'}`}>
+      <div className="text-[12px] font-semibold uppercase tracking-[0.15em] text-[#888]">{question}</div>
+      <div className={`text-[42px] font-black leading-none ${isUnknown ? 'text-[#555]' : isGood ? 'text-[#22c55e]' : 'text-[#E8200C]'}`} style={{ fontFamily: "'Arial Black'" }}>
+        {isUnknown ? '—' : isGood ? 'YES' : 'NO'}
+      </div>
+      <div className={`text-[12px] font-medium ${isUnknown ? 'text-[#555]' : isGood ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{detail}</div>
+    </div>
+  )
+}
 
-        <div className="rounded-2xl border border-[#1c2836] bg-[#0a0f17]/90 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#9db2ce]">Actual vs Desired By Well</span>
-            <span className="text-[10px] text-[#5e6b80]">Live target tracking</span>
-          </div>
-          <div className="space-y-3">
-            {wells.map((well) => (
-              <div key={well.wellNumber} className="rounded-xl border border-[#15202d] bg-[#0b1119] p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-white">Well {well.wellNumber}</span>
-                    {well.desired != null && (
-                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${well.atTarget ? 'bg-[#0d2d18] text-[#58e68f]' : 'bg-[#33260c] text-[#f7c65d]'}`}>
-                        {well.atTarget ? 'On Target' : 'Chasing'}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-[#8d97a8]">{formatPercent(well.matchPct, 1)} match</span>
+function LivePerformanceHero({ metrics, wells, timestamp, recycleVal }) {
+  const activeWells = wells.filter(w => w.actual != null)
+  const wellsOnTarget = metrics.wellsAtTarget
+  const allOnTarget = wellsOnTarget != null && activeWells.length > 0
+    ? wellsOnTarget === activeWells.length
+    : null
+  const recycleOpen = recycleVal != null ? recycleVal > 0 : null
+  const siteOnTarget = metrics.currentMatch != null ? metrics.currentMatch >= 95 : null
+
+  return (
+    <div className="mb-5 space-y-4">
+      {/* ── Page title ── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[20px] font-black text-white" style={{ fontFamily: "'Arial Black'" }}>Halfmann 1214 Pad</h1>
+          <div className="text-[12px] text-[#666]">Live Injection Monitor</div>
+        </div>
+        {timestamp && <div className="text-[11px] text-[#555]">Updated {timestamp.toLocaleString()}</div>}
+      </div>
+
+      {/* ── Big YES/NO status cards ── */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatusCard
+          question="Are all wells meeting target flow rate?"
+          answer={allOnTarget}
+          good={allOnTarget}
+          detail={wellsOnTarget != null
+            ? `${wellsOnTarget} of ${activeWells.length} wells within 5% of target`
+            : 'Waiting for flow data…'}
+        />
+        <StatusCard
+          question="Is the recycle valve closed?"
+          good={recycleOpen === null ? null : !recycleOpen}
+          detail={recycleVal == null ? 'No data from panel' : recycleOpen ? `OPEN — valve at ${recycleVal.toFixed(1)}% — gas is being recycled` : `Closed — valve at ${recycleVal.toFixed(1)}%`}
+        />
+        <StatusCard
+          question="Is site injection on target?"
+          good={siteOnTarget}
+          detail={metrics.totalDesired
+            ? `${metrics.totalActual?.toFixed(3)} MMSCFD actual vs ${metrics.totalDesired.toFixed(3)} MMSCFD desired`
+            : 'Waiting for desired-rate data…'}
+        />
+      </div>
+
+      {/* ── Per-well status ── */}
+      <div className="rounded-2xl border border-[#1a1a2a] bg-[#0c0c16] p-5">
+        <div className="mb-4 text-[13px] font-bold uppercase tracking-[0.15em] text-[#888]">Well-by-Well Status</div>
+        <div className="grid gap-3 sm:grid-cols-5">
+          {wells.map((well) => {
+            const hasData = well.actual != null
+            const onTarget = well.atTarget
+            return (
+              <div key={well.wellNumber} className={`rounded-xl border p-4 ${!hasData ? 'border-[#1a1a2a] bg-[#0a0a14]' : onTarget ? 'border-[#1d6c3d] bg-[#081510]' : 'border-[#5a3a10] bg-[#130e04]'}`}>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[#666] mb-1">Well {well.wellNumber}</div>
+                <div className={`text-[20px] font-black leading-none mb-1 ${!hasData ? 'text-[#444]' : onTarget ? 'text-[#22c55e]' : 'text-[#f59e0b]'}`} style={{ fontFamily: "'Arial Black'" }}>
+                  {!hasData ? 'NO DATA' : onTarget ? 'ON TARGET' : 'LOW'}
                 </div>
-                <div className={`gap-3 text-[11px] ${well.desired != null ? 'grid grid-cols-[1fr_auto_auto]' : 'flex items-center'}`}>
-                  {well.desired != null && (
-                    <div className="pt-1">
-                      <div className="h-2 overflow-hidden rounded-full bg-[#14202c]">
-                        <div className="h-full rounded-full bg-gradient-to-r from-[#22c55e] to-[#4fc3f7]" style={{ width: `${Math.max(0, Math.min(100, well.matchPct ?? 0))}%` }} />
-                      </div>
-                    </div>
-                  )}
-                  <span className="font-bold text-[#22c55e]">{formatFlow(well.actual)}</span>
-                  {well.desired != null && <span className="text-[#8d97a8]">of {formatFlow(well.desired)}</span>}
+                <div className="text-[12px] text-[#888]">
+                  {well.actual != null ? `${well.actual.toFixed(3)} MMSCFD` : '—'}
                 </div>
                 {well.desired != null && (
-                  <div className="mt-1 text-[10px] text-[#697386]">
-                    Gap {formatSignedFlow(well.gap)}
+                  <div className="mt-2">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-[#14202c]">
+                      <div className="h-full rounded-full bg-gradient-to-r from-[#22c55e] to-[#4fc3f7]" style={{ width: `${Math.max(0, Math.min(100, well.matchPct ?? 0))}%` }} />
+                    </div>
+                    <div className="mt-1 text-[10px] text-[#555]">Target: {well.desired.toFixed(3)} MMSCFD</div>
                   </div>
                 )}
               </div>
-            ))}
-          </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -673,7 +683,7 @@ export default function HalfmannLiveView() {
                 </div>
               )}
 
-              <LivePerformanceHero metrics={wowMetrics} wells={liveWellPerformance} timestamp={panelTime} />
+              <LivePerformanceHero metrics={wowMetrics} wells={liveWellPerformance} timestamp={panelTime} recycleVal={recycleVal} />
 
               {/* ─── Site Alerts & Status ─────────────────────────────────── */}
               <div style={{ background: '#0c0c16', border: '1px solid #1a1a2a', borderRadius: '12px', padding: '16px 20px', marginBottom: '16px' }}>
