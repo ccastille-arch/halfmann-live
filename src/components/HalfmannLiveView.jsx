@@ -255,34 +255,15 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers 
 }
 
 function LivePerformanceHero({ metrics, wells, timestamp }) {
-  const headline = metrics.currentMatch != null && metrics.currentMatch >= 97
-    ? 'Running Tight. Running On Target.'
-    : metrics.currentMatch != null && metrics.currentMatch >= 93
-      ? 'Pad Logic Is Holding This Pad In Tight Balance.'
-      : 'Live Field Data Is Tracking In Real Time.'
-
   return (
-    <div className="mb-5 overflow-hidden rounded-2xl border border-[#1c2d21] bg-[radial-gradient(circle_at_top_left,_rgba(34,197,94,0.18),_rgba(8,8,16,0.95)_45%),linear-gradient(135deg,_#10151d,_#090b12)] shadow-[0_0_50px_rgba(34,197,94,0.08)]">
+    <div className="mb-5 overflow-hidden rounded-2xl border border-[#1a1a2a] bg-[#0c0c16]">
       <div className="grid gap-5 p-5 lg:grid-cols-[1.15fr_0.85fr]">
         <div>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="rounded-full border border-[#20502d] bg-[#0e1e13] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#66f0a0]">
-              Live Performance Proof
-            </span>
-            {timestamp && <span className="text-[10px] text-[#6b7280]">Snapshot {timestamp.toLocaleString()}</span>}
+          <div className="mb-4 flex items-center gap-3">
+            <span className="text-[13px] font-bold uppercase tracking-[0.18em] text-[#49D0E2]">Halfmann 1214 — Injection Telemetry</span>
+            {timestamp && <span className="text-[10px] text-[#5e6b80]">Updated {timestamp.toLocaleString()}</span>}
           </div>
-          <div className="text-[12px] font-bold uppercase tracking-[0.2em] text-[#ff6b57]">
-            Does your SCADA do this?
-          </div>
-          <h2 className="text-[30px] font-black leading-none text-white" style={{ fontFamily: "'Arial Black'" }}>
-            {headline}
-          </h2>
-          <p className="mt-2 max-w-[680px] text-[13px] leading-relaxed text-[#a0a7b5]">
-            This is actual live data from a running location right now. See how tightly this pad is operating:
-            actual well injection riding on top of desired injection, compressors carrying commanded flow, and
-            the historical time spent below target exposed in plain sight.
-          </p>
-          <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-4">
             <WowMetricCard
               label="Live Injection Match"
               value={formatPercent(metrics.currentMatch, 1)}
