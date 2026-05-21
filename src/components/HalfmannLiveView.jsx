@@ -20,10 +20,10 @@ const HALFMANN_DEVICES = {
 }
 
 const HALFMANN_UNITS = [
-  { key: 'unit2130', label: 'Unit 2130', deviceId: HALFMANN_DEVICES.unit2130 },
-  { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127 },
-  { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129 },
-  { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128 },
+  { key: 'unit2130', label: 'Unit 2130',          deviceId: HALFMANN_DEVICES.unit2130 },
+  { key: 'unit2127', label: 'Unit 2127',          deviceId: HALFMANN_DEVICES.unit2127 },
+  { key: 'unit2128', label: 'Unit 2128',          deviceId: HALFMANN_DEVICES.unit2128 },
+  { key: 'unit2129', label: 'Unit 2129 (Standby)', deviceId: HALFMANN_DEVICES.unit2129 },
 ]
 
 const LIVE_WELL_FLOW_KEYS = [
@@ -379,20 +379,25 @@ export default function HalfmannLiveView() {
   const hourMeterRegister = visibleRegisters.find(meta => meta.label === 'Hour Meter')
 
   const totalActualFlow = liveWellPerformance.reduce((sum, w) => sum + (w.actual ?? 0), 0)
-  const padMatchPct = totalDesiredSite != null && totalDesiredSite > 0
-    ? Math.max(0, 100 - (Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite) * 100) : null
+  // Derive total desired from per-well data (works even when panel register is missing)
+  const wellsWithBoth = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
+  const totalDesiredFromWells = wellsWithBoth.reduce((sum, w) => sum + (w.desired ?? 0), 0)
+  const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
 
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
   const wellsAtTargetCount = activeWells.filter(w => w.atTarget).length
   const allOnTarget = activeWells.length > 0 ? wellsAtTargetCount === activeWells.length : null
+
+  // Site on target: derived from per-well comparison (no separate panel register needed)
+  const siteOnTarget = wellsWithBoth.length > 0 && totalDesiredFromWells > 0
+    ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
+    : null
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
   const recycleOpen = recycleVal != null ? recycleVal > recycleAlertThreshold : null
 
   const dischargeTriggerSP = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
-
-  const siteOnTarget = padMatchPct != null ? padMatchPct >= 95 : null
 
   if (!padVisible) {
     return (
@@ -445,8 +450,8 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Is site injection on target?"
                   good={siteOnTarget}
-                  detail={totalDesiredSite != null
-                    ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredSite.toFixed(3)} MMSCFD desired`
+                  detail={wellsWithBoth.length > 0
+                    ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
                     : 'Waiting for desired-rate data…'}
                 />
                 <StatusCard
@@ -587,7 +592,7 @@ export default function HalfmannLiveView() {
                   </div>
                   <div className="text-[10px] text-[#555]">
                     Total: <span className="text-white font-bold">{totalActualFlow.toFixed(3)}</span>
-                    {totalDesiredSite != null && <span className="text-[#555]"> / {totalDesiredSite.toFixed(3)} MMSCFD desired</span>}
+                    {effectiveTotalDesired != null && <span className="text-[#555]"> / {effectiveTotalDesired.toFixed(3)} MMSCFD desired</span>}
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
@@ -670,7 +675,7 @@ export default function HalfmannLiveView() {
               </div>
 
               {/* ── Compressor Units ── */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {HALFMANN_UNITS.map((u, i) => (
                   <CompressorCard
                     key={u.key}
