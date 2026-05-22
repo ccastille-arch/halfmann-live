@@ -144,16 +144,21 @@ app.get('/api/mlink/device/full', async (req, res) => {
 app.get('/api/mlink/probe', async (req, res) => {
   const key = process.env.MLINK_API_KEY
   if (!key) return res.status(503).json({ error: 'MLINK_API_KEY not configured' })
-  const { deviceId, endpoint, ...rest } = req.query
-  if (!deviceId || !endpoint) return res.status(400).json({ error: 'deviceId and endpoint required' })
+  const { deviceId, endpoint, base, method: httpMethod, ...rest } = req.query
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' })
+  const baseUrl = base ? decodeURIComponent(base) : MLINK_BASE
+  const devicePart = deviceId ? `deviceId=${encodeURIComponent(deviceId)}&` : ''
   const extraParams = Object.entries(rest).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')
-  const url = `${MLINK_BASE}/${endpoint}?deviceId=${encodeURIComponent(deviceId)}&code=${key}${extraParams}`
+  const url = `${baseUrl}/${endpoint}?${devicePart}code=${key}${extraParams}`
   try {
-    const r = await fetch(url)
+    const r = await fetch(url, { method: httpMethod || 'GET' })
     const text = await r.text()
     let parsed
     try { parsed = JSON.parse(text) } catch { parsed = text }
-    res.status(r.status).json({ _endpoint: endpoint, _status: r.status, _url: url.replace(key, 'REDACTED'), data: parsed })
+    // Count datapoints if present
+    const dpCount = Array.isArray(parsed?.datapoints) ? parsed.datapoints.length
+      : Array.isArray(parsed?.data?.datapoints) ? parsed.data.datapoints.length : null
+    res.status(r.status).json({ _endpoint: endpoint, _base: baseUrl, _status: r.status, _dpCount: dpCount, _url: url.replace(key, 'REDACTED'), data: parsed })
   } catch (err) {
     res.status(502).json({ error: err.message })
   }
