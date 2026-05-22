@@ -113,6 +113,7 @@ function normalizeAuthHeaderValue(value) {
 const MLINK_DASHBOARD_BASE = normalizeEnvValue(process.env.MLINK_DASHBOARD_BASE) || 'https://www.fwmurphy-iot.com'
 const MLINK_DASHBOARD_COOKIE = normalizeCookieValue(process.env.MLINK_DASHBOARD_COOKIE)
 const MLINK_DASHBOARD_AUTH_HEADER = normalizeAuthHeaderValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
+const LATEST_SNAPSHOT_CACHE = new Map()
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
 
@@ -131,6 +132,22 @@ function extractDatapoints(payload) {
   if (Array.isArray(payload?.data)) return payload.data.flatMap(extractDatapoints)
   if (Array.isArray(payload)) return payload.flatMap(extractDatapoints)
   return []
+}
+
+function mergeDatapointsWithFallback(primaryDatapoints = [], fallbackDatapoints = []) {
+  if (!fallbackDatapoints.length) return primaryDatapoints
+  const byKey = new Map()
+  for (const dp of fallbackDatapoints) {
+    const key = getDatapointKey(dp)
+    if (!key) continue
+    byKey.set(key, dp)
+  }
+  for (const dp of primaryDatapoints) {
+    const key = getDatapointKey(dp)
+    if (!key) continue
+    byKey.set(key, dp)
+  }
+  return [...byKey.values()]
 }
 
 async function fetchTextOrJson(url, options = {}) {
@@ -159,13 +176,25 @@ async function fetchLatestSnapshot(deviceId, key) {
       datapoints: [],
     }
   }
+
+  const liveDatapoints = extractDatapoints(result.data)
+  const cached = LATEST_SNAPSHOT_CACHE.get(deviceId)
+  const mergedDatapoints = mergeDatapointsWithFallback(liveDatapoints, cached?.datapoints || [])
+  const heldSupplementCount = Math.max(0, mergedDatapoints.length - liveDatapoints.length)
+  LATEST_SNAPSHOT_CACHE.set(deviceId, {
+    datapoints: mergedDatapoints,
+    fetchedAt: Date.now(),
+  })
+
   return {
     ok: true,
     httpStatus: result.status,
     state: 'ok',
-    note: 'LatestDeviceData public snapshot',
+    note: heldSupplementCount > 0
+      ? `LatestDeviceData public snapshot plus ${heldSupplementCount} held datapoints from the last fuller poll`
+      : 'LatestDeviceData public snapshot',
     data: result.data,
-    datapoints: extractDatapoints(result.data),
+    datapoints: mergedDatapoints,
   }
 }
 
