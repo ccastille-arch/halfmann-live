@@ -17,10 +17,12 @@ const HALFMANN_DEVICES = {
 const HALFMANN_UNITS = [
   { key: 'unit2130', label: 'Unit 2130', deviceId: HALFMANN_DEVICES.unit2130, type: 'asc' },
   { key: 'unit2127', label: 'Unit 2127', deviceId: HALFMANN_DEVICES.unit2127, type: 'asc' },
-  { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129, type: 'c4' },
+  { key: 'unit2129', label: 'Unit 2129', deviceId: HALFMANN_DEVICES.unit2129, type: 'asc' },
   { key: 'unit2128', label: 'Unit 2128', deviceId: HALFMANN_DEVICES.unit2128, type: 'asc' },
-  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, type: 'asc' },
+  { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, type: 'c4' },
 ]
+
+const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
 
 const WELL_FLOW_KEYS = [
   ['Well 1 Injection Gas Flow Rate', 'Well #1 Flow Rate'],
@@ -29,16 +31,18 @@ const WELL_FLOW_KEYS = [
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
   ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
-// NOT falling back to "Injection Flow Rate" — that desc is an alias of the actual flow register.
-// Desired = actual when that fallback is used (misleading). Show null until Jim configures real setpoints in MLink.
 const WELL_SETPOINT_KEYS = [1,2,3,4,5].map(n => [
+  `Wellhead #${n} Calculated Desired Flow`,
   `Wellhead #${n} Setpoint From Customer PLC`,
+  `Well ${n} Calculated Desired Flow`,
   `Well ${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint`,
 ])
 const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Well ${n} Yesterdays Flow`,
+  `Wellhead #${n} Yesterday's Total Flow`,
   `Wellhead #${n} Yesterdays Total Flow`,
+  `Well ${n} Yesterday's Total Flow`,
   `Well ${n} Yesterdays Total Flow`,
 ])
 const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [
@@ -172,6 +176,21 @@ function getRegisterRows(data) {
     })
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function deriveMissingCompressorFlowValues(unitFlows, totalActualFlow, units) {
+  if (totalActualFlow == null || !Number.isFinite(totalActualFlow)) return unitFlows
+  const next = [...unitFlows]
+  const activeIndexes = units.map((unit, index) => (unit.type === 'asc' ? index : null)).filter(index => index != null)
+  const missingIndexes = activeIndexes.filter(index => next[index] == null)
+  if (missingIndexes.length !== 1) return next
+
+  const knownSum = activeIndexes.reduce((sum, index) => sum + (next[index] ?? 0), 0)
+  const derivedFlow = totalActualFlow - knownSum
+  if (!Number.isFinite(derivedFlow) || derivedFlow <= 0.01) return next
+
+  next[missingIndexes[0]] = derivedFlow
+  return next
 }
 
 function getGrade(pct) {
@@ -495,7 +514,7 @@ export default function HalfmannTelemetryView() {
   const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => ({
     n: i + 1,
     actual:    getN(panel, flowKeys),
-    desired:   getN(panel, WELL_SETPOINT_KEYS[i]),
+    desired:   getN(panel, WELL_SETPOINT_KEYS[i]) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[i],
     choke:     getN(panel, WELL_CHOKE_KEYS[i]),
     casing:    getN(panel, WELL_CASING_KEYS[i]),
     tubing:    getN(panel, WELL_TUBING_KEYS[i]),
@@ -532,7 +551,7 @@ export default function HalfmannTelemetryView() {
   const suctionValvePos   = getN(panel, ['Suction/Sales Valve Position', 'Suction Valve Position', 'Sales Valve Position'])
   const dischargeSP = unitMaps.reduce((f, dm) => f ?? getN(dm, ['Speed Auto Discharge SP', 'Altronic Discharge SP', 'Discharge Pressure SP']), null)
 
-  const unitFlows   = unitMaps.map(dm => getN(dm, ['Flow Rate', 'Flow Rate PID PV']))
+  const rawUnitFlows = unitMaps.map(dm => getN(dm, ['Flow Rate', 'Flow Rate PID PV']))
   // MLink config assigns compressor numbers by unit ID (not array position):
   //   Compressor #1 = Unit 2128,  #2 = Unit 2130,  #3 = Unit 2127,  #4 = Unit 2129
   const UNIT_TO_COMP_NUM_T = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
@@ -545,6 +564,8 @@ export default function HalfmannTelemetryView() {
     ]) ??
     getN(unitMaps[i], ['Flow Rate PID Auto Sp', 'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP'])
   })
+
+  const unitFlows = deriveMissingCompressorFlowValues(rawUnitFlows, totalActual, HALFMANN_UNITS)
 
   const wellScores = wellData.map(w => {
     const t = w.desired ?? perWellTarget

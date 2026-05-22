@@ -29,6 +29,8 @@ const HALFMANN_UNITS = [
   { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, standby: true },
 ]
 
+const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
+
 const LIVE_WELL_FLOW_KEYS = [
   ['Well 1 Injection Gas Flow Rate', 'Well #1 Flow Rate'],
   ['Well 2 Injection Gas Flow Rate', 'Well #2 Flow Rate'],
@@ -38,11 +40,11 @@ const LIVE_WELL_FLOW_KEYS = [
 ]
 
 const LIVE_WELL_YESTERDAY_KEYS = [
-  ['Wellhead #1 Yesterdays Total Flow', 'Well 1 Yesterdays Total Flow'],
-  ['Wellhead #2 Yesterdays Total Flow', 'Well 2 Yesterdays Total Flow'],
-  ['Wellhead #3 Yesterdays Total Flow', 'Well 3 Yesterdays Total Flow'],
-  ['Wellhead #4 Yesterdays Total Flow', 'Well 4 Yesterdays Total Flow'],
-  ['Wellhead #5 Yesterdays Total Flow', 'Well 5 Yesterdays Total Flow'],
+  ["Wellhead #1 Yesterday's Total Flow", 'Wellhead #1 Yesterdays Total Flow', "Well 1 Yesterday's Total Flow", 'Well 1 Yesterdays Total Flow'],
+  ["Wellhead #2 Yesterday's Total Flow", 'Wellhead #2 Yesterdays Total Flow', "Well 2 Yesterday's Total Flow", 'Well 2 Yesterdays Total Flow'],
+  ["Wellhead #3 Yesterday's Total Flow", 'Wellhead #3 Yesterdays Total Flow', "Well 3 Yesterday's Total Flow", 'Well 3 Yesterdays Total Flow'],
+  ["Wellhead #4 Yesterday's Total Flow", 'Wellhead #4 Yesterdays Total Flow', "Well 4 Yesterday's Total Flow", 'Well 4 Yesterdays Total Flow'],
+  ["Wellhead #5 Yesterday's Total Flow", 'Wellhead #5 Yesterdays Total Flow', "Well 5 Yesterday's Total Flow", 'Well 5 Yesterdays Total Flow'],
 ]
 
 async function readErrorPayload(res) {
@@ -110,6 +112,29 @@ function average(values) {
   const valid = values.filter(v => v != null && Number.isFinite(v))
   if (!valid.length) return null
   return valid.reduce((sum, v) => sum + v, 0) / valid.length
+}
+
+function deriveMissingCompressorFlowDatapoints(unitDatapoints, totalActualFlow, units) {
+  if (totalActualFlow == null || !Number.isFinite(totalActualFlow)) return unitDatapoints
+  const numericFlows = unitDatapoints.map(dp => parseLiveNumeric(dp?.value))
+  const activeIndexes = units.map((unit, index) => (!unit.standby ? index : null)).filter(index => index != null)
+  const missingIndexes = activeIndexes.filter(index => numericFlows[index] == null)
+  if (missingIndexes.length !== 1) return unitDatapoints
+
+  const knownSum = activeIndexes.reduce((sum, index) => sum + (numericFlows[index] ?? 0), 0)
+  const derivedFlow = totalActualFlow - knownSum
+  if (!Number.isFinite(derivedFlow) || derivedFlow <= 0.01) return unitDatapoints
+
+  const next = [...unitDatapoints]
+  next[missingIndexes[0]] = {
+    value: derivedFlow.toFixed(3),
+    units: 'MMSCFD',
+    alias: 'Derived Site Balance Flow',
+    desc: 'Derived Site Balance Flow',
+    keyUsed: 'Derived Site Balance Flow',
+    _source: 'derived',
+  }
+  return next
 }
 
 function formatFlow(value) {
@@ -411,11 +436,13 @@ export default function HalfmannLiveView() {
     // NOT falling back to "Injection Flow Rate" — that desc is an alias of the actual flow register.
     // Using it as desired would make desired = actual (misleading). Show null until real setpoints arrive.
     const desiredDatapoint = resolvePreferredDatapoint(panel, [
+      `Wellhead #${wellNumber} Calculated Desired Flow`,
       `Wellhead #${wellNumber} Setpoint From Customer PLC`,
+      `Well ${wellNumber} Calculated Desired Flow`,
       `Well ${wellNumber} Setpoint From Customer PLC`,
       `Well ${wellNumber} Setpoint`,
     ])
-    const desired = parseLiveNumeric(desiredDatapoint?.value) ?? perWellTarget
+    const desired = parseLiveNumeric(desiredDatapoint?.value) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget
     const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
     const staticPres = getNumeric(panel, [
       `Wellhead #${wellNumber} Injection Static Pressure From Customer PLC`,
@@ -459,7 +486,7 @@ export default function HalfmannLiveView() {
     ])
   })
 
-  const unitActualFlows = unitDataMaps.map(dataMap =>
+  const rawUnitActualFlows = unitDataMaps.map(dataMap =>
     resolvePreferredDatapoint(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV'])
   )
 
@@ -504,6 +531,8 @@ export default function HalfmannLiveView() {
     : wellsWithBoth.length > 0 && totalDesiredFromWells > 0
       ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
       : null
+
+  const unitActualFlows = deriveMissingCompressorFlowDatapoints(rawUnitActualFlows, totalActualFlow, HALFMANN_UNITS)
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
