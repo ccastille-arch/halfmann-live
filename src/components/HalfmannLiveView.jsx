@@ -311,13 +311,14 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
   )
 }
 
-function StatusCard({ question, good, detail }) {
+function StatusCard({ question, good, detail, value }) {
   const isUnknown = good === null
+  const displayValue = value ?? (isUnknown ? '--' : good ? 'YES' : 'NO')
   return (
     <div className={`rounded-2xl border p-5 flex flex-col gap-2 ${isUnknown ? 'border-[#2d3a52] bg-[#131d2e]' : good ? 'border-[#1d6c3d] bg-[#0c1e14]' : 'border-[#7a1a1a] bg-[#1c0e0e]'}`}>
       <div className="text-[12px] font-semibold uppercase tracking-[0.15em] text-[#94a3b8]">{question}</div>
       <div className={`text-[42px] font-black leading-none ${isUnknown ? 'text-[#647a9a]' : good ? 'text-[#22c55e]' : 'text-[#E8200C]'}`} style={{ fontFamily: "'Arial Black'" }}>
-        {isUnknown ? '—' : good ? 'YES' : 'NO'}
+        {displayValue}
       </div>
       <div className={`text-[12px] font-medium ${isUnknown ? 'text-[#647a9a]' : good ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{detail}</div>
     </div>
@@ -516,13 +517,9 @@ export default function HalfmannLiveView() {
   const wellsWithTarget = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
   const wellsAtTargetCount = wellsWithTarget.filter(w => w.atTarget).length
   const allOnTarget = wellsWithTarget.length > 0 ? wellsAtTargetCount === wellsWithTarget.length : null
-  const auditDevices = [
-    { label: 'Well Panel', deviceId: HALFMANN_DEVICES.panel, data: panelData },
-    ...HALFMANN_UNITS.map(unit => ({ label: unit.label, deviceId: unit.deviceId, data: unitDataRaw[unit.key] })),
-  ]
-  const respondingDeviceCount = auditDevices.filter(device => device.data).length
-  const publishedRegisterTotal = auditDevices.reduce((sum, device) => sum + getRegisterCount(device.data), 0)
-  const dashboardSnapshotAvailable = auditDevices.some(device => getSourceState(device.data, 'dashboardSnapshot') === 'ok')
+  const siteWellScore = wellsWithTarget.length > 0
+    ? wellsWithTarget.reduce((sum, well) => sum + Math.min(100, well.matchPct ?? 0), 0) / wellsWithTarget.length
+    : null
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints not yet in MLink, but site total IS available and accurate.
@@ -533,6 +530,22 @@ export default function HalfmannLiveView() {
       : null
 
   const unitActualFlows = deriveMissingCompressorFlowDatapoints(rawUnitActualFlows, totalActualFlow, HALFMANN_UNITS)
+  const primaryUnitIndexes = HALFMANN_UNITS.map((unit, index) => (!unit.standby ? index : null)).filter(index => index != null)
+  const compressorCommandScores = primaryUnitIndexes.map((index) => {
+    const actual = parseLiveNumeric(unitActualFlows[index]?.value)
+    const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
+    if (actual == null || desired == null || desired <= 0) return null
+    return Math.max(0, Math.min(100, 100 - (Math.abs(actual - desired) / desired) * 100))
+  }).filter(score => score != null)
+  const compressorsMeetingCount = primaryUnitIndexes.filter((index) => {
+    const actual = parseLiveNumeric(unitActualFlows[index]?.value)
+    const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
+    return actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05
+  }).length
+  const allCompressorsMeetingCommands = compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null
+  const compressorCommandScore = compressorCommandScores.length > 0
+    ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length
+    : null
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
@@ -585,27 +598,13 @@ export default function HalfmannLiveView() {
               {liveError && (
                 <div className="mb-4 rounded-lg border border-[#5a1d1d] bg-[#1f0c0c] px-4 py-3 text-[11px] text-[#fca5a5]">{liveError}</div>
               )}
-              {respondingDeviceCount > 0 && (
-                <div className="mb-4 rounded-lg border border-[#1f4b6d] bg-[#091624] px-4 py-3 text-[11px] text-[#bfdbfe]">
-                  <div className="mb-1 font-semibold uppercase tracking-[0.15em] text-[#7dd3fc]">Live Feed Audit</div>
-                  <div>
-                    Current server payload: <span className="font-bold text-white">{publishedRegisterTotal}</span> merged registers across{' '}
-                    <span className="font-bold text-white">{respondingDeviceCount}</span> responding devices. This live page stays curated; the{' '}
-                    <span className="font-bold text-white">All Parameters</span> tab now lists every fetched register per device.
-                  </div>
-                  {!dashboardSnapshotAvailable && (
-                    <div className="mt-1">
-                      Dashboard-only registers will not appear until Murphy exposes them through the public feed or dashboard auth is configured on the server.
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* ── 3 YES/NO Status Cards ── */}
               <div className="grid gap-4 sm:grid-cols-3 mb-5">
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={allOnTarget}
+                  value={siteWellScore != null ? `${siteWellScore.toFixed(0)}%` : undefined}
                   detail={wellsWithTarget.length > 0
                     ? `${wellsAtTargetCount} of ${wellsWithTarget.length} wells within 5% of setpoint`
                     : activeWells.length > 0
@@ -624,14 +623,83 @@ export default function HalfmannLiveView() {
                         : 'Waiting for flow data…'}
                 />
                 <StatusCard
-                  question="Is the recycle valve closed?"
-                  good={recycleOpen === null ? null : !recycleOpen}
-                  detail={recycleVal == null
-                    ? NOT_PUBLISHED_COPY
-                    : recycleOpen
-                      ? `OPEN — valve at ${recycleVal.toFixed(1)}% (threshold: ${recycleAlertThreshold}%)`
-                      : `Closed — valve at ${recycleVal.toFixed(1)}%`}
+                  question="Are all compressors meeting flow commands?"
+                  good={allCompressorsMeetingCommands}
+                  detail={compressorCommandScore != null
+                    ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score`
+                    : 'Desired flow command not visible on current site feed'}
                 />
+              </div>
+
+              <div className="mb-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#49D0E2]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
+                    Well-by-Well Status
+                  </div>
+                  <div className="text-[10px] text-[#555]">
+                    Total: <span className="text-white font-bold">{totalActualFlow.toFixed(3)}</span>
+                    {effectiveTotalDesired != null && <span className="text-[#555]"> / {effectiveTotalDesired.toFixed(3)} MMSCFD desired</span>}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+                  {liveWellPerformance.map((well) => {
+                    const hasData = well.actual != null
+                    const onTarget = well.atTarget
+                    const borderColor = !hasData ? '#1a1a2a' : onTarget ? '#1d6c3d' : '#5a3a10'
+                    const bgColor = !hasData ? '#0a0a14' : onTarget ? '#071410' : '#130e04'
+                    return (
+                      <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
+                        style={{ borderColor, background: bgColor }}>
+                        <div className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: '#49D0E2' }}>
+                          Well {well.wellNumber}
+                        </div>
+                        <div className="mb-1">
+                          <div className="text-[24px] font-black leading-none"
+                            style={{ color: !hasData ? '#333' : onTarget ? '#22c55e' : '#f59e0b', fontFamily: "'Arial Black'" }}>
+                            {hasData ? well.actual.toFixed(3) : 'NO DATA'}
+                          </div>
+                          {hasData && <div className="text-[9px] mt-0.5" style={{ color: onTarget ? '#4ade80' : '#fbbf24' }}>MMSCFD actual</div>}
+                        </div>
+                        {well.desired != null ? (
+                          <div className="mb-2">
+                            <div className="text-[16px] font-black leading-none text-[#4fc3f7]" style={{ fontFamily: "'Arial Black'" }}>
+                              {well.desired.toFixed(3)}
+                            </div>
+                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD setpoint</div>
+                          </div>
+                        ) : (
+                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not returned by current site feed</div>
+                        )}
+                        {well.matchPct != null && (
+                          <div className="mb-2">
+                            <div className="h-2 overflow-hidden rounded-full" style={{ background: '#14202c' }}>
+                              <div className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${Math.min(100, well.matchPct)}%`,
+                                  background: well.matchPct >= 95 ? 'linear-gradient(to right, #22c55e, #4fc3f7)' : '#f59e0b',
+                                }} />
+                            </div>
+                            <div className="text-[9px] text-[#555] mt-0.5">{well.matchPct.toFixed(1)}% of target</div>
+                          </div>
+                        )}
+                        {hasData && well.desired != null && (
+                          <div className="text-[14px] font-black mb-3"
+                            style={{ color: onTarget ? '#22c55e' : '#f59e0b', fontFamily: "'Arial Black'" }}>
+                            {onTarget ? 'ON TARGET' : 'LOW'}
+                          </div>
+                        )}
+                        <div className="border-t border-[#1a1a2a] my-2" />
+                        <div className="mb-2">
+                          <div className="text-[7px] text-[#555] uppercase tracking-wider">Yesterday</div>
+                          <div className="text-[14px] font-black leading-none text-white" style={{ fontFamily: "'Arial Black'" }}>
+                            {well.yesterday != null ? well.yesterday.toFixed(3) : '—'}
+                          </div>
+                          {well.yesterday != null && <div className="text-[8px] text-[#555]">MMSCFD</div>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* ── Recycle Valve Large Block + Pressure Summary ── */}
@@ -703,7 +771,7 @@ export default function HalfmannLiveView() {
 
                     {/* Per-Well Pressures (from Customer PLC) */}
                     <div className="text-[9px] text-[#49D0E2] uppercase tracking-[0.15em] font-bold mb-2">Static, Casing &amp; Tubing Pressures — Per Well</div>
-                    <div className="grid grid-cols-5 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                       {liveWellPerformance.map((well, i) => (
                         <div key={i} className="rounded-lg border border-[#1e1e30] bg-[#0a0a14] p-2">
                           <div className="text-[8px] text-[#49D0E2] font-bold uppercase tracking-wider mb-1.5">Well {well.wellNumber}</div>
@@ -753,6 +821,8 @@ export default function HalfmannLiveView() {
                 </div>
               </div>
 
+              {false && (
+              <>
               {/* ── Well-by-Well Columns (all per-well data stacked) ── */}
               <div className="mb-5">
                 <div className="flex items-center justify-between mb-3">
@@ -837,6 +907,8 @@ export default function HalfmannLiveView() {
                   })}
                 </div>
               </div>
+              </>
+              )}
 
               {/* ── Online Indicator ── */}
               <div className="flex items-center gap-3 mb-5">

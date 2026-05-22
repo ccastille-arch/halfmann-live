@@ -3,13 +3,14 @@ import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegist
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
+const TARGET_TOLERANCE_PCT = 5
 
 const HALFMANN_DEVICES = {
   panel: '2507-501508',
   unit2130: '2507-500709',
   unit2127: '2504-504108',
-  unit2129: '2504-504102',
   unit2128: '2507-500076',
+  unit2129: '2504-504102',
   unit1396: '2507-501442',
 }
 
@@ -44,16 +45,7 @@ const WELL_STATIC_KEYS = [1, 2, 3, 4, 5].map((n) => [
 ])
 
 const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
-
 const UNIT_TO_COMP_NUM = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
-
-const DOC_RULES = [
-  'Well decisions should be based on individual well flow meters, not compressor current flow rate.',
-  'Discharge override takes precedence over increasing well flow demand.',
-  'Well sacrifice should be the last resort and only after compressor capacity is exhausted.',
-  'Compressors coming online should not steal flow command from loaded units until they are online and loaded.',
-  'If wells are short and discharge is not in override, the panel should bump compressor commands in step changes.',
-]
 
 async function readErrorPayload(res) {
   const contentType = res.headers.get('content-type') || ''
@@ -111,16 +103,6 @@ function deriveMissingCompressorFlows(unitFlows, totalActualFlow, units) {
   return next
 }
 
-function withinPct(actual, desired, pct = 5) {
-  if (actual == null || desired == null || desired <= 0) return false
-  return Math.abs(actual - desired) <= desired * (pct / 100)
-}
-
-function cleanUnit(unit) {
-  if (!unit) return ''
-  return unit.replace(/Ã‚Â°/g, 'Â°').replace(/Ãƒâ€š/g, '').replace(/Â°/g, '°').trim()
-}
-
 function formatValue(value, decimals = 3) {
   return value != null && Number.isFinite(value) ? value.toFixed(decimals) : '--'
 }
@@ -129,78 +111,202 @@ function formatPct(value, decimals = 1) {
   return value != null && Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '--'
 }
 
-function getNodePalette(status) {
-  if (status === 'good') return { border: '#1d6c3d', bg: '#0b1a12', title: '#4ade80', body: '#d1fae5', muted: '#86efac' }
-  if (status === 'warn') return { border: '#8a5b10', bg: '#171207', title: '#fbbf24', body: '#fef3c7', muted: '#fcd34d' }
-  if (status === 'bad') return { border: '#7a1a1a', bg: '#1b0d0d', title: '#f87171', body: '#fee2e2', muted: '#fca5a5' }
-  return { border: '#24324a', bg: '#101827', title: '#93c5fd', body: '#dbeafe', muted: '#94a3b8' }
+function statusColors(tone) {
+  if (tone === 'good') return { border: '#1d6c3d', bg: '#0b1a12', title: '#4ade80', text: '#d1fae5' }
+  if (tone === 'warn') return { border: '#8a5b10', bg: '#171207', title: '#fbbf24', text: '#fef3c7' }
+  if (tone === 'bad') return { border: '#7a1a1a', bg: '#1b0d0d', title: '#f87171', text: '#fee2e2' }
+  return { border: '#24324a', bg: '#101827', title: '#93c5fd', text: '#dbeafe' }
 }
 
-function FlowNode({ title, value, detail, evidence = [], status = 'neutral', kind = 'inferred' }) {
-  const palette = getNodePalette(status)
+function SummaryCard({ label, value, sub, tone = 'neutral' }) {
+  const c = statusColors(tone)
   return (
-    <div style={{
-      border: `1px solid ${palette.border}`,
-      background: palette.bg,
-      borderRadius: 18,
-      padding: '16px 16px 14px',
-      minHeight: 168,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-      boxShadow: status === 'good' ? '0 0 24px #1d6c3d22' : status === 'warn' ? '0 0 24px #8a5b1022' : status === 'bad' ? '0 0 24px #7a1a1a22' : 'none',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#49D0E2' }}>{title}</div>
-        <span style={{
-          border: `1px solid ${palette.border}`,
-          borderRadius: 999,
-          padding: '2px 8px',
-          fontSize: 8,
-          textTransform: 'uppercase',
-          letterSpacing: '0.12em',
-          color: palette.muted,
-          whiteSpace: 'nowrap',
-        }}>
-          {kind}
-        </span>
+    <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: 16, padding: '14px 16px' }}>
+      <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 28, color: c.title, fontWeight: 900, lineHeight: 1, fontFamily: "'Arial Black', sans-serif" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: c.text, marginTop: 8, lineHeight: 1.5 }}>{sub}</div>}
+    </div>
+  )
+}
+
+function OperatorCallout({ diagnosis }) {
+  const c = statusColors(diagnosis.tone)
+  return (
+    <div style={{ border: `2px solid ${c.border}`, background: c.bg, borderRadius: 22, padding: '20px 22px', marginBottom: 18 }}>
+      <div style={{ fontSize: 10, color: '#49D0E2', fontWeight: 900, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
+        Operator Answer
       </div>
-      <div style={{ fontSize: 26, fontWeight: 900, color: palette.title, lineHeight: 1.05, fontFamily: "'Arial Black', sans-serif" }}>
-        {value}
+      <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>Pad status right now:</div>
+      <div style={{ fontSize: 36, color: c.title, fontWeight: 900, lineHeight: 1.05, fontFamily: "'Arial Black', sans-serif", marginBottom: 12 }}>
+        {diagnosis.headline}
       </div>
-      <div style={{ fontSize: 11, color: palette.body, lineHeight: 1.55 }}>
-        {detail}
+      <div style={{ fontSize: 15, color: c.text, lineHeight: 1.7, marginBottom: 14 }}>
+        {diagnosis.reason}
       </div>
-      {evidence.length > 0 && (
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
-          {evidence.map((item) => (
-            <div key={item} style={{ fontSize: 9, color: palette.muted, lineHeight: 1.45 }}>
-              {item}
-            </div>
-          ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+        <div style={{ border: '1px solid #1f3650', borderRadius: 14, padding: '12px 14px', background: '#0a1220' }}>
+          <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 6 }}>
+            Why We Think That
+          </div>
+          <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.65 }}>{diagnosis.evidence}</div>
         </div>
-      )}
+        <div style={{ border: '1px solid #1f3650', borderRadius: 14, padding: '12px 14px', background: '#0a1220' }}>
+          <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 6 }}>
+            What To Do
+          </div>
+          <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.65 }}>{diagnosis.action}</div>
+        </div>
+      </div>
     </div>
   )
 }
 
-function BranchLine() {
-  return <div style={{ width: 2, height: 24, background: 'linear-gradient(180deg, #1f3650 0%, #28496b 100%)', margin: '0 auto' }} />
-}
-
-function DiagnosticBadge({ label, value, tone = '#49D0E2' }) {
+function WellRow({ well }) {
+  const tone = well.atTarget ? 'good' : 'warn'
+  const c = statusColors(tone)
   return (
-    <div style={{
-      border: '1px solid #1f3650',
-      background: '#0b1220',
-      borderRadius: 12,
-      padding: '10px 12px',
-      minWidth: 130,
-    }}>
-      <div style={{ fontSize: 8, color: '#7a8fb0', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 5 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 900, color: tone, fontFamily: "'Arial Black', sans-serif" }}>{value}</div>
+    <div style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 14, padding: '12px 14px', display: 'grid', gridTemplateColumns: '90px 1fr auto', gap: 14, alignItems: 'center' }}>
+      <div style={{ fontSize: 13, color: '#fff', fontWeight: 800 }}>Well {well.wellNumber}</div>
+      <div>
+        <div style={{ fontSize: 12, color: c.title, fontWeight: 800 }}>
+          {formatValue(well.actual)} actual / {formatValue(well.desired)} target MMSCFD
+        </div>
+        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
+          {well.atTarget ? 'Meeting target' : `Short by ${formatValue(well.shortfall)} MMSCFD`} | static {well.staticPressure != null ? `${formatValue(well.staticPressure, 0)} PSI` : '--'}
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: well.atTarget ? '#4ade80' : '#fbbf24', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+        {well.atTarget ? 'OK' : 'LOW'}
+      </div>
     </div>
   )
+}
+
+function UnitRow({ unit, actualFlow, desiredFlow, desiredFlowDerived, suctionActual, suctionTarget, rpm, discharge, derivedFlow }) {
+  const running = rpm != null && rpm > 100
+  return (
+    <div style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 14, padding: '12px 14px', display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 14, alignItems: 'center' }}>
+      <div style={{ fontSize: 13, color: '#fff', fontWeight: 800 }}>{unit.label}{unit.standby ? ' (Standby)' : ''}</div>
+        <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.65 }}>
+        Flow {formatValue(actualFlow)} actual / {formatValue(desiredFlow)} desired MMSCFD
+        {desiredFlowDerived ? ' | desired derived from total site target' : ''}
+        {derivedFlow ? ' | actual derived from site balance' : ''}
+        <br />
+        Suction {formatValue(suctionActual, 1)} actual / {formatValue(suctionTarget, 1)} loaded-auto-sp PSI
+        <br />
+        RPM {formatValue(rpm, 0)} | discharge {formatValue(discharge, 0)} PSI
+      </div>
+      <div style={{ fontSize: 10, color: running ? '#4ade80' : '#94a3b8', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+        {running ? 'Running' : 'Stopped'}
+      </div>
+    </div>
+  )
+}
+
+function buildDiagnosis({
+  allOnTarget,
+  wellsShort,
+  totalActual,
+  totalDesired,
+  siteMatchPct,
+  lowestSuction,
+  highestDischarge,
+  dischargeTrigger,
+  recycleOpen,
+  recycleValvePosition,
+  runningUnits,
+  recommendedCompressors,
+  commandMatchAvg,
+  speedSuctionPressAutoSp,
+  speedDischargePressAutoSp,
+}) {
+  if (allOnTarget) {
+    return {
+      tone: 'good',
+      headline: 'Meeting rate',
+      reason: 'All wells with targets are currently within 5% of setpoint.',
+      evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. ${wellsShort.length} wells are short.`,
+      action: 'No action needed right now. Keep watching discharge pressure and recycle position.',
+    }
+  }
+
+  if (wellsShort.length === 0) {
+    return {
+      tone: 'neutral',
+      headline: 'Need more live target data',
+      reason: 'The page cannot fully judge the pad until it has live well target data for every well.',
+      evidence: 'Flow is visible, but at least some target comparison is still using confirmed fallback targets.',
+      action: 'Use the target numbers shown here for now, then verify the panel target registers stay visible in MLink.',
+    }
+  }
+
+  if (speedSuctionPressAutoSp != null && lowestSuction != null && lowestSuction <= speedSuctionPressAutoSp) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because suction protection is slowing units down',
+      reason: 'At least one compressor is at or below its suction slow-down target, so the panel protects suction pressure before it chases flow.',
+      evidence: `Lowest live suction is ${formatValue(lowestSuction, 1)} PSI and the low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Check gas supply and suction conditions first. The units may ignore flow demand until suction pressure recovers.',
+    }
+  }
+
+  if (speedDischargePressAutoSp != null && highestDischarge != null && highestDischarge >= speedDischargePressAutoSp) {
+    return {
+      tone: 'bad',
+      headline: 'Not meeting rate because discharge protection is slowing units down',
+      reason: 'At least one compressor is at or above its discharge slow-down target, so the panel protects discharge pressure before it chases flow.',
+      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI and the high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Check discharge pressure and downstream restriction before changing well targets.',
+    }
+  }
+
+  if (dischargeTrigger != null && highestDischarge != null && highestDischarge >= dischargeTrigger) {
+    return {
+      tone: 'bad',
+      headline: 'Not meeting rate because discharge pressure is too high',
+      reason: 'The panel is likely pulling flow back to protect discharge pressure before it tries to feed the short wells.',
+      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI and the unit high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp ?? dischargeTrigger, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Look at discharge pressure first. Do not chase well flow until the high discharge condition clears.',
+    }
+  }
+
+  if (recycleOpen === true) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because the recycle valve is open',
+      reason: 'Gas is being recirculated instead of all of it going to the wells.',
+      evidence: `Recycle valve is at ${formatValue(recycleValvePosition, 1)}%. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Find out why recycle is open. Until it closes, some gas is not reaching the wells.',
+    }
+  }
+
+  if (recommendedCompressors != null && runningUnits.length < recommendedCompressors) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because not enough compressors are loaded',
+      reason: 'The pad is short on online compression compared with the panel recommendation.',
+      evidence: `${runningUnits.length} primary compressors are running and the panel recommends ${formatValue(recommendedCompressors, 0)}. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Check why the missing compressor is not online and loaded before expecting the wells to recover.',
+    }
+  }
+
+  if (siteMatchPct != null && siteMatchPct >= 96) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because gas is being prioritized to other wells',
+      reason: 'The pad total is close to target, but one or more wells are still short. That usually means the shortfall is being concentrated on specific wells instead of the whole pad.',
+      evidence: `Pad is still at ${formatPct(siteMatchPct)} of total desired. Short wells: ${wellsShort.map((well) => `W${well.wellNumber} short ${formatValue(well.shortfall)}`).join(' | ')}.`,
+      action: 'Inspect the low wells first. This usually means one well is being sacrificed or one well has its own restriction.',
+    }
+  }
+
+  return {
+    tone: 'bad',
+    headline: 'Not meeting rate because the pad still needs more compressor flow',
+    reason: 'The wells are short, discharge is not obviously in override, and recycle is not the main issue. The most likely problem is that compressor command needs to be bumped up or a unit is not carrying its share.',
+    evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}. Low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI and high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp, 0)} PSI.`,
+    action: 'Check compressor flow commands and verify each running unit is carrying its share of total flow. If suction is down at the slow-down target or discharge is up at its slow-down target, the units may be slowing down on purpose.',
+  }
 }
 
 export default function HalfmannDiagnosticsView() {
@@ -249,7 +355,6 @@ export default function HalfmannDiagnosticsView() {
   const derived = useMemo(() => {
     const panel = parseLiveDatapoints(panelData)
     const unitMaps = HALFMANN_UNITS.map((unit) => parseLiveDatapoints(unitDataRaw[unit.key]))
-    const tolerancePct = 5
 
     const wells = WELL_FLOW_KEYS.map((flowKeys, index) => {
       const wellNumber = index + 1
@@ -258,16 +363,13 @@ export default function HalfmannDiagnosticsView() {
       const actual = getNumeric(panel, flowKeys)
       const staticPressure = getNumeric(panel, WELL_STATIC_KEYS[index])
       const shortfall = actual != null && desired != null ? Math.max(0, desired - actual) : null
-      const pctOfTarget = actual != null && desired != null && desired > 0 ? (actual / desired) * 100 : null
       return {
         wellNumber,
         actual,
         desired,
-        desiredSource: desiredDatapoint ? 'feed' : (HALFMANN_WELL_SETPOINT_FALLBACKS[index] != null ? 'confirmed fallback' : null),
         staticPressure,
         shortfall,
-        pctOfTarget,
-        atTarget: withinPct(actual, desired, tolerancePct),
+        atTarget: actual != null && desired != null && Math.abs(actual - desired) <= desired * (TARGET_TOLERANCE_PCT / 100),
       }
     })
 
@@ -276,7 +378,7 @@ export default function HalfmannDiagnosticsView() {
     const totalDesiredFromWells = wells.reduce((sum, well) => sum + (well.desired ?? 0), 0)
     const totalDesired = totalDesiredSite ?? (totalDesiredFromWells > 0 ? totalDesiredFromWells : null)
 
-    const unitDesiredFlows = HALFMANN_UNITS.map((unit, index) => {
+    const rawUnitDesiredFlows = HALFMANN_UNITS.map((unit, index) => {
       const compressorNumber = UNIT_TO_COMP_NUM[unit.key]
       const unitNumber = unit.label.match(/\d{4}/)?.[0]
       return getNumeric(panel, [
@@ -294,17 +396,28 @@ export default function HalfmannDiagnosticsView() {
 
     const rawUnitActualFlows = unitMaps.map((dataMap) => getNumeric(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']))
     const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, totalActual, HALFMANN_UNITS)
+    const unitSuction = unitMaps.map((dataMap) => getNumeric(dataMap, ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
+    const unitSuctionTarget = unitMaps.map((dataMap) => getNumeric(dataMap, ['Loaded Auto Sp']))
     const unitDischarge = unitMaps.map((dataMap) => getNumeric(dataMap, ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
     const unitRpm = unitMaps.map((dataMap) => getNumeric(dataMap, ['RPM', 'Driver Speed', 'Engine Speed', 'ENGINE RPM', 'Engine Speed From EICS']))
     const runningUnits = HALFMANN_UNITS.filter((unit, index) => !unit.standby && unitRpm[index] != null && unitRpm[index] > 100)
+    const runningPrimaryCount = runningUnits.length
+    const derivedDesiredPerRunningUnit = totalDesired != null && runningPrimaryCount > 0 ? totalDesired / runningPrimaryCount : null
+    const unitDesiredIsDerived = HALFMANN_UNITS.map((unit, index) =>
+      !unit.standby && rawUnitDesiredFlows[index] == null && unitRpm[index] != null && unitRpm[index] > 100 && derivedDesiredPerRunningUnit != null
+    )
+    const unitDesiredFlows = HALFMANN_UNITS.map((unit, index) =>
+      rawUnitDesiredFlows[index] ?? (unitDesiredIsDerived[index] ? derivedDesiredPerRunningUnit : null)
+    )
     const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
     const recycleValvePosition = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
-    const recycleOpenThreshold = 5
-    const recycleOpen = recycleValvePosition != null ? recycleValvePosition > recycleOpenThreshold : null
+    const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null
     const dischargeTrigger = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
+    const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
+    const speedDischargePressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Discharge Press PID Auto Sp']), null)
+    const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
     const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
-    const highestStatic = wells.filter((well) => well.staticPressure != null).reduce((max, well) => Math.max(max, well.staticPressure), null)
 
     const wellsWithTarget = wells.filter((well) => well.actual != null && well.desired != null)
     const wellsMeetingCount = wellsWithTarget.filter((well) => well.atTarget).length
@@ -312,151 +425,31 @@ export default function HalfmannDiagnosticsView() {
     const wellsShort = wellsWithTarget.filter((well) => !well.atTarget)
     const shortfallTotal = wellsShort.reduce((sum, well) => sum + (well.shortfall ?? 0), 0)
     const siteMatchPct = totalDesired != null && totalDesired > 0 ? (totalActual / totalDesired) * 100 : null
-    const compressorsWithCommands = unitDesiredFlows.filter((value, index) => !HALFMANN_UNITS[index].standby && value != null).length
-    const loadedCommandCoverage = compressorsWithCommands > 0
-      ? unitDesiredFlows
-          .map((desired, index) => {
-            if (HALFMANN_UNITS[index].standby || desired == null || unitActualFlows[index] == null || desired <= 0) return null
-            return (unitActualFlows[index] / desired) * 100
-          })
-          .filter((value) => value != null)
-      : []
-    const commandMatchAvg = loadedCommandCoverage.length
-      ? loadedCommandCoverage.reduce((sum, value) => sum + value, 0) / loadedCommandCoverage.length
+    const commandMatchValues = unitDesiredFlows.map((desired, index) => {
+      if (HALFMANN_UNITS[index].standby || desired == null || unitActualFlows[index] == null || desired <= 0) return null
+      return (unitActualFlows[index] / desired) * 100
+    }).filter((value) => value != null)
+    const commandMatchAvg = commandMatchValues.length
+      ? commandMatchValues.reduce((sum, value) => sum + value, 0) / commandMatchValues.length
       : null
-
-    const dischargeLimited = dischargeTrigger != null && highestDischarge != null && highestDischarge >= dischargeTrigger
-    const notEnoughLoadedCompressors = recommendedCompressors != null && runningUnits.length < recommendedCompressors
-    const likelySacrifice = !!(
-      wellsShort.length > 0 &&
-      siteMatchPct != null &&
-      siteMatchPct >= 96 &&
-      recycleOpen === false &&
-      !dischargeLimited
-    )
-    const needsLowFlowOverride = !!(
-      wellsShort.length > 0 &&
-      !dischargeLimited &&
-      recycleOpen === false &&
-      siteMatchPct != null &&
-      siteMatchPct < 96
-    )
-
-    let primaryDiagnosis = {
-      title: 'System healthy',
-      value: 'All wells are meeting target',
-      detail: 'Every well with a target is within 5% of desired flow right now.',
-      status: 'good',
-      kind: 'direct',
-      evidence: [
-        `${wellsMeetingCount} of ${wellsWithTarget.length} wells are within 5%`,
-        `Total actual ${formatValue(totalActual)} vs desired ${formatValue(totalDesired)}`,
-      ],
-    }
-
-    if (allOnTarget === null) {
-      primaryDiagnosis = {
-        title: 'Not enough target evidence',
-        value: 'Target comparison is partially inferred',
-        detail: 'The tree is using confirmed fallback well targets where live setpoint registers are still absent.',
-        status: 'neutral',
-        kind: 'inferred',
-        evidence: [
-          `${wells.filter((well) => well.desiredSource === 'feed').length} well setpoints came from live feed`,
-          `${wells.filter((well) => well.desiredSource === 'confirmed fallback').length} well setpoints came from confirmed fallback targets`,
-        ],
-      }
-    } else if (allOnTarget === false) {
-      if (dischargeLimited) {
-        primaryDiagnosis = {
-          title: 'Discharge override is the top suspect',
-          value: 'Pad is likely backing off to protect discharge pressure',
-          detail: 'The document says discharge override takes precedence over raising well flows. Right now discharge is at or above the likely trigger.',
-          status: 'bad',
-          kind: 'inferred',
-          evidence: [
-            `Highest compressor discharge: ${formatValue(highestDischarge, 0)} PSI`,
-            `Likely trigger setpoint: ${formatValue(dischargeTrigger, 0)} PSI`,
-            `Wells short of target: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ') || 'none'}`,
-          ],
-        }
-      } else if (notEnoughLoadedCompressors) {
-        primaryDiagnosis = {
-          title: 'Loaded compressor count is short',
-          value: 'The pad likely does not have enough loaded compression online',
-          detail: 'The logic document says oncoming compressors should not count until they are online and loaded. The live pad is below the recommended loaded count.',
-          status: 'warn',
-          kind: 'inferred',
-          evidence: [
-            `Running compressors: ${runningUnits.length}`,
-            `Recommended compressors: ${formatValue(recommendedCompressors, 0)}`,
-            `${HALFMANN_UNITS.filter((unit, index) => !unit.standby && !(unitRpm[index] != null && unitRpm[index] > 100)).map((unit) => unit.label).join(', ') || 'No offline primary units'}`,
-          ],
-        }
-      } else if (recycleOpen) {
-        primaryDiagnosis = {
-          title: 'Recycle loss is visible',
-          value: 'Gas is being recirculated while wells are short',
-          detail: 'An open recycle valve is direct evidence that some gas is not reaching the wells.',
-          status: 'warn',
-          kind: 'direct',
-          evidence: [
-            `Recycle valve position: ${formatValue(recycleValvePosition, 1)}%`,
-            `Total actual flow: ${formatValue(totalActual)}`,
-            `Total desired flow: ${formatValue(totalDesired)}`,
-          ],
-        }
-      } else if (likelySacrifice) {
-        primaryDiagnosis = {
-          title: 'Well sacrifice or priority balancing is likely',
-          value: 'The pad total is close, but one or more wells are carrying the shortfall',
-          detail: 'This matches the logic document case where total compression is mostly there but lower-priority wells end up taking the hit.',
-          status: 'warn',
-          kind: 'inferred',
-          evidence: [
-            `Site is still at ${formatPct(siteMatchPct)}`,
-            `Short wells: ${wellsShort.map((well) => `W${well.wellNumber} short ${formatValue(well.shortfall)}`).join(' | ')}`,
-            `Recycle valve is ${recycleOpen === false ? 'closed' : 'not proven closed'}`,
-          ],
-        }
-      } else if (needsLowFlowOverride) {
-        primaryDiagnosis = {
-          title: 'The panel should be in low-flow bump logic',
-          value: 'Wells are short without discharge override evidence',
-          detail: 'Based on the document, this is when the panel should be stepping compressor commands upward by configured increments.',
-          status: 'bad',
-          kind: 'inferred',
-          evidence: [
-            `Site match is only ${formatPct(siteMatchPct)}`,
-            `Aggregate well shortfall: ${formatValue(shortfallTotal)} MMSCFD`,
-            `Average compressor command match: ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'desired flow not visible'}`,
-          ],
-        }
-      } else {
-        primaryDiagnosis = {
-          title: 'Pad is off target, but the reason is mixed',
-          value: 'Need more direct live evidence for a single culprit',
-          detail: 'The tree sees missed wells, but the missing command and state registers keep this from being a one-cause diagnosis.',
-          status: 'neutral',
-          kind: 'inferred',
-          evidence: [
-            `Wells short of target: ${wellsShort.length}`,
-            `Desired compressor flow registers visible on ${compressorsWithCommands} primary units`,
-            `Discharge trigger register: ${dischargeTrigger != null ? 'visible' : 'not visible'}`,
-          ],
-        }
-      }
-    }
 
     return {
       timestamp: getTimestamp(panelData),
       wells,
+      wellsWithTarget,
+      wellsMeetingCount,
+      allOnTarget,
+      wellsShort,
       totalActual,
       totalDesired,
-      totalDesiredSite,
-      totalDesiredFromWells,
+      shortfallTotal,
+      siteMatchPct,
+      lowestSuction,
       unitActualFlows,
       unitDesiredFlows,
+      unitDesiredIsDerived,
+      unitSuction,
+      unitSuctionTarget,
       unitRpm,
       unitDischarge,
       runningUnits,
@@ -464,23 +457,14 @@ export default function HalfmannDiagnosticsView() {
       recycleValvePosition,
       recycleOpen,
       dischargeTrigger,
+      speedSuctionPressAutoSp,
+      speedDischargePressAutoSp,
       highestDischarge,
-      highestStatic,
-      allOnTarget,
-      wellsMeetingCount,
-      wellsWithTarget,
-      wellsShort,
-      siteMatchPct,
-      shortfallTotal,
       commandMatchAvg,
-      notEnoughLoadedCompressors,
-      dischargeLimited,
-      likelySacrifice,
-      needsLowFlowOverride,
-      primaryDiagnosis,
     }
   }, [panelData, unitDataRaw])
 
+  const diagnosis = buildDiagnosis(derived)
   const pageTime = derived.timestamp ?? lastRefresh
 
   return (
@@ -488,243 +472,126 @@ export default function HalfmannDiagnosticsView() {
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid #1a1a2a', background: '#0c0c16' }}>
         <div>
           <div style={{ fontSize: 14, color: '#fff', fontWeight: 900, fontFamily: "'Arial Black', sans-serif" }}>Diagnostics - Halfmann 1214</div>
-          <div style={{ fontSize: 10, color: '#64748b' }}>Flowchart-style logic tree using live MLink evidence plus Halfmann panel logic</div>
+          <div style={{ fontSize: 10, color: '#64748b' }}>Simple operator page: what is wrong, why it is wrong, and what to check next</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
-          <button onClick={refresh} disabled={loading} style={{
-            border: '1px solid #253449',
-            background: '#131d2e',
-            color: loading ? '#64748b' : '#bfdbfe',
-            borderRadius: 10,
-            padding: '8px 12px',
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            cursor: loading ? 'default' : 'pointer',
-          }}>
+          <button
+            onClick={refresh}
+            disabled={loading}
+            style={{
+              border: '1px solid #253449',
+              background: '#131d2e',
+              color: loading ? '#64748b' : '#bfdbfe',
+              borderRadius: 10,
+              padding: '8px 12px',
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              cursor: loading ? 'default' : 'pointer',
+            }}
+          >
             {loading ? `Refreshing ${countdown}s` : 'Refresh'}
           </button>
         </div>
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px 28px' }}>
-        <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto' }}>
           {liveError && (
             <div style={{ marginBottom: 16, border: '1px solid #7a1a1a', background: '#1b0d0d', borderRadius: 14, padding: '12px 14px', fontSize: 11, color: '#fecaca' }}>
               {liveError}
             </div>
           )}
 
-          <div style={{ marginBottom: 18, border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
-            <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 8 }}>
-              Diagnostic Intent
-            </div>
-            <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.7 }}>
-              This page tattles when the pad is missing well flow. It follows the control priorities from the Halfmann logic document:
-              first confirm the wells are short, then test for discharge override pressure, loaded compressor shortage, recycle loss,
-              and finally whether the pattern looks like deliberate sacrifice of a lower-priority well.
-            </div>
+          <OperatorCallout diagnosis={diagnosis} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 20 }}>
+            <SummaryCard
+              label="Wells Meeting"
+              value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
+              sub={`Target band is +/-${TARGET_TOLERANCE_PCT}%`}
+              tone={derived.allOnTarget ? 'good' : derived.wellsShort.length > 0 ? 'warn' : 'neutral'}
+            />
+            <SummaryCard
+              label="Total Actual Flow"
+              value={`${formatValue(derived.totalActual)} MMSCFD`}
+              sub={derived.totalDesired != null ? `${formatPct(derived.siteMatchPct)} of desired` : 'Desired total not visible'}
+              tone={derived.siteMatchPct != null && derived.siteMatchPct >= 95 ? 'good' : derived.siteMatchPct != null ? 'warn' : 'neutral'}
+            />
+            <SummaryCard
+              label="Total Desired Flow"
+              value={`${formatValue(derived.totalDesired)} MMSCFD`}
+              sub={`Total shortfall ${formatValue(derived.shortfallTotal)} MMSCFD`}
+              tone="neutral"
+            />
+            <SummaryCard
+              label="Recycle Valve"
+              value={derived.recycleValvePosition != null ? `${formatValue(derived.recycleValvePosition, 1)}%` : '--'}
+              sub={derived.recycleOpen == null ? 'Valve position not visible' : derived.recycleOpen ? 'Open' : 'Closed'}
+              tone={derived.recycleOpen ? 'bad' : derived.recycleOpen === false ? 'good' : 'neutral'}
+            />
+            <SummaryCard
+              label="Discharge Pressure Site"
+              value={derived.highestDischarge != null ? `${formatValue(derived.highestDischarge, 0)} PSI` : '--'}
+              sub={derived.speedDischargePressAutoSp != null ? `Unit slow-down target ${formatValue(derived.speedDischargePressAutoSp, 0)} PSI` : derived.dischargeTrigger != null ? `Panel trigger ${formatValue(derived.dischargeTrigger, 0)} PSI` : 'Slow-down target not visible'}
+              tone={derived.highestDischarge != null && ((derived.speedDischargePressAutoSp != null && derived.highestDischarge >= derived.speedDischargePressAutoSp) || (derived.dischargeTrigger != null && derived.highestDischarge >= derived.dischargeTrigger)) ? 'bad' : 'neutral'}
+            />
+            <SummaryCard
+              label="Suction Controller Score"
+              value={derived.commandMatchAvg != null ? `${formatPct(derived.commandMatchAvg, 0)}` : '--'}
+              sub={derived.speedSuctionPressAutoSp != null ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI` : 'Loaded Auto Sp shown per unit below'}
+              tone={derived.commandMatchAvg != null && derived.commandMatchAvg >= 95 ? 'good' : derived.commandMatchAvg != null ? 'warn' : 'neutral'}
+            />
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-            <DiagnosticBadge label="Wells Meeting" value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`} tone={derived.allOnTarget ? '#4ade80' : '#fbbf24'} />
-            <DiagnosticBadge label="Total Actual" value={`${formatValue(derived.totalActual)} MMSCFD`} tone="#ffffff" />
-            <DiagnosticBadge label="Total Desired" value={`${formatValue(derived.totalDesired)} MMSCFD`} tone="#93c5fd" />
-            <DiagnosticBadge label="Recycle Valve" value={derived.recycleValvePosition != null ? `${formatValue(derived.recycleValvePosition, 1)}%` : '--'} tone={derived.recycleOpen ? '#f87171' : '#4ade80'} />
-            <DiagnosticBadge label="High Discharge" value={derived.highestDischarge != null ? `${formatValue(derived.highestDischarge, 0)} PSI` : '--'} tone="#fca5a5" />
-            <DiagnosticBadge label="Trigger SP" value={derived.dischargeTrigger != null ? `${formatValue(derived.dischargeTrigger, 0)} PSI` : '--'} tone="#93c5fd" />
-            <DiagnosticBadge label="Running Compressors" value={`${derived.runningUnits.length}${derived.recommendedCompressors != null ? ` / ${formatValue(derived.recommendedCompressors, 0)} rec` : ''}`} tone="#49D0E2" />
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <div style={{ width: 'min(100%, 1060px)' }}>
-              <FlowNode
-                title="Root Check"
-                value={derived.allOnTarget ? 'YES - all wells are meeting target' : derived.allOnTarget === false ? 'NO - one or more wells are missing flow' : 'PARTIAL - target evidence is mixed'}
-                detail={derived.allOnTarget
-                  ? 'The diagnostic tree sees every well with a target inside the 5% tolerance band.'
-                  : derived.allOnTarget === false
-                    ? `The tree sees ${derived.wellsShort.length} wells outside the 5% band and now traces the likely reason below.`
-                    : 'Some setpoints are still inferred from confirmed fallback targets, so this tree explains the most likely reason with that limitation called out.'}
-                status={derived.allOnTarget ? 'good' : derived.allOnTarget === false ? 'bad' : 'neutral'}
-                kind={derived.allOnTarget === null ? 'inferred' : 'direct'}
-                evidence={[
-                  `Total actual ${formatValue(derived.totalActual)} vs desired ${formatValue(derived.totalDesired)}`,
-                  `Short wells: ${derived.wellsShort.map((well) => `W${well.wellNumber}`).join(', ') || 'none'}`,
-                ]}
-              />
-              <BranchLine />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
-                <FlowNode
-                  title="Branch 1 - Setpoint Confidence"
-                  value={`${derived.wells.filter((well) => well.desiredSource === 'feed').length} live / ${derived.wells.filter((well) => well.desiredSource === 'confirmed fallback').length} fallback`}
-                  detail="Live well setpoints are preferred. Confirmed fallback targets are only used so the diagnostics tree can still evaluate pad behavior instead of going blind."
-                  status={derived.wells.every((well) => well.desiredSource === 'feed') ? 'good' : 'warn'}
-                  kind={derived.wells.every((well) => well.desiredSource === 'feed') ? 'direct' : 'inferred'}
-                  evidence={derived.wells.map((well) => `Well ${well.wellNumber}: ${formatValue(well.desired)} MMSCFD (${well.desiredSource || 'missing'})`)}
-                />
-                <FlowNode
-                  title="Branch 2 - Discharge Override"
-                  value={derived.dischargeLimited ? 'LIKELY ACTIVE' : derived.dischargeTrigger != null ? 'Not currently tripped' : 'Trigger not visible'}
-                  detail={derived.dischargeLimited
-                    ? 'Discharge is at or above the likely trigger, so the panel should protect pressure before it tries to bump flow.'
-                    : derived.dischargeTrigger != null
-                      ? 'Discharge is below the visible trigger, so override pressure is not the lead suspect at this instant.'
-                      : 'The tree cannot directly prove the override trigger without that register.'}
-                  status={derived.dischargeLimited ? 'bad' : derived.dischargeTrigger != null ? 'good' : 'neutral'}
-                  kind={derived.dischargeTrigger != null ? 'direct' : 'inferred'}
-                  evidence={[
-                    `Highest discharge ${formatValue(derived.highestDischarge, 0)} PSI`,
-                    `Trigger setpoint ${formatValue(derived.dischargeTrigger, 0)} PSI`,
-                    `Highest static pressure ${formatValue(derived.highestStatic, 0)} PSI`,
-                  ]}
-                />
-                <FlowNode
-                  title="Branch 3 - Loaded Compression"
-                  value={derived.notEnoughLoadedCompressors ? 'SHORT ON LOADED UNITS' : 'Loaded count looks adequate'}
-                  detail={derived.notEnoughLoadedCompressors
-                    ? 'The logic document says new units should not count until they are online and loaded. The running count is below the pad recommendation.'
-                    : 'Loaded compressor count does not appear to be the first-order problem right now.'}
-                  status={derived.notEnoughLoadedCompressors ? 'warn' : 'good'}
-                  kind={derived.recommendedCompressors != null ? 'direct' : 'inferred'}
-                  evidence={[
-                    `Running primaries ${derived.runningUnits.length}`,
-                    `Recommended compressors ${formatValue(derived.recommendedCompressors, 0)}`,
-                    `Command visibility on primaries ${derived.unitDesiredFlows.filter((value, index) => !HALFMANN_UNITS[index].standby && value != null).length} of 4`,
-                  ]}
-                />
-                <FlowNode
-                  title="Branch 4 - Gas Waste / Recycle"
-                  value={derived.recycleOpen ? 'RECYCLE IS OPEN' : derived.recycleOpen === false ? 'Recycle appears closed' : 'Recycle position not visible'}
-                  detail={derived.recycleOpen
-                    ? 'An open recycle valve is direct evidence that some compressor gas is not reaching the wells.'
-                    : derived.recycleOpen === false
-                      ? 'Recycle does not look like the cause of missed well flow right now.'
-                      : 'The valve position register still matters for a stronger answer here.'}
-                  status={derived.recycleOpen ? 'warn' : derived.recycleOpen === false ? 'good' : 'neutral'}
-                  kind={derived.recycleOpen != null ? 'direct' : 'inferred'}
-                  evidence={[
-                    `Valve position ${derived.recycleValvePosition != null ? `${formatValue(derived.recycleValvePosition, 1)}%` : '--'}`,
-                    `Site match ${formatPct(derived.siteMatchPct)}`,
-                    `Shortfall ${formatValue(derived.shortfallTotal)} MMSCFD`,
-                  ]}
-                />
-              </div>
-              <BranchLine />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14, marginBottom: 14 }}>
-                <FlowNode
-                  title="Branch 5 - Low-Flow Override Path"
-                  value={derived.needsLowFlowOverride ? 'SHOULD BE BUMPING COMPRESSOR COMMANDS' : 'Not the lead path'}
-                  detail={derived.needsLowFlowOverride
-                    ? 'Wells are short, discharge is not tripped, and recycle is not the explanation. That is the exact scenario where the document says to step compressor demand upward.'
-                    : 'This branch is secondary right now because another higher-priority cause is showing stronger evidence.'}
-                  status={derived.needsLowFlowOverride ? 'bad' : 'neutral'}
-                  kind="inferred"
-                  evidence={[
-                    `Average command match ${derived.commandMatchAvg != null ? formatPct(derived.commandMatchAvg) : 'desired flow hidden'}`,
-                    `Aggregate shortfall ${formatValue(derived.shortfallTotal)} MMSCFD`,
-                    `Short wells ${derived.wellsShort.map((well) => `W${well.wellNumber}`).join(', ') || 'none'}`,
-                  ]}
-                />
-                <FlowNode
-                  title="Branch 6 - Well Sacrifice Pattern"
-                  value={derived.likelySacrifice ? 'LIKELY SACRIFICE / PRIORITY BALANCE' : 'Pattern not dominant'}
-                  detail={derived.likelySacrifice
-                    ? 'Total site flow is close enough that the missing gas is likely being concentrated on one or more lower-priority wells instead of the entire pad being uniformly short.'
-                    : 'The current pattern looks more like general shortage or pressure control than deliberate single-well sacrifice.'}
-                  status={derived.likelySacrifice ? 'warn' : 'neutral'}
-                  kind="inferred"
-                  evidence={[
-                    `Site total is ${formatPct(derived.siteMatchPct)}`,
-                    `Short wells ${derived.wellsShort.map((well) => `W${well.wellNumber} ${formatPct(well.pctOfTarget)}`).join(' | ') || 'none'}`,
-                    `Healthy wells ${derived.wells.filter((well) => well.atTarget).map((well) => `W${well.wellNumber}`).join(', ') || 'none'}`,
-                  ]}
-                />
-              </div>
-              <BranchLine />
-              <FlowNode
-                title={derived.primaryDiagnosis.title}
-                value={derived.primaryDiagnosis.value}
-                detail={derived.primaryDiagnosis.detail}
-                status={derived.primaryDiagnosis.status}
-                kind={derived.primaryDiagnosis.kind}
-                evidence={derived.primaryDiagnosis.evidence}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
             <div style={{ border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
               <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
-                Current Well Evidence
+                Wells To Watch
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {derived.wells.map((well) => (
-                  <div key={well.wellNumber} style={{ display: 'grid', gridTemplateColumns: '74px 1fr', gap: 10, alignItems: 'center', border: '1px solid #1a2740', borderRadius: 12, padding: '10px 12px', background: '#0a1220' }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: '#49D0E2', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Well {well.wellNumber}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <div style={{ fontSize: 12, color: well.atTarget ? '#4ade80' : '#fbbf24', fontWeight: 800 }}>
-                        {formatValue(well.actual)} actual / {formatValue(well.desired)} target MMSCFD
-                      </div>
-                      <div style={{ fontSize: 10, color: '#94a3b8' }}>
-                        {well.atTarget ? 'Within 5% of target' : `Short by ${formatValue(well.shortfall)} MMSCFD`} | target source: {well.desiredSource || 'missing'} | static {well.staticPressure != null ? `${formatValue(well.staticPressure, 0)} PSI` : '--'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {derived.wells.map((well) => <WellRow key={well.wellNumber} well={well} />)}
               </div>
             </div>
 
             <div style={{ border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
               <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
-                Compressor Evidence
+                Compressor Check
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {HALFMANN_UNITS.map((unit, index) => (
-                  <div key={unit.key} style={{ border: '1px solid #1a2740', borderRadius: 12, padding: '10px 12px', background: '#0a1220' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ fontSize: 11, color: '#fff', fontWeight: 800 }}>{unit.label}{unit.standby ? ' (Standby)' : ''}</div>
-                      <div style={{ fontSize: 10, color: derived.unitRpm[index] != null && derived.unitRpm[index] > 100 ? '#4ade80' : '#94a3b8', fontWeight: 700 }}>
-                        {derived.unitRpm[index] != null && derived.unitRpm[index] > 100 ? 'RUNNING' : 'STOPPED / UNKNOWN'}
-                      </div>
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 10, color: '#94a3b8', lineHeight: 1.6 }}>
-                      Actual flow: {formatValue(derived.unitActualFlows[index])} MMSCFD
-                      {derived.unitActualFlows[index] != null && unit.key === 'unit2129' && getNumeric(parseLiveDatapoints(unitDataRaw[unit.key]), ['Flow Rate', 'Flow Rate PID PV']) == null ? ' (derived pad balance)' : ''}
-                      <br />
-                      Desired flow: {formatValue(derived.unitDesiredFlows[index])} MMSCFD
-                      <br />
-                      RPM: {formatValue(derived.unitRpm[index], 0)} | discharge: {formatValue(derived.unitDischarge[index], 0)} PSI
-                    </div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {HALFMANN_UNITS.map((unit, index) => {
+                  const directFlowMissing = unit.key === 'unit2129' && getNumeric(parseLiveDatapoints(unitDataRaw[unit.key]), ['Flow Rate', 'Flow Rate PID PV']) == null
+                  return (
+                    <UnitRow
+                      key={unit.key}
+                      unit={unit}
+                      actualFlow={derived.unitActualFlows[index]}
+                      desiredFlow={derived.unitDesiredFlows[index]}
+                      desiredFlowDerived={derived.unitDesiredIsDerived[index]}
+                      suctionActual={derived.unitSuction[index]}
+                      suctionTarget={derived.unitSuctionTarget[index]}
+                      rpm={derived.unitRpm[index]}
+                      discharge={derived.unitDischarge[index]}
+                      derivedFlow={directFlowMissing}
+                    />
+                  )
+                })}
               </div>
             </div>
           </div>
 
-          <div style={{ marginTop: 22, border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
+          <div style={{ marginTop: 18, border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
-              Logic Basis From Document
+              How This Page Decides
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-              {DOC_RULES.map((rule) => (
-                <div key={rule} style={{ border: '1px solid #1a2740', borderRadius: 12, background: '#0a1220', padding: '12px 14px', fontSize: 11, color: '#dbeafe', lineHeight: 1.6 }}>
-                  {rule}
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, fontSize: 10, color: '#94a3b8', lineHeight: 1.6 }}>
-              Direct = the live site is currently reading the evidence register. Inferred = the page is applying the Halfmann control logic to the evidence it does have.
+            <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.75 }}>
+              This page is intentionally simple. It picks the most likely operator-level reason in this order:
+              high discharge pressure first, then recycle open, then not enough compressors online, then well-priority / sacrifice pattern,
+              and finally a general “need more compressor flow” diagnosis if nothing else is stronger.
             </div>
           </div>
-
-          <footer style={{ textAlign: 'center', paddingTop: 20 }}>
-            <span style={{ fontSize: 9, color: '#475569' }}>
-              Halfmann 1214 diagnostics refresh every {REFRESH_INTERVAL_S} seconds. Units are shown using the current live MLink feed and confirmed Halfmann fallback targets where needed.
-            </span>
-          </footer>
         </div>
       </div>
     </div>
