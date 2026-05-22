@@ -10,7 +10,7 @@ const HALFMANN_DEVICES = {
   unit2127: '2504-504108',
   unit2129: '2504-504102',
   unit2128: '2507-500076',
-  unit1396: null, // MLink device ID needed from Jim — add once confirmed
+  unit1396: '2507-501442',
 }
 
 const HALFMANN_UNITS = [
