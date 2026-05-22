@@ -102,6 +102,35 @@ function parseNumeric(value) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function datapointIdentity(dp) {
+  return dp?.alias || dp?.desc || dp?.dataSourceName || dp?.Name || dp?.name || null
+}
+
+function mergeSnapshotData(previousData, nextData) {
+  if (!nextData) return previousData ?? null
+  if (!previousData?.datapoints?.length || !nextData?.datapoints?.length) return nextData
+
+  const mergedByKey = new Map()
+  for (const dp of previousData.datapoints || []) {
+    const key = datapointIdentity(dp)
+    if (!key) continue
+    mergedByKey.set(key, dp)
+  }
+  for (const dp of nextData.datapoints || []) {
+    const key = datapointIdentity(dp)
+    if (!key) continue
+    mergedByKey.set(key, dp)
+  }
+
+  return {
+    ...previousData,
+    ...nextData,
+    datapoints: [...mergedByKey.values()],
+    _registerCount: mergedByKey.size,
+    _heldSupplementCount: Math.max(0, mergedByKey.size - (nextData?.datapoints?.length || 0)),
+  }
+}
+
 function hasAnyDatapoint(dataMap, labelSets) {
   return labelSets.some((labels) => resolveDatapoint(dataMap, labels))
 }
@@ -279,7 +308,7 @@ export function HalfmannDataProvider({ children }) {
     const healthyDevices = []
     const panelUsable = isUsableDeviceSnapshot('panel', panelResult.data)
     const previousPanel = panelRef.current
-    const nextPanel = panelUsable ? panelResult.data : previousPanel
+    const nextPanel = panelUsable ? mergeSnapshotData(previousPanel, panelResult.data) : previousPanel
     if (panelUsable) healthyDevices.push('Panel')
     else if (previousPanel) heldDevices.push('Panel')
 
@@ -288,7 +317,7 @@ export function HalfmannDataProvider({ children }) {
     HALFMANN_UNITS.forEach((unit, index) => {
       const usable = isUsableDeviceSnapshot(unit.key, unitResults[index].data)
       if (usable) {
-        nextUnits[unit.key] = unitResults[index].data
+        nextUnits[unit.key] = mergeSnapshotData(previousUnits[unit.key], unitResults[index].data)
         healthyDevices.push(unit.label)
       } else if (previousUnits[unit.key]) {
         heldDevices.push(unit.label)
