@@ -72,9 +72,22 @@ app.post('/api/admin/logout', (req, res) => {
 
 // ─── MLink proxy ──────────────────────────────────────────────────────────────
 const MLINK_BASE = 'https://api.fwmurphy-iot.com/api'
-const MLINK_DASHBOARD_BASE = process.env.MLINK_DASHBOARD_BASE || 'https://www.fwmurphy-iot.com'
-const MLINK_DASHBOARD_COOKIE = process.env.MLINK_DASHBOARD_COOKIE || ''
-const MLINK_DASHBOARD_AUTH_HEADER = process.env.MLINK_DASHBOARD_AUTH_HEADER || ''
+
+function normalizeEnvValue(value) {
+  const normalized = (value || '').trim()
+  if (!normalized) return ''
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    return normalized.slice(1, -1).trim()
+  }
+  return normalized
+}
+
+const MLINK_DASHBOARD_BASE = normalizeEnvValue(process.env.MLINK_DASHBOARD_BASE) || 'https://www.fwmurphy-iot.com'
+const MLINK_DASHBOARD_COOKIE = normalizeEnvValue(process.env.MLINK_DASHBOARD_COOKIE)
+const MLINK_DASHBOARD_AUTH_HEADER = normalizeEnvValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
 
