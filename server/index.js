@@ -74,20 +74,45 @@ app.post('/api/admin/logout', (req, res) => {
 const MLINK_BASE = 'https://api.fwmurphy-iot.com/api'
 
 function normalizeEnvValue(value) {
-  const normalized = (value || '').trim()
+  let normalized = String(value || '').trim()
   if (!normalized) return ''
-  if (
-    (normalized.startsWith('"') && normalized.endsWith('"')) ||
-    (normalized.startsWith("'") && normalized.endsWith("'"))
-  ) {
-    return normalized.slice(1, -1).trim()
+
+  let previous = null
+  while (normalized && normalized !== previous) {
+    previous = normalized
+    normalized = normalized.replace(/^[`"'“”]+|[`"'“”]+$/g, '').trim()
   }
+
+  return normalized
+}
+
+function normalizeCookieValue(value) {
+  const normalized = normalizeEnvValue(value)
+  if (!normalized) return ''
+  return normalized.replace(/^cookie\s*:\s*/i, '').trim()
+}
+
+function normalizeAuthHeaderValue(value) {
+  let normalized = normalizeEnvValue(value)
+  if (!normalized) return ''
+
+  normalized = normalized
+    .replace(/^authorization\s*:\s*/i, '')
+    .replace(/^[A-Z0-9_]+\s*=\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const bearerMatch = normalized.match(/bearer\s+(.+)/i)
+  if (bearerMatch) {
+    return `Bearer ${bearerMatch[1].trim()}`
+  }
+
   return normalized
 }
 
 const MLINK_DASHBOARD_BASE = normalizeEnvValue(process.env.MLINK_DASHBOARD_BASE) || 'https://www.fwmurphy-iot.com'
-const MLINK_DASHBOARD_COOKIE = normalizeEnvValue(process.env.MLINK_DASHBOARD_COOKIE)
-const MLINK_DASHBOARD_AUTH_HEADER = normalizeEnvValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
+const MLINK_DASHBOARD_COOKIE = normalizeCookieValue(process.env.MLINK_DASHBOARD_COOKIE)
+const MLINK_DASHBOARD_AUTH_HEADER = normalizeAuthHeaderValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
 
