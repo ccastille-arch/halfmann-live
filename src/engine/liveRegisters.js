@@ -189,6 +189,10 @@ function buildSupplementalRegisterCatalog() {
   const items = [
     createMeta('Altronic Engine State', '400001', 0),
     createMeta('Calculated Flow with Offset', '460014', 3),
+    createMeta('Compressor #1 Unit 2128 Desire Flow SP For PID Murphy', '460002', 3),
+    createMeta('Compressor #2 Unit 2130 Desire Flow SP For PID Murphy', '460004', 3),
+    createMeta('Compressor #3 Unit 2127 Desire Flow SP For PID Murphy', '460006', 3),
+    createMeta('Compressor #4 Unit 2129 Desire Flow SP For PID Murphy', '460008', 3),
     createMeta('Compressor #1 Desire Flow SP For PID Murphy', '460002', 3),
     createMeta('Compressor #2 Desire Flow SP For PID Murphy', '460004', 3),
     createMeta('Compressor 1 Comms Loss', '460452', 0),
@@ -448,9 +452,14 @@ function buildCandidateLabels(label) {
     candidates.add('Compressor Flow Rate PID PV')
   }
 
-  const compressorDesiredMatch = label.match(/^Compressor #?(\d+) Desir(?:e|ed) Flow SP For PID Murphy$/i)
+  const compressorDesiredMatch = label.match(/^Compressor #?(\d+)(?: Unit \d+)? Desir(?:e|ed) Flow SP For PID Murphy$/i)
   if (compressorDesiredMatch) {
     const compressorNumber = compressorDesiredMatch[1]
+    const unitMatch = label.match(/Unit (\d+)/i)
+    if (unitMatch) {
+      candidates.add(`Compressor #${compressorNumber} Unit ${unitMatch[1]} Desire Flow SP For PID Murphy`)
+      candidates.add(`Compressor #${compressorNumber} Unit ${unitMatch[1]} Desired Flow SP For PID Murphy`)
+    }
     candidates.add(`Compressor #${compressorNumber} Desire Flow SP For PID Murphy`)
     candidates.add(`Compressor #${compressorNumber} Desired Flow SP For PID Murphy`)
     candidates.add(`Compressor ${compressorNumber} Desire Flow SP For PID Murphy`)
