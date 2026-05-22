@@ -419,7 +419,7 @@ function CommsIndicator({ commsStatus }) {
         ? 'border-[#8a5b10] bg-[#171107] text-[#fbbf24]'
         : 'border-[#1d6c3d] bg-[#0a1410] text-[#4ade80]'
     }`}>
-      {isHolding ? 'MLink Comms Lost - Holding Data' : 'MLink Comms OK'}
+      {isHolding ? 'Holding Last Good Data' : 'MLink Refresh OK'}
     </span>
   )
 }

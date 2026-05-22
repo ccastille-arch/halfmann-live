@@ -520,7 +520,7 @@ function CommsIndicator({ commsStatus }) {
       textTransform: 'uppercase',
       whiteSpace: 'nowrap',
     }}>
-      {isHolding ? 'MLink Comms Lost - Holding Data' : 'MLink Comms OK'}
+      {isHolding ? 'Holding Last Good Data' : 'MLink Refresh OK'}
     </div>
   )
 }

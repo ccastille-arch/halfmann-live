@@ -306,7 +306,7 @@ export function HalfmannDataProvider({ children }) {
     const allHeld = heldDevices.length === HALFMANN_UNITS.length + (previousPanel ? 1 : 0) && heldDevices.length > 0
     const hasCachedData = !!nextPanel || Object.values(nextUnits).some(Boolean)
     const message = heldDevices.length > 0
-      ? `MLink comms lost for ${heldDevices.join(', ')}. Holding last known good readings until data returns.`
+      ? `Last refresh returned invalid data for ${heldDevices.join(', ')}. Showing last known good readings until the next successful refresh.`
       : ''
 
     setCommsStatus({
@@ -319,9 +319,11 @@ export function HalfmannDataProvider({ children }) {
     })
 
     if (heldDevices.length > 0 && hasCachedData) {
-      setLiveError(message)
+      setLiveError('')
     } else if (!acceptedAny) {
       setLiveError(errors.length ? `No live MLINK data available. ${errors.join(' | ')}` : 'No live MLINK data available.')
+    } else {
+      setLiveError('')
     }
 
     setLoading(false)
