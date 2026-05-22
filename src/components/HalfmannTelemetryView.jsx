@@ -507,11 +507,12 @@ function RefreshBtn({ s, loading, onRefresh }) {
 
 function CommsIndicator({ commsStatus }) {
   const isHolding = commsStatus?.isHolding
+  const isLimited = !isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   return (
     <div style={{
-      border: `1px solid ${isHolding ? '#8a5b10' : '#1d6c3d'}`,
-      background: isHolding ? '#171207' : '#0b1a12',
-      color: isHolding ? '#fbbf24' : '#4ade80',
+      border: `1px solid ${isHolding ? '#8a5b10' : isLimited ? '#5d4b12' : '#1d6c3d'}`,
+      background: isHolding ? '#171207' : isLimited ? '#17140a' : '#0b1a12',
+      color: isHolding ? '#fbbf24' : isLimited ? '#facc15' : '#4ade80',
       borderRadius: 999,
       padding: '5px 10px',
       fontSize: 9,
@@ -520,7 +521,7 @@ function CommsIndicator({ commsStatus }) {
       textTransform: 'uppercase',
       whiteSpace: 'nowrap',
     }}>
-      {isHolding ? 'Holding Last Good Data' : 'MLink Refresh OK'}
+      {isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
     </div>
   )
 }
@@ -544,6 +545,7 @@ export default function HalfmannTelemetryView() {
   const [adminToken, setAdminToken] = useState(() => { try { return localStorage.getItem('halfmann_admin_token') } catch { return null } })
   const [showLogin, setShowLogin] = useState(false)
   const [activeSettings, setActiveSettings] = useState(null)
+  const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
 
   useEffect(() => { if (adminToken) setIsAdmin(true) }, [adminToken])
 
@@ -657,7 +659,13 @@ export default function HalfmannTelemetryView() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#080810' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 18px', background: '#0a0a14', borderBottom: '1px solid #1a1a2a', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <div style={{ width: 9, height: 9, borderRadius: '50%', background: commsStatus?.isHolding ? '#f59e0b' : '#22c55e', boxShadow: commsStatus?.isHolding ? '0 0 7px #f59e0b88' : '0 0 7px #22c55e88' }} />
+          <div style={{
+            width: 9,
+            height: 9,
+            borderRadius: '50%',
+            background: commsStatus?.isHolding ? '#f59e0b' : feedLimited ? '#facc15' : '#22c55e',
+            boxShadow: commsStatus?.isHolding ? '0 0 7px #f59e0b88' : feedLimited ? '0 0 7px #facc1588' : '0 0 7px #22c55e88',
+          }} />
           <div>
             <div style={{ fontSize: 13, color: '#fff', fontWeight: 700, fontFamily: "'Arial Black'" }}>Telemetry Dashboard - Halfmann 1214</div>
             <div style={{ fontSize: 9, color: '#444' }}>{lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Connecting...'}</div>
@@ -682,7 +690,19 @@ export default function HalfmannTelemetryView() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px' }}>
         <div style={{ maxWidth: 1440, margin: '0 auto' }}>
           {liveError && <div style={{ background: '#1f0c0c', border: '1px solid #5a1d1d', borderRadius: 7, padding: '9px 14px', marginBottom: 18, fontSize: 10, color: '#fca5a5' }}>{liveError}</div>}
-          {commsStatus?.isHolding && <div style={{ background: '#171207', border: '1px solid #8a5b10', borderRadius: 7, padding: '9px 14px', marginBottom: 18, fontSize: 10, color: '#fef3c7' }}>{commsStatus.message}</div>}
+          {commsStatus?.message && (
+            <div style={{
+              background: commsStatus?.isHolding ? '#171207' : '#17140a',
+              border: `1px solid ${commsStatus?.isHolding ? '#8a5b10' : '#5d4b12'}`,
+              borderRadius: 7,
+              padding: '9px 14px',
+              marginBottom: 18,
+              fontSize: 10,
+              color: commsStatus?.isHolding ? '#fef3c7' : '#fde68a',
+            }}>
+              {commsStatus.message}
+            </div>
+          )}
 
           <div style={{ background: '#081523', border: '1px solid #1f4b6d', borderRadius: 10, padding: '12px 14px', marginBottom: 18, fontSize: 10, color: '#bfdbfe', lineHeight: 1.7 }}>
             <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 4 }}>Feed Audit</div>

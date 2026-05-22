@@ -264,7 +264,15 @@ export function HalfmannDataProvider({ children }) {
   const [siteSettings, setSiteSettings] = useState(DEFAULT_SETTINGS)
   const [padVisible, setPadVisible] = useState(true)
   const [meetingState, setMeetingState] = useState({ wells: {}, compressors: {}, updatedAt: null })
-  const [commsStatus, setCommsStatus] = useState({ isHolding: false, allHeld: false, heldDevices: [], healthyDevices: [], lastAttemptAt: null, message: '' })
+  const [commsStatus, setCommsStatus] = useState({
+    isHolding: false,
+    allHeld: false,
+    heldDevices: [],
+    limitedDevices: [],
+    healthyDevices: [],
+    lastAttemptAt: null,
+    message: '',
+  })
   const decisionRef = useRef({ wells: {}, compressors: {} })
   const panelRef = useRef(panelData)
   const unitDataRef = useRef(unitDataRaw)
@@ -305,22 +313,33 @@ export function HalfmannDataProvider({ children }) {
     ])
 
     const heldDevices = []
+    const limitedDevices = []
     const healthyDevices = []
     const panelUsable = isUsableDeviceSnapshot('panel', panelResult.data)
     const previousPanel = panelRef.current
-    const nextPanel = panelUsable ? mergeSnapshotData(previousPanel, panelResult.data) : previousPanel
+    const panelCount = panelResult.data?._registerCount ?? panelResult.data?.datapoints?.length ?? 0
+    const panelHardFailure = !!panelResult.error || panelCount === 0
+    const nextPanel = panelUsable
+      ? mergeSnapshotData(previousPanel, panelResult.data)
+      : (panelResult.data ? mergeSnapshotData(previousPanel, panelResult.data) : previousPanel)
     if (panelUsable) healthyDevices.push('Panel')
-    else if (previousPanel) heldDevices.push('Panel')
+    else if (panelHardFailure && previousPanel) heldDevices.push('Panel')
+    else if (!panelUsable && panelCount > 0) limitedDevices.push('Panel')
 
     const previousUnits = unitDataRef.current || {}
     const nextUnits = { ...previousUnits }
     HALFMANN_UNITS.forEach((unit, index) => {
+      const unitCount = unitResults[index].data?._registerCount ?? unitResults[index].data?.datapoints?.length ?? 0
+      const unitHardFailure = !!unitResults[index].error || unitCount === 0
       const usable = isUsableDeviceSnapshot(unit.key, unitResults[index].data)
       if (usable) {
         nextUnits[unit.key] = mergeSnapshotData(previousUnits[unit.key], unitResults[index].data)
         healthyDevices.push(unit.label)
-      } else if (previousUnits[unit.key]) {
+      } else if (unitHardFailure && previousUnits[unit.key]) {
         heldDevices.push(unit.label)
+      } else if (!usable && unitCount > 0) {
+        nextUnits[unit.key] = mergeSnapshotData(previousUnits[unit.key], unitResults[index].data)
+        limitedDevices.push(unit.label)
       } else {
         nextUnits[unit.key] = unitResults[index].data
       }
@@ -339,14 +358,18 @@ export function HalfmannDataProvider({ children }) {
     const errors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
     const allHeld = heldDevices.length === HALFMANN_UNITS.length + (previousPanel ? 1 : 0) && heldDevices.length > 0
     const hasCachedData = !!nextPanel || Object.values(nextUnits).some(Boolean)
-    const message = heldDevices.length > 0
-      ? `Last refresh returned invalid data for ${heldDevices.join(', ')}. Showing last known good readings until the next successful refresh.`
-      : ''
+    let message = ''
+    if (heldDevices.length > 0) {
+      message = `Last refresh returned invalid data for ${heldDevices.join(', ')}. Showing last known good readings until the next successful refresh.`
+    } else if (limitedDevices.length > 0) {
+      message = `Latest refresh succeeded, but ${limitedDevices.join(', ')} returned a limited tag set. Preserving previously seen values where newer tags were missing.`
+    }
 
     setCommsStatus({
       isHolding: heldDevices.length > 0,
       allHeld,
       heldDevices,
+      limitedDevices,
       healthyDevices,
       lastAttemptAt: new Date(),
       message,

@@ -414,13 +414,16 @@ function RefreshCountdown({ secondsLeft, loading, onRefresh }) {
 
 function CommsIndicator({ commsStatus }) {
   const isHolding = commsStatus?.isHolding
+  const isLimited = !isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   return (
     <span className={`rounded-full border px-2.5 py-1 text-[8px] uppercase tracking-[0.18em] ${
       isHolding
         ? 'border-[#8a5b10] bg-[#171107] text-[#fbbf24]'
+        : isLimited
+          ? 'border-[#5d4b12] bg-[#17140a] text-[#facc15]'
         : 'border-[#1d6c3d] bg-[#0a1410] text-[#4ade80]'
     }`}>
-      {isHolding ? 'Holding Last Good Data' : 'MLink Refresh OK'}
+      {isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
     </span>
   )
 }
@@ -459,6 +462,7 @@ export default function HalfmannLiveView() {
   } = useHalfmannData()
   const recycleAlertThreshold = siteSettings.recycleAlertThreshold ?? 0
   const wellTargetPct = siteSettings.wellTargetPct ?? 5
+  const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
 
   useEffect(() => {
     fetch(`${API_BASE}/api/public/pad-visibility`)
@@ -607,7 +611,13 @@ export default function HalfmannLiveView() {
     <div className="flex flex-col bg-[#080810]" style={{ minHeight: 'calc(100vh - 48px)' }}>
       <header className="flex items-center justify-between px-5 py-3 bg-[#0c0c16] border-b border-[#1a1a2a] shrink-0">
         <div className="flex items-center gap-3">
-          <div className={`w-2.5 h-2.5 rounded-full shadow-lg animate-pulse ${commsStatus?.isHolding ? 'bg-[#f59e0b] shadow-[#f59e0b]/60' : 'bg-[#22c55e] shadow-[#22c55e]/60'}`} />
+          <div className={`w-2.5 h-2.5 rounded-full shadow-lg animate-pulse ${
+            commsStatus?.isHolding
+              ? 'bg-[#f59e0b] shadow-[#f59e0b]/60'
+              : feedLimited
+                ? 'bg-[#facc15] shadow-[#facc15]/60'
+                : 'bg-[#22c55e] shadow-[#22c55e]/60'
+          }`} />
           <div>
             <div className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>Live Field Data - Halfmann 1214</div>
             <div className="text-[10px] text-[#666]">Active Pad Logic panel - read-only public view</div>
@@ -641,8 +651,12 @@ export default function HalfmannLiveView() {
               {liveError && (
                 <div className="mb-4 rounded-lg border border-[#5a1d1d] bg-[#1f0c0c] px-4 py-3 text-[11px] text-[#fca5a5]">{liveError}</div>
               )}
-              {commsStatus?.isHolding && (
-                <div className="mb-4 rounded-lg border border-[#8a5b10] bg-[#171107] px-4 py-3 text-[11px] text-[#fef3c7]">
+              {commsStatus?.message && (
+                <div className={`mb-4 rounded-lg px-4 py-3 text-[11px] ${
+                  commsStatus?.isHolding
+                    ? 'border border-[#8a5b10] bg-[#171107] text-[#fef3c7]'
+                    : 'border border-[#5d4b12] bg-[#17140a] text-[#fde68a]'
+                }`}>
                   {commsStatus.message}
                 </div>
               )}

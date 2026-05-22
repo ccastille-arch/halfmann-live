@@ -221,11 +221,12 @@ function UnitRow({ unit, actualFlow, desiredFlow, desiredFlowDerived, suctionAct
 
 function CommsIndicator({ commsStatus }) {
   const isHolding = commsStatus?.isHolding
+  const isLimited = !isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   return (
     <div style={{
-      border: `1px solid ${isHolding ? '#8a5b10' : '#1d6c3d'}`,
-      background: isHolding ? '#171207' : '#0b1a12',
-      color: isHolding ? '#fbbf24' : '#4ade80',
+      border: `1px solid ${isHolding ? '#8a5b10' : isLimited ? '#5d4b12' : '#1d6c3d'}`,
+      background: isHolding ? '#171207' : isLimited ? '#17140a' : '#0b1a12',
+      color: isHolding ? '#fbbf24' : isLimited ? '#facc15' : '#4ade80',
       borderRadius: 999,
       padding: '6px 10px',
       fontSize: 9,
@@ -234,7 +235,7 @@ function CommsIndicator({ commsStatus }) {
       textTransform: 'uppercase',
       whiteSpace: 'nowrap',
     }}>
-      {isHolding ? 'Holding Last Good Data' : 'MLink Refresh OK'}
+      {isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
     </div>
   )
 }
@@ -371,6 +372,7 @@ export default function HalfmannDiagnosticsView() {
     commsStatus,
     refresh,
   } = useHalfmannData()
+  const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
 
   const derived = useMemo(() => {
     const panel = parseLiveDatapoints(panelData)
@@ -560,8 +562,16 @@ export default function HalfmannDiagnosticsView() {
               {liveError}
             </div>
           )}
-          {commsStatus?.isHolding && (
-            <div style={{ marginBottom: 16, border: '1px solid #8a5b10', background: '#171207', borderRadius: 14, padding: '12px 14px', fontSize: 11, color: '#fef3c7' }}>
+          {commsStatus?.message && (
+            <div style={{
+              marginBottom: 16,
+              border: `1px solid ${commsStatus?.isHolding ? '#8a5b10' : '#5d4b12'}`,
+              background: commsStatus?.isHolding ? '#171207' : '#17140a',
+              borderRadius: 14,
+              padding: '12px 14px',
+              fontSize: 11,
+              color: commsStatus?.isHolding ? '#fef3c7' : '#fde68a',
+            }}>
               {commsStatus.message}
             </div>
           )}
