@@ -3,6 +3,7 @@ import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegist
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
+const NOT_PUBLISHED_COPY = 'Not returned by current site feed'
 
 const HALFMANN_DEVICES = {
   panel:    '2507-501508',
@@ -146,6 +147,32 @@ function resolveDP(dataMap, labels) {
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
 function getTimestamp(data) { return data?.timestamps?.[0] ? new Date(data.timestamps[0] * 1000) : null }
 function fmt(v, d = 3) { return v != null && Number.isFinite(v) ? v.toFixed(d) : null }
+function getRegisterCount(data) { return data?._registerCount ?? data?.datapoints?.length ?? 0 }
+function getSourceMeta(data, sourceName) { return data?._sourceSummary?.[sourceName] || null }
+function getDatapointName(dp) { return dp?.alias || dp?.desc || dp?.dataSourceName || dp?.Name || dp?.name || '' }
+function getDatapointValue(dp) { return dp?.value ?? (Array.isArray(dp?.values) ? dp.values[0] : undefined) }
+function formatAuditValue(value) {
+  if (value == null || value === '') return '--'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return String(value)
+  return numeric % 1 === 0 ? numeric.toFixed(0) : numeric.toFixed(3)
+}
+function getRegisterRows(data) {
+  const rows = []
+  const seen = new Set()
+  for (const dp of data?.datapoints || []) {
+    const name = getDatapointName(dp)
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    rows.push({
+      name,
+      value: formatAuditValue(getDatapointValue(dp)),
+      unit: cleanUnit(dp?.units || dp?.unit || ''),
+      source: dp?._source || 'latestDeviceData',
+    })
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name))
+}
 
 function getGrade(pct) {
   if (pct == null) return null
@@ -276,13 +303,64 @@ function ParamGauges({ params, dataMap, isAdmin, onSettings }) {
         return (
           <Gauge key={p.label} label={p.label}
             value={display} unit={display != null ? p.unit : ''}
-            sub={display == null ? 'Pending MLink' : undefined}
+            sub={display == null ? NOT_PUBLISHED_COPY : undefined}
             status="unknown"
             isAdmin={isAdmin} settingKey={p.settingKey} onSettings={onSettings}
           />
         )
       })}
     </GaugeGrid>
+  )
+}
+
+function DeviceRegisterAudit({ title, deviceId, data }) {
+  const rows = getRegisterRows(data)
+  const sourceCards = [
+    ['LatestDeviceData', getSourceMeta(data, 'latestDeviceData')],
+    ['RunReport', getSourceMeta(data, 'runReport')],
+    ['Dashboard Snapshot', getSourceMeta(data, 'dashboardSnapshot')],
+  ].filter(([, meta]) => meta)
+
+  return (
+    <details open style={{ marginBottom: 16, border: '1px solid #1a2740', borderRadius: 14, background: '#08101a' }}>
+      <summary style={{ listStyle: 'none', cursor: 'pointer', padding: '14px 16px', borderBottom: '1px solid #142033', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: "'Arial Black'" }}>{title}</span>
+        <span style={{ fontSize: 10, color: '#7dd3fc' }}>{deviceId}</span>
+        <span style={{ fontSize: 10, color: '#cbd5e1' }}>{getRegisterCount(data)} merged registers</span>
+        {data?.timestamps?.[0] && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {new Date(data.timestamps[0] * 1000).toLocaleString()}</span>}
+      </summary>
+      <div style={{ padding: 16 }}>
+        {sourceCards.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+            {sourceCards.map(([label, meta]) => (
+              <div key={label} style={{ border: '1px solid #22324d', borderRadius: 999, padding: '6px 10px', background: '#0c1524', fontSize: 10, color: '#cbd5e1' }}>
+                <span style={{ color: '#7dd3fc', fontWeight: 700 }}>{label}</span>
+                {' '} {meta.count} ({meta.state})
+              </div>
+            ))}
+          </div>
+        )}
+        {Array.isArray(data?._limitations) && data._limitations.length > 0 && (
+          <div style={{ marginBottom: 12, border: '1px solid #5a3a00', borderRadius: 10, background: '#120d02', padding: '10px 12px', fontSize: 10, lineHeight: 1.6, color: '#fcd34d' }}>
+            {data._limitations.join(' ')}
+          </div>
+        )}
+        {!rows.length ? (
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>No registers returned for this device.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+            {rows.map(row => (
+              <div key={row.name} style={{ border: '1px solid #17263c', borderRadius: 10, background: '#0b1320', padding: '10px 12px' }}>
+                <div style={{ fontSize: 9, color: '#7dd3fc', textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 700, lineHeight: 1.5 }}>{row.name}</div>
+                <div style={{ fontSize: 20, color: '#fff', fontWeight: 900, fontFamily: "'Arial Black', sans-serif", lineHeight: 1.1, marginTop: 4 }}>{row.value}</div>
+                {row.unit && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{row.unit}</div>}
+                <div style={{ fontSize: 9, color: '#475569', marginTop: 6 }}>Source: {row.source}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
   )
 }
 
@@ -489,6 +567,12 @@ export default function HalfmannTelemetryView() {
     const s = (unitFlows[i] / unitDesired[i]) * 100
     return w == null || s < w.s ? { label: u.label, s } : w
   }, null)
+  const auditDevices = [
+    { title: 'Well Panel', deviceId: HALFMANN_DEVICES.panel, data: panelData },
+    ...HALFMANN_UNITS.map(unit => ({ title: unit.label, deviceId: unit.deviceId, data: unitDataRaw[unit.key] })),
+  ]
+  const auditRegisterTotal = auditDevices.reduce((sum, device) => sum + getRegisterCount(device.data), 0)
+  const auditRespondingDevices = auditDevices.filter(device => device.data).length
 
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -520,13 +604,26 @@ export default function HalfmannTelemetryView() {
         <div style={{ maxWidth: 1440, margin: '0 auto' }}>
           {liveError && <div style={{ background: '#1f0c0c', border: '1px solid #5a1d1d', borderRadius: 7, padding: '9px 14px', marginBottom: 18, fontSize: 10, color: '#fca5a5' }}>{liveError}</div>}
 
+          <div style={{ background: '#081523', border: '1px solid #1f4b6d', borderRadius: 10, padding: '12px 14px', marginBottom: 18, fontSize: 10, color: '#bfdbfe', lineHeight: 1.7 }}>
+            <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 4 }}>Feed Audit</div>
+            Halfmann is wired as 6 MLink devices across 3 configs. This page now lists every register the site can currently fetch for each device.
+            Current payload: <span style={{ color: '#fff', fontWeight: 700 }}> {auditRegisterTotal} </span> merged registers across
+            <span style={{ color: '#fff', fontWeight: 700 }}> {auditRespondingDevices} </span> responding devices.
+          </div>
+
+          <Section id="published-audit" title="Group 0 — Published Device Audit">
+            {auditDevices.map(device => (
+              <DeviceRegisterAudit key={device.deviceId} title={device.title} deviceId={device.deviceId} data={device.data} />
+            ))}
+          </Section>
+
           {/* GROUP 1 — SITE SUMMARY */}
           <Section id="site-summary" title="Group 1 — Site Summary">
             <GaugeGrid>
               <YesNoGauge label="All Wells Meeting Desired Rate?" good={allOnTarget}
                 detail={wellsWithTarget.length > 0
                   ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}%`
-                  : activeWells > 0 ? 'Setpoints not yet in MLink config' : 'Awaiting data'}
+                  : activeWells > 0 ? 'Well setpoints are not being returned by the current site feed' : 'Awaiting data'}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Wells Meeting Rate"
                 value={wellsWithTarget.length > 0 ? `${wellsOnTarget}/${wellsWithTarget.length}` : null}
@@ -535,23 +632,23 @@ export default function HalfmannTelemetryView() {
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Total Desired Flow"
                 value={totalDesired != null ? fmt(totalDesired) : null} unit="MMSCFD"
-                sub={hasSetpoints ? 'Sum of well setpoints' : totalDesiredSite != null ? 'Panel register' : 'Pending MLink config'} />
+                sub={hasSetpoints ? 'Sum of well setpoints' : totalDesiredSite != null ? 'Panel register' : NOT_PUBLISHED_COPY} />
               <Gauge label="Total Actual Flow"
                 value={fmt(totalActual)} unit="MMSCFD"
                 status={padMatchPct != null ? (padMatchPct >= 95 ? 'good' : padMatchPct >= 80 ? 'warn' : 'bad') : 'unknown'}
                 sub={totalDesired != null ? `${fmt(padMatchPct, 1)}% of desired` : undefined} />
               <YesNoGauge label="Recycle Valve Open?" good={recycleOpen === null ? null : !recycleOpen}
-                detail={recycleVal == null ? 'Pending MLink config' : `Position: ${recycleVal.toFixed(1)}% (threshold: ${recycleOpenPct}%)`}
+                detail={recycleVal == null ? NOT_PUBLISHED_COPY : `Position: ${recycleVal.toFixed(1)}% (threshold: ${recycleOpenPct}%)`}
                 isAdmin={isAdmin} settingKey="recycleOpenPct" onSettings={openSettings} />
               <Gauge label="Highest Casing Pressure"
                 value={highCasing ? fmt(highCasing.v, 0) : null} unit="PSI"
-                sub={highCasing ? `Well ${highCasing.n}` : 'Pending MLink config'} />
+                sub={highCasing ? `Well ${highCasing.n}` : NOT_PUBLISHED_COPY} />
               <Gauge label="Highest Tubing Pressure"
                 value={highTubing ? fmt(highTubing.v, 0) : null} unit="PSI"
-                sub={highTubing ? `Well ${highTubing.n}` : 'Pending MLink config'} />
+                sub={highTubing ? `Well ${highTubing.n}` : NOT_PUBLISHED_COPY} />
               <Gauge label="Altronic Discharge SP"
                 value={dischargeSP != null ? fmt(dischargeSP, 0) : null} unit="PSI"
-                sub={dischargeSP == null ? 'Pending MLink config' : undefined} />
+                sub={dischargeSP == null ? NOT_PUBLISHED_COPY : undefined} />
               <Gauge label="Recommended Compressors"
                 value={getN(panel, ['Recommended Number Of Compressors']) != null ? fmt(getN(panel, ['Recommended Number Of Compressors']), 0) : null}
                 status={(() => {
@@ -560,7 +657,7 @@ export default function HalfmannTelemetryView() {
                   if (rec == null) return 'unknown'
                   return running >= rec ? 'good' : running === rec - 1 ? 'warn' : 'bad'
                 })()}
-                sub={getN(panel, ['Recommended Number Of Compressors']) == null ? 'Pending MLink config' : 'Panel system recommendation'} />
+                sub={getN(panel, ['Recommended Number Of Compressors']) == null ? NOT_PUBLISHED_COPY : 'Panel system recommendation'} />
             </GaugeGrid>
           </Section>
 
@@ -573,7 +670,7 @@ export default function HalfmannTelemetryView() {
                 detail={worstWell ? `Worst: Well ${worstWell.n} (${fmt(worstWell.s, 0)}%)` : 'Awaiting setpoint data'}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <ScoreGauge label="Recycle Efficiency" score={recycleScore}
-                detail={recycleVal != null ? `Valve at ${recycleVal.toFixed(1)}%` : 'Pending MLink config'}
+                detail={recycleVal != null ? `Valve at ${recycleVal.toFixed(1)}%` : NOT_PUBLISHED_COPY}
                 isAdmin={isAdmin} settingKey="recycleOpenPct" onSettings={openSettings} />
               <Gauge label="Worst Performing Unit"
                 value={worstUnit ? worstUnit.label.replace('Unit ', '') : null}
@@ -591,13 +688,13 @@ export default function HalfmannTelemetryView() {
             <GaugeGrid>
               <Gauge label="Suction Header Pressure"
                 value={suctionHeaderPres != null ? fmt(suctionHeaderPres, 0) : null} unit="PSI"
-                sub={suctionHeaderPres == null ? 'Pending MLink config' : undefined} />
+                sub={suctionHeaderPres == null ? NOT_PUBLISHED_COPY : undefined} />
               <Gauge label="Suction / Sales Valve"
                 value={suctionValvePos != null ? fmt(suctionValvePos, 1) : null} unit="%"
-                sub={suctionValvePos == null ? 'Pending MLink config' : undefined} />
+                sub={suctionValvePos == null ? NOT_PUBLISHED_COPY : undefined} />
               <Gauge label="Recycle Valve Position"
                 value={recycleVal != null ? fmt(recycleVal, 1) : null} unit="%"
-                sub={recycleVal == null ? 'Pending MLink config' : recycleVal > recycleOpenPct ? 'OPEN' : 'Closed'}
+                sub={recycleVal == null ? NOT_PUBLISHED_COPY : recycleVal > recycleOpenPct ? 'OPEN' : 'Closed'}
                 status={recycleVal == null ? 'unknown' : recycleVal > recycleOpenPct ? 'bad' : 'good'}
                 isAdmin={isAdmin} settingKey="recycleOpenPct" onSettings={openSettings} />
             </GaugeGrid>
@@ -611,13 +708,13 @@ export default function HalfmannTelemetryView() {
                 <SubSection key={w.n} title={`Well ${w.n}`} accent="#49D0E2">
                   {wellOffline ? (
                     <div style={{ padding: '16px 20px', borderRadius: 10, border: '1px solid #2a1a1a', background: '#120808', color: '#ef4444', fontSize: 12, fontWeight: 700 }}>
-                      ⚠ Well {w.n} not published by MLink panel — register missing from Jim's current config. Will auto-populate when added.
+                      Well {w.n} is not being returned by the current site feed.
                     </div>
                   ) : (
                     <GaugeGrid>
                       <Gauge label={`Well ${w.n} Setpoint`}
                         value={w.desired != null ? fmt(w.desired) : null} unit="MMSCFD"
-                        sub={w.desired == null ? 'Pending MLink config' : undefined} />
+                        sub={w.desired == null ? NOT_PUBLISHED_COPY : undefined} />
                       <Gauge label={`Well ${w.n} Injection Flow`}
                         value={w.actual != null ? fmt(w.actual) : null} unit="MMSCFD"
                         status={(() => {
@@ -628,13 +725,13 @@ export default function HalfmannTelemetryView() {
                         })()} />
                       <Gauge label={`Well ${w.n} Choke Position`}
                         value={w.choke != null ? fmt(w.choke, 1) : null} unit="%"
-                        sub={w.choke == null ? 'Pending MLink config' : undefined} />
+                        sub={w.choke == null ? NOT_PUBLISHED_COPY : undefined} />
                       <Gauge label={`Well ${w.n} Casing Pressure`}
                         value={w.casing != null ? fmt(w.casing, 0) : null} unit="PSI"
-                        sub={w.casing == null ? 'Pending MLink config' : undefined} />
+                        sub={w.casing == null ? NOT_PUBLISHED_COPY : undefined} />
                       <Gauge label={`Well ${w.n} Tubing Pressure`}
                         value={w.tubing != null ? fmt(w.tubing, 0) : null} unit="PSI"
-                        sub={w.tubing == null ? 'Pending MLink config' : undefined} />
+                        sub={w.tubing == null ? NOT_PUBLISHED_COPY : undefined} />
                     </GaugeGrid>
                   )}
                 </SubSection>
@@ -651,7 +748,7 @@ export default function HalfmannTelemetryView() {
                   ? <div key={w.n} style={{ padding: '12px 14px', borderRadius: 8, border: '1px dashed #2a1a1a', background: '#0f0808', color: '#555', fontSize: 10, display: 'flex', alignItems: 'center', minHeight: 80 }}>Well {w.n} offline</div>
                   : <Gauge key={w.n} label={`Well ${w.n} Yesterdays Flow`}
                       value={w.yesterday != null ? fmt(w.yesterday) : null} unit="MMSCFD"
-                      sub={w.yesterday == null ? 'Pending MLink config' : undefined} />
+                      sub={w.yesterday == null ? NOT_PUBLISHED_COPY : undefined} />
               })}
             </GaugeGrid>
           </Section>

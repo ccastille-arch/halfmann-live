@@ -10,6 +10,7 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
+const NOT_PUBLISHED_COPY = 'Not published by current MLink feed'
 
 const HALFMANN_DEVICES = {
   panel:    '2507-501508',
@@ -149,6 +150,14 @@ function cleanUnit(u) {
   return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
 }
 
+function getRegisterCount(data) {
+  return data?._registerCount ?? data?.datapoints?.length ?? 0
+}
+
+function getSourceState(data, sourceName) {
+  return data?._sourceSummary?.[sourceName]?.state || ''
+}
+
 function DataPoint({ label, value, unit, color, compact = false }) {
   return (
     <div className="bg-[#1c2333] rounded border border-[#1e2638] p-2">
@@ -235,7 +244,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         ) : (
           <div>
             <DataPoint label="Actual Flow" value={actualFlowValue} unit={cleanUnit(actualFlow?.units) || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
-            <div className="text-[10px] mt-1" style={{ color: '#4a5a7a' }}>Desired flow setpoint not in MLink config</div>
+            <div className="text-[10px] mt-1" style={{ color: '#4a5a7a' }}>Desired flow setpoint not published by current feed</div>
           </div>
         )}
       </div>
@@ -480,6 +489,13 @@ export default function HalfmannLiveView() {
   const wellsWithTarget = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
   const wellsAtTargetCount = wellsWithTarget.filter(w => w.atTarget).length
   const allOnTarget = wellsWithTarget.length > 0 ? wellsAtTargetCount === wellsWithTarget.length : null
+  const auditDevices = [
+    { label: 'Well Panel', deviceId: HALFMANN_DEVICES.panel, data: panelData },
+    ...HALFMANN_UNITS.map(unit => ({ label: unit.label, deviceId: unit.deviceId, data: unitDataRaw[unit.key] })),
+  ]
+  const respondingDeviceCount = auditDevices.filter(device => device.data).length
+  const publishedRegisterTotal = auditDevices.reduce((sum, device) => sum + getRegisterCount(device.data), 0)
+  const dashboardSnapshotAvailable = auditDevices.some(device => getSourceState(device.data, 'dashboardSnapshot') === 'ok')
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints not yet in MLink, but site total IS available and accurate.
@@ -540,6 +556,21 @@ export default function HalfmannLiveView() {
               {liveError && (
                 <div className="mb-4 rounded-lg border border-[#5a1d1d] bg-[#1f0c0c] px-4 py-3 text-[11px] text-[#fca5a5]">{liveError}</div>
               )}
+              {respondingDeviceCount > 0 && (
+                <div className="mb-4 rounded-lg border border-[#1f4b6d] bg-[#091624] px-4 py-3 text-[11px] text-[#bfdbfe]">
+                  <div className="mb-1 font-semibold uppercase tracking-[0.15em] text-[#7dd3fc]">Live Feed Audit</div>
+                  <div>
+                    Current server payload: <span className="font-bold text-white">{publishedRegisterTotal}</span> merged registers across{' '}
+                    <span className="font-bold text-white">{respondingDeviceCount}</span> responding devices. This live page stays curated; the{' '}
+                    <span className="font-bold text-white">All Parameters</span> tab now lists every fetched register per device.
+                  </div>
+                  {!dashboardSnapshotAvailable && (
+                    <div className="mt-1">
+                      Dashboard-only registers will not appear until Murphy exposes them through the public feed or dashboard auth is configured on the server.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* ── 3 YES/NO Status Cards ── */}
               <div className="grid gap-4 sm:grid-cols-3 mb-5">
@@ -549,7 +580,7 @@ export default function HalfmannLiveView() {
                   detail={wellsWithTarget.length > 0
                     ? `${wellsAtTargetCount} of ${wellsWithTarget.length} wells within 5% of setpoint`
                     : activeWells.length > 0
-                      ? 'Setpoints pending — not yet in Jim\'s MLink config'
+                      ? 'Well setpoints are not being returned by the current site feed'
                       : 'Waiting for flow data…'}
                 />
                 <StatusCard
@@ -560,14 +591,14 @@ export default function HalfmannLiveView() {
                     : wellsWithBoth.length > 0
                       ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
                       : activeWells.length > 0
-                        ? 'Well setpoints not yet in MLink config'
+                        ? 'Well setpoints are not being returned by the current site feed'
                         : 'Waiting for flow data…'}
                 />
                 <StatusCard
                   question="Is the recycle valve closed?"
                   good={recycleOpen === null ? null : !recycleOpen}
                   detail={recycleVal == null
-                    ? 'Pending MLink config'
+                    ? NOT_PUBLISHED_COPY
                     : recycleOpen
                       ? `OPEN — valve at ${recycleVal.toFixed(1)}% (threshold: ${recycleAlertThreshold}%)`
                       : `Closed — valve at ${recycleVal.toFixed(1)}%`}
@@ -736,7 +767,7 @@ export default function HalfmannLiveView() {
                             <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD setpoint</div>
                           </div>
                         ) : (
-                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint pending MLink config</div>
+                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not returned by current site feed</div>
                         )}
 
                         {/* Progress bar */}

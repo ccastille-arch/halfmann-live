@@ -72,8 +72,137 @@ app.post('/api/admin/logout', (req, res) => {
 
 // ─── MLink proxy ──────────────────────────────────────────────────────────────
 const MLINK_BASE = 'https://api.fwmurphy-iot.com/api'
+const MLINK_DASHBOARD_BASE = process.env.MLINK_DASHBOARD_BASE || 'https://www.fwmurphy-iot.com'
+const MLINK_DASHBOARD_COOKIE = process.env.MLINK_DASHBOARD_COOKIE || ''
+const MLINK_DASHBOARD_AUTH_HEADER = process.env.MLINK_DASHBOARD_AUTH_HEADER || ''
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
+
+function getDatapointKey(dp) {
+  return dp?.alias || dp?.desc || dp?.dataSourceName || dp?.Name || dp?.name || null
+}
+
+function getDatapointValue(dp) {
+  return dp?.value ?? (Array.isArray(dp?.values) ? dp.values[0] : undefined)
+}
+
+function extractDatapoints(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload?.datapoints)) return payload.datapoints
+  if (Array.isArray(payload?.data?.datapoints)) return payload.data.datapoints
+  if (Array.isArray(payload?.data)) return payload.data.flatMap(extractDatapoints)
+  if (Array.isArray(payload)) return payload.flatMap(extractDatapoints)
+  return []
+}
+
+async function fetchTextOrJson(url, options = {}) {
+  const response = await fetch(url, options)
+  const text = await response.text()
+  let data = text
+  try { data = JSON.parse(text) } catch {}
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: response.headers.get('content-type') || '',
+    text,
+    data,
+  }
+}
+
+async function fetchLatestSnapshot(deviceId, key) {
+  const result = await fetchTextOrJson(`${MLINK_BASE}/LatestDeviceData?deviceId=${encodeURIComponent(deviceId)}&code=${key}`)
+  if (!result.ok) {
+    return {
+      ok: false,
+      httpStatus: result.status,
+      state: 'error',
+      note: typeof result.data === 'string' ? result.data.slice(0, 500) : 'LatestDeviceData request failed',
+      data: null,
+      datapoints: [],
+    }
+  }
+  return {
+    ok: true,
+    httpStatus: result.status,
+    state: 'ok',
+    note: 'LatestDeviceData public snapshot',
+    data: result.data,
+    datapoints: extractDatapoints(result.data),
+  }
+}
+
+async function fetchDashboardSnapshot(deviceId) {
+  if (!MLINK_DASHBOARD_COOKIE && !MLINK_DASHBOARD_AUTH_HEADER) {
+    return {
+      ok: false,
+      httpStatus: null,
+      state: 'disabled',
+      note: 'Dashboard auth not configured on the server',
+      data: null,
+      datapoints: [],
+    }
+  }
+
+  const headers = { accept: 'application/json, text/plain, */*' }
+  if (MLINK_DASHBOARD_COOKIE) headers.cookie = MLINK_DASHBOARD_COOKIE
+  if (MLINK_DASHBOARD_AUTH_HEADER) headers.authorization = MLINK_DASHBOARD_AUTH_HEADER
+
+  try {
+    const result = await fetchTextOrJson(
+      `${MLINK_DASHBOARD_BASE}/api1/GetSnapshotData/${encodeURIComponent(deviceId)}?v=2`,
+      { headers },
+    )
+    const looksLikeLoginPage = typeof result.data === 'string' && /logging in|sign in|login/i.test(result.data)
+    if (looksLikeLoginPage) {
+      return {
+        ok: false,
+        httpStatus: result.status,
+        state: 'auth-required',
+        note: 'Dashboard endpoint returned a login page',
+        data: null,
+        datapoints: [],
+      }
+    }
+
+    const datapoints = extractDatapoints(result.data)
+    return {
+      ok: result.ok,
+      httpStatus: result.status,
+      state: result.ok ? (datapoints.length ? 'ok' : 'empty') : 'error',
+      note: result.ok
+        ? (datapoints.length ? 'Authenticated dashboard snapshot' : 'Dashboard snapshot returned no datapoints')
+        : (typeof result.data === 'string' ? result.data.slice(0, 500) : 'Dashboard snapshot request failed'),
+      data: result.ok ? result.data : null,
+      datapoints,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      httpStatus: null,
+      state: 'unreachable',
+      note: err.message,
+      data: null,
+      datapoints: [],
+    }
+  }
+}
+
+function mergeDatapointSources(sources) {
+  const byKey = new Map()
+  for (const source of sources) {
+    for (const dp of source.datapoints || []) {
+      const key = getDatapointKey(dp)
+      if (!key) continue
+      byKey.set(key, {
+        ...dp,
+        value: getDatapointValue(dp),
+        units: dp.units || dp.unit,
+        _source: source.name,
+      })
+    }
+  }
+  return [...byKey.values()]
+}
 
 app.get('/api/mlink/device', async (req, res) => {
   const key = process.env.MLINK_API_KEY
@@ -98,20 +227,32 @@ app.get('/api/mlink/device/full', async (req, res) => {
   const { deviceId } = req.query
   if (!deviceId) return res.status(400).json({ error: 'deviceId required' })
 
-  let latestData = null
+  let latestResult = null
   try {
-    const r = await fetch(`${MLINK_BASE}/LatestDeviceData?deviceId=${encodeURIComponent(deviceId)}&code=${key}`)
-    if (r.ok) latestData = await r.json()
-  } catch {}
+    latestResult = await fetchLatestSnapshot(deviceId, key)
+  } catch (err) {
+    latestResult = {
+      ok: false,
+      httpStatus: null,
+      state: 'unreachable',
+      note: err.message,
+      data: null,
+      datapoints: [],
+    }
+  }
 
   const todayMidnightUTC = Math.floor(Date.now() / 86400000) * 86400
   const yesterdayStartUTC = todayMidnightUTC - 86400
   const yesterdayEndUTC = todayMidnightUTC - 1
 
   let runReportDps = []
+  let runReportState = 'empty'
+  let runReportNote = 'RunReport returned no datapoints'
   const cached = RUN_REPORT_CACHE.get(deviceId)
   if (cached && Date.now() - cached.fetchedAt < RUN_REPORT_TTL_MS) {
     runReportDps = cached.dps
+    runReportState = runReportDps.length ? 'cache' : 'empty'
+    runReportNote = runReportDps.length ? 'Yesterday RunReport cache hit' : runReportNote
   } else {
     try {
       const r = await fetch(
@@ -124,20 +265,69 @@ app.get('/api/mlink/device/full', async (req, res) => {
           for (const dp of (rec.datapoints || rec.data || [])) runReportDps.push(dp)
         }
         RUN_REPORT_CACHE.set(deviceId, { dps: runReportDps, fetchedAt: Date.now() })
+        runReportState = runReportDps.length ? 'ok' : 'empty'
+        runReportNote = runReportDps.length ? 'Yesterday RunReport datapoints merged for lookup coverage' : runReportNote
+      } else {
+        runReportState = 'error'
+        runReportNote = `RunReport request failed with ${r.status}`
       }
-    } catch {}
+    } catch (err) {
+      runReportState = 'unreachable'
+      runReportNote = err.message
+    }
   }
 
-  if (!latestData && runReportDps.length === 0) {
+  const dashboardResult = await fetchDashboardSnapshot(deviceId)
+
+  if (!latestResult?.data && runReportDps.length === 0 && dashboardResult.datapoints.length === 0) {
     return res.status(502).json({ error: 'No data from MLink' })
   }
 
-  const byKey = {}
-  const keyOf = dp => dp.alias || dp.desc || dp.dataSourceName || dp.Name || dp.name
-  for (const dp of runReportDps) { const k = keyOf(dp); if (k && !byKey[k]) byKey[k] = dp }
-  for (const dp of (latestData?.datapoints || [])) { const k = keyOf(dp); if (k) byKey[k] = dp }
+  const mergedDatapoints = mergeDatapointSources([
+    { name: 'runReport', datapoints: runReportDps },
+    { name: 'latestDeviceData', datapoints: latestResult?.datapoints || [] },
+    { name: 'dashboardSnapshot', datapoints: dashboardResult.datapoints || [] },
+  ])
 
-  res.json({ ...(latestData || {}), datapoints: Object.values(byKey), _merged: true })
+  const sourceSummary = {
+    latestDeviceData: {
+      count: latestResult?.datapoints?.length || 0,
+      state: latestResult?.state || 'empty',
+      note: latestResult?.note || '',
+      httpStatus: latestResult?.httpStatus ?? null,
+    },
+    runReport: {
+      count: runReportDps.length,
+      state: runReportState,
+      note: runReportNote,
+      httpStatus: null,
+    },
+    dashboardSnapshot: {
+      count: dashboardResult.datapoints.length,
+      state: dashboardResult.state,
+      note: dashboardResult.note,
+      httpStatus: dashboardResult.httpStatus,
+    },
+  }
+
+  const limitations = []
+  if (sourceSummary.dashboardSnapshot.state === 'disabled') {
+    limitations.push('Dashboard-only MLink endpoints are not configured on this server.')
+  } else if (sourceSummary.dashboardSnapshot.state === 'auth-required') {
+    limitations.push('Configured dashboard auth was rejected and returned a login page.')
+  }
+  if (sourceSummary.latestDeviceData.count > 0 && sourceSummary.dashboardSnapshot.count === 0) {
+    limitations.push('Merged live data is currently limited to what Murphy publishes through LatestDeviceData and RunReport.')
+  }
+
+  res.json({
+    ...(latestResult?.data || {}),
+    datapoints: mergedDatapoints,
+    _merged: true,
+    _registerCount: mergedDatapoints.length,
+    _sourceSummary: sourceSummary,
+    _limitations: limitations,
+  })
 })
 
 // ─── Generic Murphy API probe (for endpoint discovery) ───────────────────────
