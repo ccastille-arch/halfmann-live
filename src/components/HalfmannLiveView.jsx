@@ -561,7 +561,15 @@ export default function HalfmannLiveView() {
     const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
     return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05)
   }).length
-  const allCompressorsMeetingCommands = compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null
+  const panelCompressorsMeetingFlow = (() => {
+    const raw = resolvePreferredDatapoint(panel, ['Compressors Meeting Flow Demand', 'Meeting Flow Demand'])?.value
+    if (raw == null) return null
+    const normalized = String(raw).trim().toLowerCase()
+    if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
+    if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
+    return null
+  })()
+  const allCompressorsMeetingCommands = panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
   const compressorCommandScore = compressorCommandScores.length > 0
     ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length
     : null
@@ -644,7 +652,9 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all compressors meeting flow commands?"
                   good={allCompressorsMeetingCommands}
-                  detail={compressorCommandScore != null
+                  detail={panelCompressorsMeetingFlow != null
+                    ? `Panel says: ${panelCompressorsMeetingFlow ? 'YES' : 'NO'} | ${compressorCommandScore != null ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score` : 'Using well-panel derived result'}`
+                    : compressorCommandScore != null
                     ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score`
                     : 'Desired flow command not visible on current site feed'}
                 />
