@@ -163,7 +163,7 @@ function DataPoint({ label, value, unit, color, compact = false }) {
   )
 }
 
-function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers, standby = false }) {
+function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers, standby = false, rawDatapoints = [] }) {
   const rpm = data['RPM'] || data['Compressor Speed'] || data['Driver Speed'] || data['Engine Speed'] || data['Engine Speed From EICS']
   const shutdown = data['Skid - Shutdown']
   const isShutdown = shutdown && String(shutdown.value).toLowerCase().includes('shutdown')
@@ -186,6 +186,28 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
                'Speed Discharge SP', 'Desired Speed', 'Flow Rate PID PV'])
     : new Set(['Flow Rate PID PV'])
   const visibleRegisters = registers.filter(meta => !skipLabels.has(meta.label))
+
+  // Dynamic catch-all: show any raw datapoints not already covered by the catalog
+  // This ensures units with non-standard MLink configs (e.g. Unit 2129) show all their data
+  const norm = s => String(s || '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+  const coveredNorms = new Set([
+    ...Array.from(skipLabels).map(norm),
+    ...visibleRegisters.map(r => norm(r.label)),
+    ...visibleRegisters.map(r => norm(r.datapoint?.keyUsed || '')).filter(Boolean),
+    // Always exclude: flow/RPM shown in the header block
+    norm('Flow Rate'), norm('Flow Rate PID PV'), norm('Flow Rate PV'),
+    norm('RPM'), norm('Compressor Speed'), norm('Driver Speed'), norm('Engine Speed'),
+    ...(actualFlow?.keyUsed ? [norm(actualFlow.keyUsed)] : []),
+    ...(desiredFlow?.keyUsed ? [norm(desiredFlow.keyUsed)] : []),
+  ])
+  const extraDps = rawDatapoints.filter(dp => {
+    const v = dp.value ?? (Array.isArray(dp.values) ? dp.values[0] : undefined)
+    if (v == null || String(v).trim() === '' || String(v).toLowerCase() === 'nan') return false
+    const aliasN = norm(dp.alias || dp.desc || '')
+    const descN = norm(dp.desc || '')
+    if (!aliasN) return false
+    return !coveredNorms.has(aliasN) && !coveredNorms.has(descN)
+  })
 
   const desiredFlowValue = formatFlowValue(desiredFlow?.value)
   const actualFlowValue = formatFlowValue(actualFlow?.value)
@@ -228,6 +250,23 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
               color={getCompressorColor(meta.label, meta.datapoint.value)}
             />
           ))}
+        </div>
+      )}
+      {extraDps.length > 0 && (
+        <div className={`grid grid-cols-2 gap-2 ${visibleRegisters.length > 0 ? 'mt-2' : ''}`}>
+          {extraDps.map((dp, i) => {
+            const lbl = dp.alias || dp.desc || 'Unknown'
+            const val = dp.value ?? (Array.isArray(dp.values) ? dp.values[0] : undefined)
+            return (
+              <DataPoint
+                key={`extra-${i}`}
+                label={lbl}
+                value={String(val ?? '--')}
+                unit={cleanUnit(dp.units)}
+                color="#888"
+              />
+            )
+          })}
         </div>
       )}
       {standby && !isRunning && (
@@ -758,6 +797,7 @@ export default function HalfmannLiveView() {
                     actualFlow={unitActualFlows[i]}
                     registers={getVisibleCompressorRegisters(unitDataMaps[i], {})}
                     standby={u.standby || false}
+                    rawDatapoints={unitDataRaw[u.key]?.datapoints || []}
                   />
                 ))}
               </div>
