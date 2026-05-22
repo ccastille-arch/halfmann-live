@@ -40,7 +40,11 @@ const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Wellhead #${n} Yesterdays Total Flow`,
   `Well ${n} Yesterdays Total Flow`,
 ])
-const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [`Well ${n} Choke Position`, `Well #${n} Choke Position`])
+const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [
+  `Well ${n} Choke Position`, `Well #${n} Choke Position`,
+  `Well #${n} Analog Output ${n}`,   // Altronic DE4000 alias seen in MLink portal
+  `Well ${n} Analog Output`,
+])
 const WELL_CASING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Casing Pressure`, `Well #${n} Casing Pressure`])
 const WELL_TUBING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Tubing Pressure`, `Well #${n} Tubing Pressure`])
 
