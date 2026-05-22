@@ -140,6 +140,25 @@ app.get('/api/mlink/device/full', async (req, res) => {
   res.json({ ...(latestData || {}), datapoints: Object.values(byKey), _merged: true })
 })
 
+// ─── Generic Murphy API probe (for endpoint discovery) ───────────────────────
+app.get('/api/mlink/probe', async (req, res) => {
+  const key = process.env.MLINK_API_KEY
+  if (!key) return res.status(503).json({ error: 'MLINK_API_KEY not configured' })
+  const { deviceId, endpoint, ...rest } = req.query
+  if (!deviceId || !endpoint) return res.status(400).json({ error: 'deviceId and endpoint required' })
+  const extraParams = Object.entries(rest).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')
+  const url = `${MLINK_BASE}/${endpoint}?deviceId=${encodeURIComponent(deviceId)}&code=${key}${extraParams}`
+  try {
+    const r = await fetch(url)
+    const text = await r.text()
+    let parsed
+    try { parsed = JSON.parse(text) } catch { parsed = text }
+    res.status(r.status).json({ _endpoint: endpoint, _status: r.status, _url: url.replace(key, 'REDACTED'), data: parsed })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
 app.get('/api/mlink/device/keys', async (req, res) => {
   const key = process.env.MLINK_API_KEY
   if (!key) return res.status(503).json({ error: 'MLINK_API_KEY not configured' })
