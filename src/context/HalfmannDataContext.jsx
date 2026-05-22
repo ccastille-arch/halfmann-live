@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-export const REFRESH_INTERVAL_S = 60
+export const REFRESH_INTERVAL_S = 3
 const CACHE_KEY = 'halfmann-live-cache-v1'
 
 export const HALFMANN_DEVICES = {

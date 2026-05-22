@@ -3,7 +3,7 @@ import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegist
 import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const REFRESH_INTERVAL_S = 60
+const REFRESH_INTERVAL_S = 3
 const TARGET_TOLERANCE_PCT = 5
 
 const HALFMANN_DEVICES = {
@@ -424,6 +424,10 @@ export default function HalfmannDiagnosticsView() {
     const unitSuctionTarget = unitMaps.map((dataMap) => getNumeric(dataMap, [
       'Loaded Auto Sp',
       'Loaded Auto SP',
+      'Loaded Auto Sp:',
+      'Loaded Auto SP:',
+      'Loaded AutoSp',
+      'Loaded AutoSP',
       'Auto Loaded Sp',
       'Auto Loaded SP',
       'Auto Load Sp',

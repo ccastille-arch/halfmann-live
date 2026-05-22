@@ -10,7 +10,7 @@ import {
 import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const REFRESH_INTERVAL_S = 60
+const REFRESH_INTERVAL_S = 3
 const NOT_PUBLISHED_COPY = 'Not published by current MLink feed'
 
 const HALFMANN_DEVICES = {
@@ -991,7 +991,7 @@ export default function HalfmannLiveView() {
       </div>
 
       <footer className="px-5 py-3 bg-[#0c0c16] border-t border-[#1a1a2a] text-center shrink-0">
-        <span className="text-[9px] text-[#444]">Halfmann 1214 - Read-only public view - Data refreshes every 60 seconds</span>
+        <span className="text-[9px] text-[#444]">Halfmann 1214 - Read-only public view - Data refreshes every 3 seconds</span>
       </footer>
     </div>
   )

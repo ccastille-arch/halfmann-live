@@ -3,7 +3,7 @@ import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegist
 import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const REFRESH_INTERVAL_S = 60
+const REFRESH_INTERVAL_S = 3
 const NOT_PUBLISHED_COPY = 'Not returned by current site feed'
 
 const HALFMANN_DEVICES = {
@@ -957,7 +957,7 @@ export default function HalfmannTelemetryView() {
           </Section>
 
           <footer style={{ textAlign: 'center', padding: '16px 0', borderTop: '1px solid #1a1a2a', marginTop: 8 }}>
-            <span style={{ fontSize: 8, color: '#2a2a3a' }}>Halfmann 1214 - Telemetry Dashboard - Refreshes every 60 seconds</span>
+            <span style={{ fontSize: 8, color: '#2a2a3a' }}>Halfmann 1214 - Telemetry Dashboard - Refreshes every 3 seconds</span>
           </footer>
         </div>
       </div>
