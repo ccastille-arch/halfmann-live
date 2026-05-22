@@ -31,11 +31,14 @@ const WELL_FLOW_KEYS = [
 ]
 
 const WELL_SETPOINT_KEYS = [1, 2, 3, 4, 5].map((n) => [
-  `Wellhead #${n} Calculated Desired Flow`,
   `Wellhead #${n} Setpoint From Customer PLC`,
-  `Well ${n} Calculated Desired Flow`,
   `Well ${n} Setpoint From Customer PLC`,
   `Well ${n} Setpoint`,
+])
+
+const WELL_CALCULATED_DESIRED_KEYS = [1, 2, 3, 4, 5].map((n) => [
+  `Wellhead #${n} Calculated Desired Flow`,
+  `Well ${n} Calculated Desired Flow`,
 ])
 
 const WELL_STATIC_KEYS = [1, 2, 3, 4, 5].map((n) => [
@@ -206,6 +209,7 @@ function UnitRow({ unit, actualFlow, desiredFlow, desiredFlowDerived, suctionAct
 function buildDiagnosis({
   allOnTarget,
   wellsShort,
+  sacrificedWells,
   totalActual,
   totalDesired,
   siteMatchPct,
@@ -290,22 +294,34 @@ function buildDiagnosis({
     }
   }
 
+  if (sacrificedWells.length > 0) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because the panel is sacrificing one or more wells',
+      reason: 'This page only uses the word sacrificed when the panel calculated desired flow is lower than that well customer target setpoint.',
+      evidence: sacrificedWells.map((well) =>
+        `W${well.wellNumber}: actual ${formatValue(well.actual)} vs calculated desired ${formatValue(well.calculatedDesired)} vs customer target ${formatValue(well.desired)}`
+      ).join(' | '),
+      action: 'Check the pad limiting condition first, then inspect the specific sacrificed wells.',
+    }
+  }
+
   if (siteMatchPct != null && siteMatchPct >= 96) {
     return {
       tone: 'warn',
-      headline: 'Not meeting rate because gas is being prioritized to other wells',
-      reason: 'The pad total is close to target, but one or more wells are still short. That usually means the shortfall is being concentrated on specific wells instead of the whole pad.',
+      headline: 'Not meeting rate and the live data does not prove the exact cause yet',
+      reason: 'The pad total is close to target, but this page does not have proof that the panel has started sacrificing wells.',
       evidence: `Pad is still at ${formatPct(siteMatchPct)} of total desired. Short wells: ${wellsShort.map((well) => `W${well.wellNumber} short ${formatValue(well.shortfall)}`).join(' | ')}.`,
-      action: 'Inspect the low wells first. This usually means one well is being sacrificed or one well has its own restriction.',
+      action: 'Check the short wells for local restriction and compare calculated desired flow against customer target before calling a well sacrificed.',
     }
   }
 
   return {
-    tone: 'bad',
-    headline: 'Not meeting rate because the pad still needs more compressor flow',
-    reason: 'The wells are short, discharge is not obviously in override, and recycle is not the main issue. The most likely problem is that compressor command needs to be bumped up or a unit is not carrying its share.',
+    tone: 'warn',
+    headline: 'Not meeting rate and no specific limiting condition is proven yet',
+    reason: 'The wells are short, but this page does not currently prove suction slow-down, discharge slow-down, recycle-open loss, too few compressors online, or panel sacrifice.',
     evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}. Low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI and high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp, 0)} PSI.`,
-    action: 'Check compressor flow commands and verify each running unit is carrying its share of total flow. If suction is down at the slow-down target or discharge is up at its slow-down target, the units may be slowing down on purpose.',
+    action: 'Check compressor desired flow versus actual flow on each running unit, then inspect the short wells individually for local restriction.',
   }
 }
 
@@ -360,6 +376,7 @@ export default function HalfmannDiagnosticsView() {
       const wellNumber = index + 1
       const desiredDatapoint = resolveDatapoint(panel, WELL_SETPOINT_KEYS[index])
       const desired = parseNumeric(desiredDatapoint?.value) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? null
+      const calculatedDesired = getNumeric(panel, WELL_CALCULATED_DESIRED_KEYS[index])
       const actual = getNumeric(panel, flowKeys)
       const staticPressure = getNumeric(panel, WELL_STATIC_KEYS[index])
       const shortfall = actual != null && desired != null ? Math.max(0, desired - actual) : null
@@ -367,6 +384,7 @@ export default function HalfmannDiagnosticsView() {
         wellNumber,
         actual,
         desired,
+        calculatedDesired,
         staticPressure,
         shortfall,
         atTarget: actual != null && desired != null && Math.abs(actual - desired) <= desired * (TARGET_TOLERANCE_PCT / 100),
@@ -430,6 +448,9 @@ export default function HalfmannDiagnosticsView() {
     const wellsMeetingCount = wellsWithTarget.filter((well) => well.atTarget).length
     const allOnTarget = wellsWithTarget.length > 0 ? wellsMeetingCount === wellsWithTarget.length : null
     const wellsShort = wellsWithTarget.filter((well) => !well.atTarget)
+    const sacrificedWells = wellsWithTarget.filter((well) =>
+      well.calculatedDesired != null && well.calculatedDesired < well.desired
+    )
     const shortfallTotal = wellsShort.reduce((sum, well) => sum + (well.shortfall ?? 0), 0)
     const siteMatchPct = totalDesired != null && totalDesired > 0 ? (totalActual / totalDesired) * 100 : null
     const commandMatchValues = unitDesiredFlows.map((desired, index) => {
@@ -454,6 +475,7 @@ export default function HalfmannDiagnosticsView() {
       wellsMeetingCount,
       allOnTarget,
       wellsShort,
+      sacrificedWells,
       totalActual,
       totalDesired,
       shortfallTotal,
@@ -599,12 +621,16 @@ export default function HalfmannDiagnosticsView() {
 
           <div style={{ marginTop: 18, border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
-              How This Page Decides
+              Accuracy Rule
             </div>
-            <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.75 }}>
+            {false && <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.75 }}>
               This page is intentionally simple. It picks the most likely operator-level reason in this order:
               high discharge pressure first, then recycle open, then not enough compressors online, then well-priority / sacrifice pattern,
               and finally a general “need more compressor flow” diagnosis if nothing else is stronger.
+            </div>}
+            <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.75 }}>
+              This page only states causes that are supported by the live data shown here. It only calls a well sacrificed when that well
+              calculated desired flow is below that well customer target setpoint.
             </div>
           </div>
         </div>
