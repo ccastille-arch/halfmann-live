@@ -124,7 +124,7 @@ function SummaryCard({ label, value, sub, tone = 'neutral' }) {
     <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: 16, padding: '14px 16px' }}>
       <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
       <div style={{ fontSize: 28, color: c.title, fontWeight: 900, lineHeight: 1, fontFamily: "'Arial Black', sans-serif" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: c.text, marginTop: 8, lineHeight: 1.5 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 11, color: c.text, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{sub}</div>}
     </div>
   )
 }
@@ -432,6 +432,13 @@ export default function HalfmannDiagnosticsView() {
     const commandMatchAvg = commandMatchValues.length
       ? commandMatchValues.reduce((sum, value) => sum + value, 0) / commandMatchValues.length
       : null
+    const suctionComparisonLines = HALFMANN_UNITS
+      .filter((unit) => !unit.standby)
+      .map((unit) => {
+        const index = HALFMANN_UNITS.findIndex((entry) => entry.key === unit.key)
+        return `${unit.label}: ${formatValue(unitSuction[index], 1)} actual / ${formatValue(unitSuctionTarget[index], 1)} target PSI`
+      })
+      .join('\n')
 
     return {
       timestamp: getTimestamp(panelData),
@@ -461,6 +468,7 @@ export default function HalfmannDiagnosticsView() {
       speedDischargePressAutoSp,
       highestDischarge,
       commandMatchAvg,
+      suctionComparisonLines,
     }
   }, [panelData, unitDataRaw])
 
@@ -541,7 +549,7 @@ export default function HalfmannDiagnosticsView() {
             <SummaryCard
               label="Suction Controller Score"
               value={derived.commandMatchAvg != null ? `${formatPct(derived.commandMatchAvg, 0)}` : '--'}
-              sub={derived.speedSuctionPressAutoSp != null ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI` : 'Loaded Auto Sp shown per unit below'}
+              sub={derived.suctionComparisonLines || (derived.speedSuctionPressAutoSp != null ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI` : 'Loaded Auto Sp not visible')}
               tone={derived.commandMatchAvg != null && derived.commandMatchAvg >= 95 ? 'good' : derived.commandMatchAvg != null ? 'warn' : 'neutral'}
             />
           </div>
