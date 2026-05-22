@@ -7,6 +7,7 @@ import {
   loadAwiRegisterCatalog,
   parseLiveDatapoints,
 } from '../engine/liveRegisters'
+import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
@@ -428,59 +429,27 @@ function PressureCell({ label, value, unit = 'PSI', warn, danger }) {
 }
 
 export default function HalfmannLiveView() {
-  const [panelData, setPanelData] = useState(null)
-  const [unitDataRaw, setUnitDataRaw] = useState({ unit2130: null, unit2127: null, unit2129: null, unit2128: null, unit1396: null })
   const [registerCatalog, setRegisterCatalog] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [liveError, setLiveError] = useState('')
-  const [lastRefresh, setLastRefresh] = useState(null)
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_S)
   const [padVisible, setPadVisible] = useState(true)
-  const [recycleAlertThreshold, setRecycleAlertThreshold] = useState(0)
+  const {
+    panelData,
+    unitDataRaw,
+    loading,
+    liveError,
+    lastRefresh,
+    countdown,
+    siteSettings,
+    meetingState,
+    refresh,
+  } = useHalfmannData()
+  const recycleAlertThreshold = siteSettings.recycleAlertThreshold ?? 0
+  const wellTargetPct = siteSettings.wellTargetPct ?? 5
 
   useEffect(() => {
     fetch(`${API_BASE}/api/public/pad-visibility`)
       .then(res => res.ok ? res.json() : null)
       .then(body => { if (body && body.halfmann === false) setPadVisible(false) })
       .catch(() => {})
-    fetch(`${API_BASE}/api/settings`)
-      .then(res => res.ok ? res.json() : null)
-      .then(body => { if (body?.recycleAlertThreshold != null) setRecycleAlertThreshold(body.recycleAlertThreshold) })
-      .catch(() => {})
-  }, [])
-
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setLiveError('')
-    const [panelResult, ...unitResults] = await Promise.all([
-      fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...HALFMANN_UNITS.map(u => u.deviceId ? fetchDeviceFull(u.deviceId) : Promise.resolve({ data: null, error: '' })),
-    ])
-    setPanelData(panelResult.data)
-    const newUnitData = {}
-    HALFMANN_UNITS.forEach((u, i) => { newUnitData[u.key] = unitResults[i].data })
-    setUnitDataRaw(newUnitData)
-    const allNull = !panelResult.data && unitResults.every(r => !r.data)
-    if (allNull) {
-      const allErrors = [panelResult.error, ...unitResults.map(r => r.error)].filter(Boolean)
-      setLiveError(allErrors.length > 0
-        ? `No live MLINK data available. ${allErrors.join(' | ')}`
-        : 'No live MLINK data available. Check field comms.')
-    }
-    setLastRefresh(new Date())
-    setLoading(false)
-    setCountdown(REFRESH_INTERVAL_S)
-  }, [])
-
-  useEffect(() => {
-    refresh()
-    const interval = setInterval(refresh, REFRESH_INTERVAL_S * 1000)
-    return () => clearInterval(interval)
-  }, [refresh])
-
-  useEffect(() => {
-    const tick = setInterval(() => setCountdown(c => (c > 0 ? c - 1 : REFRESH_INTERVAL_S)), 1000)
-    return () => clearInterval(tick)
   }, [])
 
   useEffect(() => {
@@ -533,7 +502,7 @@ export default function HalfmannLiveView() {
       tubingPres,
       gap: actual != null && desired != null ? actual - desired : null,
       matchPct: computeMatchPct(actual, desired),
-      atTarget: isWithinTarget(actual, desired),
+      atTarget: meetingState.wells[String(wellNumber)] ?? isWithinTarget(actual, desired),
       sacrificed: calculatedDesired != null && desired != null && calculatedDesired < desired,
     }
   })
@@ -590,7 +559,7 @@ export default function HalfmannLiveView() {
   const compressorsMeetingCount = primaryUnitIndexes.filter((index) => {
     const actual = parseLiveNumeric(unitActualFlows[index]?.value)
     const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
-    return actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05
+    return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05)
   }).length
   const allCompressorsMeetingCommands = compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null
   const compressorCommandScore = compressorCommandScores.length > 0

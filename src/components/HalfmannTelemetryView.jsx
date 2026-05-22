@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
+import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
@@ -117,10 +118,11 @@ const C4_GROUPS = [
   },
 ]
 
-const DEFAULT_SETTINGS = { wellTargetPct: 5, recycleOpenPct: 5 }
+const DEFAULT_SETTINGS = { wellTargetPct: 5, recycleOpenPct: 5, meetingFlowPersistSeconds: 120 }
 const SETTINGS_SCHEMA = {
   wellTargetPct:   { label: 'Well On-Target Threshold',    description: 'A well is "on target" when actual flow is within this % of its setpoint.', unit: '%', min: 1, max: 25 },
   recycleOpenPct:  { label: 'Recycle Valve Open Threshold', description: 'Recycle valve is "open" above this position %.', unit: '%', min: 0, max: 25 },
+  meetingFlowPersistSeconds: { label: 'Meeting Flow Persist Time', description: 'A well or compressor must stay off target this many seconds before the site flips from meeting to not meeting flow.', unit: 'sec', min: 0, max: 900 },
 }
 
 // Fetch
@@ -505,21 +507,22 @@ function RefreshBtn({ s, loading, onRefresh }) {
 
   // Main component
 export default function HalfmannTelemetryView() {
-  const [panelData, setPanelData] = useState(null)
-  const [unitDataRaw, setUnitDataRaw] = useState({})
-  const [loading, setLoading] = useState(true)
-  const [liveError, setLiveError] = useState('')
-  const [lastRefresh, setLastRefresh] = useState(null)
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_S)
+  const {
+    panelData,
+    unitDataRaw,
+    loading,
+    liveError,
+    lastRefresh,
+    countdown,
+    siteSettings,
+    meetingState,
+    refresh,
+    saveSettings,
+  } = useHalfmannData()
   const [isAdmin, setIsAdmin] = useState(false)
   const [adminToken, setAdminToken] = useState(() => { try { return localStorage.getItem('halfmann_admin_token') } catch { return null } })
   const [showLogin, setShowLogin] = useState(false)
   const [activeSettings, setActiveSettings] = useState(null)
-  const [siteSettings, setSiteSettings] = useState(DEFAULT_SETTINGS)
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/settings`).then(r => r.ok ? r.json() : null).then(s => { if (s) setSiteSettings({ ...DEFAULT_SETTINGS, ...s }) }).catch(() => {})
-  }, [])
 
   useEffect(() => { if (adminToken) setIsAdmin(true) }, [adminToken])
 
@@ -535,27 +538,11 @@ export default function HalfmannTelemetryView() {
   async function handleSaveSettings(key, value) {
     const updated = { ...siteSettings, [key]: value }
     try {
-      const r = await fetch(`${API_BASE}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken }, body: JSON.stringify(updated) })
-      if (r.ok) setSiteSettings({ ...DEFAULT_SETTINGS, ...await r.json() })
-      else if (r.status === 401) { setIsAdmin(false); setAdminToken(null); try { localStorage.removeItem('halfmann_admin_token') } catch {} }
+      const r = await saveSettings(updated, adminToken)
+      if (r && r.status === 401) { setIsAdmin(false); setAdminToken(null); try { localStorage.removeItem('halfmann_admin_token') } catch {} }
     } catch {}
   }
   const openSettings = key => { if (isAdmin) setActiveSettings(key) }
-
-  const refresh = useCallback(async () => {
-    setLoading(true); setLiveError('')
-    const [panelResult, ...unitResults] = await Promise.all([
-      fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...HALFMANN_UNITS.map(u => u.deviceId ? fetchDeviceFull(u.deviceId) : Promise.resolve({ data: null, error: '' })),
-    ])
-    setPanelData(panelResult.data)
-    const raw = {}; HALFMANN_UNITS.forEach((u, i) => { raw[u.key] = unitResults[i].data }); setUnitDataRaw(raw)
-    if (!panelResult.data && unitResults.every(r => !r.data)) setLiveError('No live MLink data. Check field comms.')
-    setLastRefresh(new Date()); setLoading(false); setCountdown(REFRESH_INTERVAL_S)
-  }, [])
-
-  useEffect(() => { refresh(); const i = setInterval(refresh, REFRESH_INTERVAL_S * 1000); return () => clearInterval(i) }, [refresh])
-  useEffect(() => { const t = setInterval(() => setCountdown(c => c > 0 ? c - 1 : REFRESH_INTERVAL_S), 1000); return () => clearInterval(t) }, [])
 
   // Derived
   const panel = parseLiveDatapoints(panelData)
@@ -564,6 +551,7 @@ export default function HalfmannTelemetryView() {
 
   const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => {
     const desiredInfo = getWellSetpointInfo(panel, i + 1, HALFMANN_WELL_SETPOINT_FALLBACKS[i])
+    const stableAtTarget = meetingState.wells[String(i + 1)]
     return {
       n: i + 1,
       actual: getN(panel, flowKeys),
@@ -575,6 +563,7 @@ export default function HalfmannTelemetryView() {
       casing: getN(panel, WELL_CASING_KEYS[i]),
       tubing: getN(panel, WELL_TUBING_KEYS[i]),
       yesterday: getN(panel, WELL_YESTERDAY_KEYS[i]),
+      stableAtTarget,
     }
   })
 
@@ -593,7 +582,7 @@ export default function HalfmannTelemetryView() {
   const wellsWithTarget = wellData.filter(w => w.actual != null && (w.desired != null || perWellTarget != null))
   const wellsOnTarget = wellsWithTarget.filter(w => {
     const t = w.desired ?? perWellTarget
-    return t != null && t > 0 && Math.abs(w.actual - t) <= t * (wellTargetPct / 100)
+    return w.stableAtTarget ?? (t != null && t > 0 && Math.abs(w.actual - t) <= t * (wellTargetPct / 100))
   }).length
   const allOnTarget = wellsWithTarget.length > 0 ? wellsOnTarget === wellsWithTarget.length : null
   const padMatchPct = totalDesired != null && totalDesired > 0 ? Math.max(0, 100 - (Math.abs(totalActual - totalDesired) / totalDesired) * 100) : null

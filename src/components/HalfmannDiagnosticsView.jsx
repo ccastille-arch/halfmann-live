@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
+import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const REFRESH_INTERVAL_S = 60
@@ -326,51 +327,22 @@ function buildDiagnosis({
 }
 
 export default function HalfmannDiagnosticsView() {
-  const [panelData, setPanelData] = useState(null)
-  const [unitDataRaw, setUnitDataRaw] = useState({ unit2130: null, unit2127: null, unit2128: null, unit2129: null, unit1396: null })
-  const [loading, setLoading] = useState(true)
-  const [liveError, setLiveError] = useState('')
-  const [lastRefresh, setLastRefresh] = useState(null)
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_S)
-
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setLiveError('')
-    const [panelResult, ...unitResults] = await Promise.all([
-      fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...HALFMANN_UNITS.map((unit) => fetchDeviceFull(unit.deviceId)),
-    ])
-
-    setPanelData(panelResult.data)
-    const nextUnits = {}
-    HALFMANN_UNITS.forEach((unit, index) => { nextUnits[unit.key] = unitResults[index].data })
-    setUnitDataRaw(nextUnits)
-
-    const allNull = !panelResult.data && unitResults.every((result) => !result.data)
-    if (allNull) {
-      const errors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
-      setLiveError(errors.length ? `No live MLink data available. ${errors.join(' | ')}` : 'No live MLink data available.')
-    }
-
-    setLastRefresh(new Date())
-    setLoading(false)
-    setCountdown(REFRESH_INTERVAL_S)
-  }, [])
-
-  useEffect(() => {
-    refresh()
-    const interval = setInterval(refresh, REFRESH_INTERVAL_S * 1000)
-    return () => clearInterval(interval)
-  }, [refresh])
-
-  useEffect(() => {
-    const tick = setInterval(() => setCountdown((current) => (current > 0 ? current - 1 : REFRESH_INTERVAL_S)), 1000)
-    return () => clearInterval(tick)
-  }, [])
+  const {
+    panelData,
+    unitDataRaw,
+    loading,
+    liveError,
+    lastRefresh,
+    countdown,
+    siteSettings,
+    meetingState,
+    refresh,
+  } = useHalfmannData()
 
   const derived = useMemo(() => {
     const panel = parseLiveDatapoints(panelData)
     const unitMaps = HALFMANN_UNITS.map((unit) => parseLiveDatapoints(unitDataRaw[unit.key]))
+    const wellTargetPct = Number(siteSettings.wellTargetPct) || TARGET_TOLERANCE_PCT
 
     const wells = WELL_FLOW_KEYS.map((flowKeys, index) => {
       const wellNumber = index + 1
@@ -387,7 +359,7 @@ export default function HalfmannDiagnosticsView() {
         calculatedDesired,
         staticPressure,
         shortfall,
-        atTarget: actual != null && desired != null && Math.abs(actual - desired) <= desired * (TARGET_TOLERANCE_PCT / 100),
+        atTarget: meetingState.wells[String(wellNumber)] ?? (actual != null && desired != null && Math.abs(actual - desired) <= desired * (wellTargetPct / 100)),
       }
     })
 
@@ -507,7 +479,7 @@ export default function HalfmannDiagnosticsView() {
       suctionMatchAvg,
       suctionComparisonLines,
     }
-  }, [panelData, unitDataRaw])
+  }, [panelData, unitDataRaw, siteSettings.wellTargetPct, meetingState.wells])
 
   const diagnosis = buildDiagnosis(derived)
   const pageTime = derived.timestamp ?? lastRefresh
