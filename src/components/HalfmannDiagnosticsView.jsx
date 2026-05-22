@@ -207,6 +207,26 @@ function UnitRow({ unit, actualFlow, desiredFlow, desiredFlowDerived, suctionAct
   )
 }
 
+function CommsIndicator({ commsStatus }) {
+  const isHolding = commsStatus?.isHolding
+  return (
+    <div style={{
+      border: `1px solid ${isHolding ? '#8a5b10' : '#1d6c3d'}`,
+      background: isHolding ? '#171207' : '#0b1a12',
+      color: isHolding ? '#fbbf24' : '#4ade80',
+      borderRadius: 999,
+      padding: '6px 10px',
+      fontSize: 9,
+      fontWeight: 700,
+      letterSpacing: '0.12em',
+      textTransform: 'uppercase',
+      whiteSpace: 'nowrap',
+    }}>
+      {isHolding ? 'MLink Comms Lost - Holding Data' : 'MLink Comms OK'}
+    </div>
+  )
+}
+
 function buildDiagnosis({
   allOnTarget,
   wellsShort,
@@ -336,6 +356,7 @@ export default function HalfmannDiagnosticsView() {
     countdown,
     siteSettings,
     meetingState,
+    commsStatus,
     refresh,
   } = useHalfmannData()
 
@@ -492,6 +513,7 @@ export default function HalfmannDiagnosticsView() {
           <div style={{ fontSize: 10, color: '#64748b' }}>Simple operator page: what is wrong, why it is wrong, and what to check next</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <CommsIndicator commsStatus={commsStatus} />
           {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
           <button
             onClick={refresh}
@@ -519,6 +541,11 @@ export default function HalfmannDiagnosticsView() {
           {liveError && (
             <div style={{ marginBottom: 16, border: '1px solid #7a1a1a', background: '#1b0d0d', borderRadius: 14, padding: '12px 14px', fontSize: 11, color: '#fecaca' }}>
               {liveError}
+            </div>
+          )}
+          {commsStatus?.isHolding && (
+            <div style={{ marginBottom: 16, border: '1px solid #8a5b10', background: '#171207', borderRadius: 14, padding: '12px 14px', fontSize: 11, color: '#fef3c7' }}>
+              {commsStatus.message}
             </div>
           )}
 

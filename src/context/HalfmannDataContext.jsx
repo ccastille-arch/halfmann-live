@@ -3,6 +3,7 @@ import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegist
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 export const REFRESH_INTERVAL_S = 60
+const CACHE_KEY = 'halfmann-live-cache-v1'
 
 export const HALFMANN_DEVICES = {
   panel: '2507-501508',
@@ -40,6 +41,33 @@ export const DEFAULT_SETTINGS = {
 
 const HalfmannDataContext = createContext(null)
 
+function loadCachedState() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return {
+      panelData: parsed?.panelData ?? null,
+      unitDataRaw: parsed?.unitDataRaw ?? {},
+      lastRefresh: parsed?.lastRefresh ? new Date(parsed.lastRefresh) : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+function saveCachedState(panelData, unitDataRaw, lastRefresh) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify({
+      panelData,
+      unitDataRaw,
+      lastRefresh: lastRefresh?.toISOString?.() ?? null,
+    }))
+  } catch {}
+}
+
 async function readErrorPayload(res) {
   const contentType = res.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -72,6 +100,10 @@ async function fetchDeviceFull(deviceId) {
 function parseNumeric(value) {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
+}
+
+function hasAnyDatapoint(dataMap, labelSets) {
+  return labelSets.some((labels) => resolveDatapoint(dataMap, labels))
 }
 
 function resolveDatapoint(dataMap, labels) {
@@ -144,6 +176,27 @@ function deriveMissingCompressorFlowValues(unitFlows, totalActualFlow) {
   return next
 }
 
+function isUsableDeviceSnapshot(deviceKey, data) {
+  if (!data) return false
+  const count = data?._registerCount ?? data?.datapoints?.length ?? 0
+  if (!count) return false
+
+  const dataMap = parseLiveDatapoints(data)
+  if (deviceKey === 'panel') {
+    return hasAnyDatapoint(dataMap, LIVE_WELL_FLOW_KEYS)
+  }
+
+  return hasAnyDatapoint(dataMap, [
+    ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed', 'Engine Speed From EICS'],
+    ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Compressor Flow Rate PID PV'],
+    ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs'],
+    ['Discharge Pressure', 'Stage 3 Discharge Prs'],
+    ['Compressor Oil Pressure'],
+    ['Engine Oil Pressure'],
+    ['System Voltage'],
+  ])
+}
+
 function updateDebouncedEntry(entry, currentValue, nowMs, persistMs) {
   if (currentValue == null) {
     return { stableValue: null, pendingValue: null, pendingSince: null }
@@ -167,16 +220,23 @@ function updateDebouncedEntry(entry, currentValue, nowMs, persistMs) {
 }
 
 export function HalfmannDataProvider({ children }) {
-  const [panelData, setPanelData] = useState(null)
-  const [unitDataRaw, setUnitDataRaw] = useState({})
+  const cachedState = useMemo(() => loadCachedState(), [])
+  const [panelData, setPanelData] = useState(cachedState?.panelData ?? null)
+  const [unitDataRaw, setUnitDataRaw] = useState(cachedState?.unitDataRaw ?? {})
   const [loading, setLoading] = useState(true)
   const [liveError, setLiveError] = useState('')
-  const [lastRefresh, setLastRefresh] = useState(null)
+  const [lastRefresh, setLastRefresh] = useState(cachedState?.lastRefresh ?? null)
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL_S)
   const [siteSettings, setSiteSettings] = useState(DEFAULT_SETTINGS)
   const [padVisible, setPadVisible] = useState(true)
   const [meetingState, setMeetingState] = useState({ wells: {}, compressors: {}, updatedAt: null })
+  const [commsStatus, setCommsStatus] = useState({ isHolding: false, allHeld: false, heldDevices: [], healthyDevices: [], lastAttemptAt: null, message: '' })
   const decisionRef = useRef({ wells: {}, compressors: {} })
+  const panelRef = useRef(panelData)
+  const unitDataRef = useRef(unitDataRaw)
+
+  useEffect(() => { panelRef.current = panelData }, [panelData])
+  useEffect(() => { unitDataRef.current = unitDataRaw }, [unitDataRaw])
 
   const reloadSettings = useCallback(async () => {
     try {
@@ -209,16 +269,61 @@ export function HalfmannDataProvider({ children }) {
       fetchDeviceFull(HALFMANN_DEVICES.panel),
       ...HALFMANN_UNITS.map((unit) => fetchDeviceFull(unit.deviceId)),
     ])
-    setPanelData(panelResult.data)
-    const nextUnits = {}
-    HALFMANN_UNITS.forEach((unit, index) => { nextUnits[unit.key] = unitResults[index].data })
+
+    const heldDevices = []
+    const healthyDevices = []
+    const panelUsable = isUsableDeviceSnapshot('panel', panelResult.data)
+    const previousPanel = panelRef.current
+    const nextPanel = panelUsable ? panelResult.data : previousPanel
+    if (panelUsable) healthyDevices.push('Panel')
+    else if (previousPanel) heldDevices.push('Panel')
+
+    const previousUnits = unitDataRef.current || {}
+    const nextUnits = { ...previousUnits }
+    HALFMANN_UNITS.forEach((unit, index) => {
+      const usable = isUsableDeviceSnapshot(unit.key, unitResults[index].data)
+      if (usable) {
+        nextUnits[unit.key] = unitResults[index].data
+        healthyDevices.push(unit.label)
+      } else if (previousUnits[unit.key]) {
+        heldDevices.push(unit.label)
+      } else {
+        nextUnits[unit.key] = unitResults[index].data
+      }
+    })
+
+    setPanelData(nextPanel)
     setUnitDataRaw(nextUnits)
-    const allNull = !panelResult.data && unitResults.every((result) => !result.data)
-    if (allNull) {
-      const errors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
+
+    const acceptedAny = panelUsable || unitResults.some((result, index) => isUsableDeviceSnapshot(HALFMANN_UNITS[index].key, result.data))
+    if (acceptedAny) {
+      const acceptedAt = new Date()
+      setLastRefresh(acceptedAt)
+      saveCachedState(nextPanel, nextUnits, acceptedAt)
+    }
+
+    const errors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
+    const allHeld = heldDevices.length === HALFMANN_UNITS.length + (previousPanel ? 1 : 0) && heldDevices.length > 0
+    const hasCachedData = !!nextPanel || Object.values(nextUnits).some(Boolean)
+    const message = heldDevices.length > 0
+      ? `MLink comms lost for ${heldDevices.join(', ')}. Holding last known good readings until data returns.`
+      : ''
+
+    setCommsStatus({
+      isHolding: heldDevices.length > 0,
+      allHeld,
+      heldDevices,
+      healthyDevices,
+      lastAttemptAt: new Date(),
+      message,
+    })
+
+    if (heldDevices.length > 0 && hasCachedData) {
+      setLiveError(message)
+    } else if (!acceptedAny) {
       setLiveError(errors.length ? `No live MLINK data available. ${errors.join(' | ')}` : 'No live MLINK data available.')
     }
-    setLastRefresh(new Date())
+
     setLoading(false)
     setCountdown(REFRESH_INTERVAL_S)
   }, [])
@@ -299,10 +404,11 @@ export function HalfmannDataProvider({ children }) {
     siteSettings,
     padVisible,
     meetingState,
+    commsStatus,
     refresh,
     reloadSettings,
     saveSettings,
-  }), [panelData, unitDataRaw, loading, liveError, lastRefresh, countdown, siteSettings, padVisible, meetingState, refresh, reloadSettings, saveSettings])
+  }), [panelData, unitDataRaw, loading, liveError, lastRefresh, countdown, siteSettings, padVisible, meetingState, commsStatus, refresh, reloadSettings, saveSettings])
 
   return (
     <HalfmannDataContext.Provider value={value}>

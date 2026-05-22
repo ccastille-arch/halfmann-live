@@ -411,6 +411,19 @@ function RefreshCountdown({ secondsLeft, loading, onRefresh }) {
   )
 }
 
+function CommsIndicator({ commsStatus }) {
+  const isHolding = commsStatus?.isHolding
+  return (
+    <span className={`rounded-full border px-2.5 py-1 text-[8px] uppercase tracking-[0.18em] ${
+      isHolding
+        ? 'border-[#8a5b10] bg-[#171107] text-[#fbbf24]'
+        : 'border-[#1d6c3d] bg-[#0a1410] text-[#4ade80]'
+    }`}>
+      {isHolding ? 'MLink Comms Lost - Holding Data' : 'MLink Comms OK'}
+    </span>
+  )
+}
+
 function PressureCell({ label, value, unit = 'PSI', warn, danger }) {
   const n = parseLiveNumeric(value)
   const color = n == null ? '#555'
@@ -440,6 +453,7 @@ export default function HalfmannLiveView() {
     countdown,
     siteSettings,
     meetingState,
+    commsStatus,
     refresh,
   } = useHalfmannData()
   const recycleAlertThreshold = siteSettings.recycleAlertThreshold ?? 0
@@ -592,13 +606,14 @@ export default function HalfmannLiveView() {
     <div className="flex flex-col bg-[#080810]" style={{ minHeight: 'calc(100vh - 48px)' }}>
       <header className="flex items-center justify-between px-5 py-3 bg-[#0c0c16] border-b border-[#1a1a2a] shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#22c55e] shadow-lg shadow-[#22c55e]/60 animate-pulse" />
+          <div className={`w-2.5 h-2.5 rounded-full shadow-lg animate-pulse ${commsStatus?.isHolding ? 'bg-[#f59e0b] shadow-[#f59e0b]/60' : 'bg-[#22c55e] shadow-[#22c55e]/60'}`} />
           <div>
             <div className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>Live Field Data - Halfmann 1214</div>
             <div className="text-[10px] text-[#666]">Active Pad Logic panel - read-only public view</div>
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <CommsIndicator commsStatus={commsStatus} />
           {lastRefresh && <span className="text-[9px] text-[#555] hidden sm:inline">Last update: {lastRefresh.toLocaleTimeString()}</span>}
           <RefreshCountdown secondsLeft={countdown} loading={loading} onRefresh={refresh} />
           <span className="rounded-full border border-[#2f2f40] bg-[#111120] px-2 py-0.5 text-[8px] uppercase tracking-[0.18em] text-[#777]">
@@ -624,6 +639,11 @@ export default function HalfmannLiveView() {
             <>
               {liveError && (
                 <div className="mb-4 rounded-lg border border-[#5a1d1d] bg-[#1f0c0c] px-4 py-3 text-[11px] text-[#fca5a5]">{liveError}</div>
+              )}
+              {commsStatus?.isHolding && (
+                <div className="mb-4 rounded-lg border border-[#8a5b10] bg-[#171107] px-4 py-3 text-[11px] text-[#fef3c7]">
+                  {commsStatus.message}
+                </div>
               )}
 
               {/* 3 status cards */}
