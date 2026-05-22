@@ -450,10 +450,18 @@ export default function HalfmannTelemetryView() {
   const dischargeSP = unitMaps.reduce((f, dm) => f ?? getN(dm, ['Speed Auto Discharge SP', 'Altronic Discharge SP', 'Discharge Pressure SP']), null)
 
   const unitFlows   = unitMaps.map(dm => getN(dm, ['Flow Rate', 'Flow Rate PID PV']))
-  const unitDesired = HALFMANN_UNITS.map((u, i) =>
-    getN(panel, [`Compressor #${i+1} Desire Flow SP For PID Murphy`]) ??
+  // MLink config assigns compressor numbers by unit ID (not array position):
+  //   Compressor #1 = Unit 2128,  #2 = Unit 2130,  #3 = Unit 2127,  #4 = Unit 2129
+  const UNIT_TO_COMP_NUM_T = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
+  const unitDesired = HALFMANN_UNITS.map((u, i) => {
+    const compNum = UNIT_TO_COMP_NUM_T[u.key]
+    const unitNum = u.label.match(/\d{4}/)?.[0]
+    return getN(panel, [
+      ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
+      ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`] : []),
+    ]) ??
     getN(unitMaps[i], ['Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP'])
-  )
+  })
 
   const wellScores = wellData.map(w => {
     const t = w.desired ?? perWellTarget

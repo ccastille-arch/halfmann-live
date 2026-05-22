@@ -394,15 +394,22 @@ export default function HalfmannLiveView() {
     }
   })
 
-  const unitDesiredFlows = HALFMANN_UNITS.map((u, i) =>
-    resolvePreferredDatapoint(panel, [
-      `Compressor #${i + 1} Desire Flow SP For PID Murphy`,
-      `Compressor ${i + 1} Desire Flow SP For PID Murphy`,
+  // MLink config assigns compressor numbers by unit ID (not array position):
+  //   Compressor #1 = Unit 2128,  #2 = Unit 2130,  #3 = Unit 2127,  #4 = Unit 2129
+  const UNIT_TO_COMP_NUM = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
+  const unitDesiredFlows = HALFMANN_UNITS.map((u, i) => {
+    const compNum = UNIT_TO_COMP_NUM[u.key]
+    const unitNum = u.label.match(/\d{4}/)?.[0]
+    return resolvePreferredDatapoint(panel, [
+      // Exact name from MLink JSON config (e.g. "Compressor #1 Unit 2128 Desire Flow SP For PID Murphy")
+      ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
+      // Fallback without unit suffix (older MLink configs)
+      ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`, `Compressor ${compNum} Desire Flow SP For PID Murphy`] : []),
     ]) ??
     resolvePreferredDatapoint(unitDataMaps[i], [
       'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP',
     ])
-  )
+  })
 
   const unitActualFlows = unitDataMaps.map(dataMap =>
     resolvePreferredDatapoint(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV'])
