@@ -53,7 +53,7 @@ const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [
 const WELL_CASING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Casing Pressure`, `Well #${n} Casing Pressure`])
 const WELL_TUBING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Tubing Pressure`, `Well #${n} Tubing Pressure`])
 
-// ─── ASC units: 17 live MLink keys ────────────────────────────────────────────
+// ASC units: 17 live MLink keys
 const ASC_GROUPS = [
   {
     title: 'Performance',
@@ -75,12 +75,12 @@ const ASC_GROUPS = [
   {
     title: 'Temperatures',
     params: [
-      { label: 'Stg 1 Discharge',         keys: ['Stage 1 Discharge Temperature'],          unit: '°F', dec: 1 },
-      { label: 'Stg 2 Discharge',         keys: ['Stage 2 Discharge Temperature'],          unit: '°F', dec: 1 },
-      { label: 'Discharge Temp',          keys: ['Discharge Temperature'],                  unit: '°F', dec: 1 },
-      { label: 'Engine Oil Temp',         keys: ['Engine Oil Temperature'],                 unit: '°F', dec: 1 },
-      { label: 'EICS Oil Temp',           keys: ['EICS Oil Temperature'],                   unit: '°F', dec: 1 },
-      { label: 'Comp Oil Temp',           keys: ['Compressor Oil Temperature'],             unit: '°F', dec: 1 },
+      { label: 'Stg 1 Discharge',         keys: ['Stage 1 Discharge Temperature'],          unit: 'deg F', dec: 1 },
+      { label: 'Stg 2 Discharge',         keys: ['Stage 2 Discharge Temperature'],          unit: 'deg F', dec: 1 },
+      { label: 'Discharge Temp',          keys: ['Discharge Temperature'],                  unit: 'deg F', dec: 1 },
+      { label: 'Engine Oil Temp',         keys: ['Engine Oil Temperature'],                 unit: 'deg F', dec: 1 },
+      { label: 'EICS Oil Temp',           keys: ['EICS Oil Temperature'],                   unit: 'deg F', dec: 1 },
+      { label: 'Comp Oil Temp',           keys: ['Compressor Oil Temperature'],             unit: 'deg F', dec: 1 },
     ],
   },
   {
@@ -94,7 +94,7 @@ const ASC_GROUPS = [
   },
 ]
 
-// ─── C4 unit 2129: 8 live MLink keys ──────────────────────────────────────────
+// C4 unit 2129: 8 live MLink keys
 const C4_GROUPS = [
   {
     title: 'Performance & Pressures',
@@ -110,8 +110,8 @@ const C4_GROUPS = [
   {
     title: 'Temperatures & Status',
     params: [
-      { label: 'Discharge Temp',          keys: ['Discharge Temperature'],                  unit: '°F', dec: 1 },
-      { label: 'EICS Oil Temp',           keys: ['EICS Oil Temperature'],                   unit: '°F', dec: 1 },
+      { label: 'Discharge Temp',          keys: ['Discharge Temperature'],                  unit: 'deg F', dec: 1 },
+      { label: 'EICS Oil Temp',           keys: ['EICS Oil Temperature'],                   unit: 'deg F', dec: 1 },
       { label: 'System Voltage',          keys: ['System Voltage'],                          unit: 'V',  dec: 1 },
     ],
   },
@@ -123,7 +123,7 @@ const SETTINGS_SCHEMA = {
   recycleOpenPct:  { label: 'Recycle Valve Open Threshold', description: 'Recycle valve is "open" above this position %.', unit: '%', min: 0, max: 25 },
 }
 
-// ─── Fetch ─────────────────────────────────────────────────────────────────────
+// Fetch
 async function fetchDeviceFull(deviceId) {
   try {
     const r = await fetch(`${API_BASE}/api/mlink/device/full?deviceId=${encodeURIComponent(deviceId)}`)
@@ -135,7 +135,7 @@ async function fetchDeviceFull(deviceId) {
   } catch (err) { return { data: null, error: err.message } }
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 function cleanUnit(u) {
   if (!u) return ''
   return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
@@ -149,6 +149,53 @@ function resolveDP(dataMap, labels) {
   return null
 }
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
+function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
+  const liveValue = getN(dataMap, [
+    `Wellhead #${wellNumber} Calculated Desired Flow`,
+    `Wellhead #${wellNumber} Setpoint From Customer PLC`,
+    `Well ${wellNumber} Calculated Desired Flow`,
+    `Well ${wellNumber} Setpoint From Customer PLC`,
+    `Well ${wellNumber} Setpoint`,
+  ])
+  if (liveValue != null) return { value: liveValue, source: 'live' }
+  if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
+  return { value: null, source: null }
+}
+function getUnitDesiredFlow(dataMapPanel, dataMapUnit, unitKey, unitLabel) {
+  const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
+  const unitNum = unitLabel.match(/\d{4}/)?.[0]
+  return getN(dataMapPanel, [
+    ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
+    ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desired Flow SP For PID Murphy`] : []),
+    ...(compNum ? [
+      `Compressor #${compNum} Desire Flow SP For PID Murphy`,
+      `Compressor ${compNum} Desire Flow SP For PID Murphy`,
+      `Compressor #${compNum} Desired Flow SP For PID Murphy`,
+      `Compressor ${compNum} Desired Flow SP For PID Murphy`,
+      `Compressor #${compNum} Desired Flow`,
+      `Compressor ${compNum} Desired Flow`,
+      `Compressor #${compNum} Flow Setpoint`,
+      `Compressor ${compNum} Flow Setpoint`,
+    ] : []),
+  ]) ?? getN(dataMapUnit, [
+    'Flow Rate PID Auto Sp',
+    'Speed Auto SP Flow',
+    'Speed Auto Sp Flow',
+    'Desire Flow SP For PID Murphy',
+    'Desired Flow SP For PID Murphy',
+    'Flow Rate PID SP',
+    'Quck Start Setting - Desired Flow Rate',
+    'Quick Start Setting - Desired Flow Rate',
+    'Flow Rate Setpoint',
+    'Flow Setpoint',
+    'Desired Flow',
+    'Desired Flow Rate',
+    'Target Flow',
+  ])
+}
+function getUnitActualFlow(dataMap) {
+  return getN(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
+}
 function getTimestamp(data) { return data?.timestamps?.[0] ? new Date(data.timestamps[0] * 1000) : null }
 function fmt(v, d = 3) { return v != null && Number.isFinite(v) ? v.toFixed(d) : null }
 function getRegisterCount(data) { return data?._registerCount ?? data?.datapoints?.length ?? 0 }
@@ -202,7 +249,7 @@ function getGrade(pct) {
 }
 function gradeStatus(g) { return g === 'A' ? 'good' : g === 'B' ? 'warn' : g ? 'bad' : 'unknown' }
 
-// ─── Colors ────────────────────────────────────────────────────────────────────
+// Colors
 const C = {
   good:    { border: '#22c55e', glow: '#22c55e28', bg: '#030f07', val: '#4ade80',  lbl: '#22c55e', sub: '#1a5c2e' },
   warn:    { border: '#f59e0b', glow: '#f59e0b28', bg: '#0f0800', val: '#fbbf24',  lbl: '#f59e0b', sub: '#5c3e0a' },
@@ -210,7 +257,7 @@ const C = {
   unknown: { border: '#1e1e30', glow: 'transparent', bg: '#080812', val: '#94a3b8', lbl: '#4a5568', sub: '#2a2a3a' },
 }
 
-// ─── Components ────────────────────────────────────────────────────────────────
+// Components
 
 function GaugeGrid({ children }) {
   return (
@@ -237,7 +284,7 @@ function Gauge({ label, value, unit, status = 'unknown', sub, isAdmin, settingKe
       )}
       <div style={{ fontSize: 8, color: c.lbl, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 700, lineHeight: 1.4 }}>{label}</div>
       <div style={{ fontSize, fontWeight: 900, color: v ? c.val : '#1e1e30', fontFamily: "'Arial Black', sans-serif", lineHeight: 1.05 }}>
-        {v || '—'}
+        {v || '--'}
       </div>
       {unit && v && <div style={{ fontSize: 10, color: c.lbl, fontWeight: 700, letterSpacing: '0.04em' }}>{cleanUnit(unit)}</div>}
       {sub && <div style={{ fontSize: 8, color: c.sub, marginTop: 2, lineHeight: 1.4 }}>{sub}</div>}
@@ -261,7 +308,7 @@ function YesNoGauge({ label, good, detail, isAdmin, settingKey, onSettings }) {
       )}
       <div style={{ fontSize: 8, color: c.lbl, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 700 }}>{label}</div>
       <div style={{ fontSize: 44, fontWeight: 900, color: c.val, fontFamily: "'Arial Black', sans-serif", lineHeight: 1 }}>
-        {good === null ? '—' : good ? 'YES' : 'NO'}
+        {good === null ? '--' : good ? 'YES' : 'NO'}
       </div>
       {detail && <div style={{ fontSize: 8, color: c.sub, lineHeight: 1.5 }}>{detail}</div>}
     </div>
@@ -285,7 +332,7 @@ function ScoreGauge({ label, score, detail, isAdmin, settingKey, onSettings }) {
       )}
       <div style={{ fontSize: 8, color: c.lbl, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 700 }}>{label}</div>
       <div style={{ fontSize: 32, fontWeight: 900, color: c.val, fontFamily: "'Arial Black', sans-serif", lineHeight: 1.05 }}>
-        {score != null ? `${score.toFixed(0)}%` : '—'}
+        {score != null ? `${score.toFixed(0)}%` : '--'}
       </div>
       {grade && <div style={{ fontSize: 22, fontWeight: 900, color: c.val, fontFamily: "'Arial Black', sans-serif", lineHeight: 1 }}>{grade}</div>}
       {detail && <div style={{ fontSize: 8, color: c.sub, lineHeight: 1.4, marginTop: 1 }}>{detail}</div>}
@@ -404,7 +451,7 @@ function AdminLoginModal({ onClose, onLogin }) {
           {err && <div style={{ color: '#ef4444', fontSize: 10, marginTop: 7 }}>{err}</div>}
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button type="button" onClick={onClose} style={{ flex: 1, background: '#1a1a2a', border: '1px solid #2a2a3a', borderRadius: 7, color: '#888', padding: 8, cursor: 'pointer', fontSize: 11 }}>Cancel</button>
-            <button type="submit" disabled={busy} style={{ flex: 1, background: '#1d4ed8', border: 'none', borderRadius: 7, color: '#fff', padding: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>{busy ? '…' : 'Login'}</button>
+          <button type="submit" disabled={busy} style={{ flex: 1, background: '#1d4ed8', border: 'none', borderRadius: 7, color: '#fff', padding: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>{busy ? '...' : 'Login'}</button>
           </div>
         </form>
       </div>
@@ -430,7 +477,7 @@ function GaugeSettingsModal({ settingKey, settings, onSave, onClose }) {
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
           <button onClick={onClose} style={{ flex: 1, background: '#1a1a2a', border: '1px solid #2a2a3a', borderRadius: 7, color: '#888', padding: 8, cursor: 'pointer', fontSize: 11 }}>Cancel</button>
-          <button onClick={save} disabled={busy} style={{ flex: 1, background: '#1d6c3d', border: 'none', borderRadius: 7, color: '#fff', padding: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>{busy ? 'Saving…' : 'Save'}</button>
+          <button onClick={save} disabled={busy} style={{ flex: 1, background: '#1d6c3d', border: 'none', borderRadius: 7, color: '#fff', padding: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>{busy ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -447,12 +494,12 @@ function RefreshBtn({ s, loading, onRefresh }) {
           strokeDasharray={`${2*Math.PI*15}`} strokeDashoffset={`${2*Math.PI*15*(1-pct/100)}`}
           strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s linear' }} />
       </svg>
-      <span style={{ fontSize: 9, color: '#666' }}>{loading ? 'Loading…' : `${s}s`}</span>
+  <span style={{ fontSize: 9, color: '#666' }}>{loading ? 'Loading...' : `${s}s`}</span>
     </button>
   )
 }
 
-// ─── Main component ─────────────────────────────────────────────────────────────
+  // Main component
 export default function HalfmannTelemetryView() {
   const [panelData, setPanelData] = useState(null)
   const [unitDataRaw, setUnitDataRaw] = useState({})
@@ -506,32 +553,40 @@ export default function HalfmannTelemetryView() {
   useEffect(() => { refresh(); const i = setInterval(refresh, REFRESH_INTERVAL_S * 1000); return () => clearInterval(i) }, [refresh])
   useEffect(() => { const t = setInterval(() => setCountdown(c => c > 0 ? c - 1 : REFRESH_INTERVAL_S), 1000); return () => clearInterval(t) }, [])
 
-  // ─── Derived ────────────────────────────────────────────────────────────────
+  // Derived
   const panel = parseLiveDatapoints(panelData)
   const unitMaps = HALFMANN_UNITS.map(u => parseLiveDatapoints(unitDataRaw[u.key]))
   const { wellTargetPct = 5, recycleOpenPct = 5 } = siteSettings
 
-  const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => ({
-    n: i + 1,
-    actual:    getN(panel, flowKeys),
-    desired:   getN(panel, WELL_SETPOINT_KEYS[i]) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[i],
-    choke:     getN(panel, WELL_CHOKE_KEYS[i]),
-    casing:    getN(panel, WELL_CASING_KEYS[i]),
-    tubing:    getN(panel, WELL_TUBING_KEYS[i]),
-    yesterday: getN(panel, WELL_YESTERDAY_KEYS[i]),
-  }))
+  const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => {
+    const desiredInfo = getWellSetpointInfo(panel, i + 1, HALFMANN_WELL_SETPOINT_FALLBACKS[i])
+    return {
+      n: i + 1,
+      actual: getN(panel, flowKeys),
+      desired: desiredInfo.value,
+      desiredSource: desiredInfo.source,
+      liveDesired: desiredInfo.source === 'live' ? desiredInfo.value : null,
+      choke: getN(panel, WELL_CHOKE_KEYS[i]),
+      casing: getN(panel, WELL_CASING_KEYS[i]),
+      tubing: getN(panel, WELL_TUBING_KEYS[i]),
+      yesterday: getN(panel, WELL_YESTERDAY_KEYS[i]),
+    }
+  })
 
   const totalDesiredSite = getN(panel, ['Total Desired Site Flow'])
   const sumSetpoints = wellData.reduce((s, w) => s + (w.desired ?? 0), 0)
-  const hasSetpoints = wellData.some(w => w.desired != null)
-  const totalDesired = hasSetpoints ? sumSetpoints : totalDesiredSite
+  const hasAnySetpoints = wellData.some(w => w.desired != null)
+  const liveSetpointCount = wellData.filter(w => w.desiredSource === 'live').length
+  const fallbackSetpointCount = wellData.filter(w => w.desiredSource === 'fallback').length
+  const totalDesired = hasAnySetpoints ? sumSetpoints : totalDesiredSite
   const totalActual  = wellData.reduce((s, w) => s + (w.actual ?? 0), 0)
-  // Do NOT split totalDesiredSite÷5 as per-well target — individual setpoints differ significantly.
-  // (e.g. 1.225 / 1.100 / 1.450 / 1.000 / 1.350 from Altronic panel — equal split produces wrong LOW/ON TARGET)
+  // Do not split totalDesiredSite by 5 as a per-well target - individual setpoints differ significantly.
+  // Example: 1.225 / 1.100 / 1.450 / 1.000 / 1.350 from the Altronic panel.
   const perWellTarget = null
+  const siteNearTarget = totalDesired != null && totalDesired > 0 ? Math.abs(totalActual - totalDesired) / totalDesired <= 0.05 : false
 
   const activeWells = wellData.filter(w => w.actual != null).length
-  // Only evaluate wells that have an actual target to compare against — avoids false NO when MLink has no setpoints
+  // Only evaluate wells that have an actual target to compare against.
   const wellsWithTarget = wellData.filter(w => w.actual != null && (w.desired != null || perWellTarget != null))
   const wellsOnTarget = wellsWithTarget.filter(w => {
     const t = w.desired ?? perWellTarget
@@ -551,19 +606,8 @@ export default function HalfmannTelemetryView() {
   const suctionValvePos   = getN(panel, ['Suction/Sales Valve Position', 'Suction Valve Position', 'Sales Valve Position'])
   const dischargeSP = unitMaps.reduce((f, dm) => f ?? getN(dm, ['Speed Auto Discharge SP', 'Altronic Discharge SP', 'Discharge Pressure SP']), null)
 
-  const rawUnitFlows = unitMaps.map(dm => getN(dm, ['Flow Rate', 'Flow Rate PID PV']))
-  // MLink config assigns compressor numbers by unit ID (not array position):
-  //   Compressor #1 = Unit 2128,  #2 = Unit 2130,  #3 = Unit 2127,  #4 = Unit 2129
-  const UNIT_TO_COMP_NUM_T = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
-  const unitDesired = HALFMANN_UNITS.map((u, i) => {
-    const compNum = UNIT_TO_COMP_NUM_T[u.key]
-    const unitNum = u.label.match(/\d{4}/)?.[0]
-    return getN(panel, [
-      ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
-      ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`] : []),
-    ]) ??
-    getN(unitMaps[i], ['Flow Rate PID Auto Sp', 'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP'])
-  })
+  const rawUnitFlows = unitMaps.map(dm => getUnitActualFlow(dm))
+  const unitDesired = HALFMANN_UNITS.map((u, i) => getUnitDesiredFlow(panel, unitMaps[i], u.key, u.label))
 
   const unitFlows = deriveMissingCompressorFlowValues(rawUnitFlows, totalActual, HALFMANN_UNITS)
 
@@ -595,15 +639,15 @@ export default function HalfmannTelemetryView() {
   const auditRegisterTotal = auditDevices.reduce((sum, device) => sum + getRegisterCount(device.data), 0)
   const auditRespondingDevices = auditDevices.filter(device => device.data).length
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  // Render
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#080810' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 18px', background: '#0a0a14', borderBottom: '1px solid #1a1a2a', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 7px #22c55e88' }} />
           <div>
-            <div style={{ fontSize: 13, color: '#fff', fontWeight: 700, fontFamily: "'Arial Black'" }}>Telemetry Dashboard — Halfmann 1214</div>
-            <div style={{ fontSize: 9, color: '#444' }}>{lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Connecting…'}</div>
+            <div style={{ fontSize: 13, color: '#fff', fontWeight: 700, fontFamily: "'Arial Black'" }}>Telemetry Dashboard - Halfmann 1214</div>
+            <div style={{ fontSize: 9, color: '#444' }}>{lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Connecting...'}</div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -632,28 +676,28 @@ export default function HalfmannTelemetryView() {
             <span style={{ color: '#fff', fontWeight: 700 }}> {auditRespondingDevices} </span> responding devices.
           </div>
 
-          <Section id="published-audit" title="Group 0 — Published Device Audit">
+          <Section id="published-audit" title="Group 0 - Published Device Audit">
             {auditDevices.map(device => (
               <DeviceRegisterAudit key={device.deviceId} title={device.title} deviceId={device.deviceId} data={device.data} />
             ))}
           </Section>
 
-          {/* GROUP 1 — SITE SUMMARY */}
-          <Section id="site-summary" title="Group 1 — Site Summary">
+          {/* GROUP 1 - SITE SUMMARY */}
+          <Section id="site-summary" title="Group 1 - Site Summary">
             <GaugeGrid>
               <YesNoGauge label="All Wells Meeting Desired Rate?" good={allOnTarget}
                 detail={wellsWithTarget.length > 0
-                  ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}%`
-                  : activeWells > 0 ? 'Well setpoints are not being returned by the current site feed' : 'Awaiting data'}
+                  ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}%${liveSetpointCount === 0 && fallbackSetpointCount > 0 ? ' using confirmed fallback targets' : ''}`
+                  : activeWells > 0 ? 'Well targets are not available yet' : 'Awaiting data'}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Wells Meeting Rate"
                 value={wellsWithTarget.length > 0 ? `${wellsOnTarget}/${wellsWithTarget.length}` : null}
                 status={wellsWithTarget.length > 0 ? (wellsOnTarget === wellsWithTarget.length ? 'good' : wellsOnTarget >= wellsWithTarget.length * 0.6 ? 'warn' : 'bad') : 'unknown'}
-                sub={wellsWithTarget.length === 0 && activeWells > 0 ? 'No setpoints in MLink' : undefined}
+                sub={wellsWithTarget.length === 0 && activeWells > 0 ? 'No target data yet' : liveSetpointCount === 0 && fallbackSetpointCount > 0 ? 'Using confirmed fallback targets' : undefined}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Total Desired Flow"
                 value={totalDesired != null ? fmt(totalDesired) : null} unit="MMSCFD"
-                sub={hasSetpoints ? 'Sum of well setpoints' : totalDesiredSite != null ? 'Panel register' : NOT_PUBLISHED_COPY} />
+                sub={hasAnySetpoints ? (liveSetpointCount > 0 ? 'Sum of well setpoints' : 'Sum of confirmed fallback targets') : totalDesiredSite != null ? 'Panel register' : NOT_PUBLISHED_COPY} />
               <Gauge label="Total Actual Flow"
                 value={fmt(totalActual)} unit="MMSCFD"
                 status={padMatchPct != null ? (padMatchPct >= 95 ? 'good' : padMatchPct >= 80 ? 'warn' : 'bad') : 'unknown'}
@@ -682,8 +726,8 @@ export default function HalfmannTelemetryView() {
             </GaugeGrid>
           </Section>
 
-          {/* GROUP 2 — OPTIMIZATION */}
-          <Section id="optimization" title="Group 2 — Optimization Scorecards">
+          {/* GROUP 2 - OPTIMIZATION */}
+          <Section id="optimization" title="Group 2 - Optimization Scorecards">
             <GaugeGrid>
               <ScoreGauge label="Compressor Flow Score" score={compressorScore}
                 detail={worstUnit ? `Worst: ${worstUnit.label} (${fmt(worstUnit.s, 0)}%)` : 'Awaiting desired flow data'} />
@@ -704,8 +748,8 @@ export default function HalfmannTelemetryView() {
             </GaugeGrid>
           </Section>
 
-          {/* GROUP 3 — SITE DATA */}
-          <Section id="site-data" title="Group 3 — Site Data">
+          {/* GROUP 3 - SITE DATA */}
+          <Section id="site-data" title="Group 3 - Site Data">
             <GaugeGrid>
               <Gauge label="Suction Header Pressure"
                 value={suctionHeaderPres != null ? fmt(suctionHeaderPres, 0) : null} unit="PSI"
@@ -721,10 +765,10 @@ export default function HalfmannTelemetryView() {
             </GaugeGrid>
           </Section>
 
-          {/* GROUP 4 — WELL DATA */}
-          <Section id="wells" title="Group 4 — Well Data">
+          {/* GROUP 4 - WELL DATA */}
+          <Section id="wells" title="Group 4 - Well Data">
             {wellData.map(w => {
-              const wellOffline = w.actual == null && w.desired == null && w.choke == null && w.casing == null && w.tubing == null && w.yesterday == null
+              const wellOffline = w.actual == null && w.liveDesired == null && w.choke == null && w.casing == null && w.tubing == null && w.yesterday == null
               return (
                 <SubSection key={w.n} title={`Well ${w.n}`} accent="#49D0E2">
                   {wellOffline ? (
@@ -735,14 +779,22 @@ export default function HalfmannTelemetryView() {
                     <GaugeGrid>
                       <Gauge label={`Well ${w.n} Setpoint`}
                         value={w.desired != null ? fmt(w.desired) : null} unit="MMSCFD"
-                        sub={w.desired == null ? NOT_PUBLISHED_COPY : undefined} />
+                        sub={w.desired == null ? NOT_PUBLISHED_COPY : w.desiredSource === 'live' ? 'Live setpoint tag' : 'Confirmed fallback target'} />
                       <Gauge label={`Well ${w.n} Injection Flow`}
                         value={w.actual != null ? fmt(w.actual) : null} unit="MMSCFD"
                         status={(() => {
                           const t = w.desired ?? perWellTarget
                           if (w.actual == null || !t) return 'unknown'
                           const d = Math.abs(w.actual - t) / t * 100
-                          return d <= wellTargetPct ? 'good' : d <= wellTargetPct * 2 ? 'warn' : 'bad'
+                          if (d <= wellTargetPct) return 'good'
+                          return siteNearTarget ? 'warn' : 'bad'
+                        })()}
+                        sub={(() => {
+                          const t = w.desired ?? perWellTarget
+                          if (w.actual == null || !t) return undefined
+                          const d = Math.abs(w.actual - t) / t * 100
+                          if (d <= wellTargetPct) return 'Within target'
+                          return siteNearTarget ? 'Being sacrificed to hold pad total' : 'Below target'
                         })()} />
                       <Gauge label={`Well ${w.n} Choke Position`}
                         value={w.choke != null ? fmt(w.choke, 1) : null} unit="%"
@@ -760,22 +812,22 @@ export default function HalfmannTelemetryView() {
             })}
           </Section>
 
-          {/* GROUP 5 — YESTERDAYS FLOW */}
-          <Section id="yesterday" title="Group 5 — Yesterdays Flow Volumes">
+          {/* GROUP 5 - YESTERDAY FLOW */}
+          <Section id="yesterday" title="Group 5 - Yesterday Flow Volumes">
             <GaugeGrid>
               {wellData.map(w => {
                 const offline = w.actual == null && w.yesterday == null
                 return offline
                   ? <div key={w.n} style={{ padding: '12px 14px', borderRadius: 8, border: '1px dashed #2a1a1a', background: '#0f0808', color: '#555', fontSize: 10, display: 'flex', alignItems: 'center', minHeight: 80 }}>Well {w.n} offline</div>
-                  : <Gauge key={w.n} label={`Well ${w.n} Yesterdays Flow`}
+                  : <Gauge key={w.n} label={`Well ${w.n} Yesterday Flow`}
                       value={w.yesterday != null ? fmt(w.yesterday) : null} unit="MMSCFD"
                       sub={w.yesterday == null ? NOT_PUBLISHED_COPY : undefined} />
               })}
             </GaugeGrid>
           </Section>
 
-          {/* GROUP 6 — COMPRESSOR UNITS */}
-          <Section id="compressors" title="Group 6 — Compressor Units">
+          {/* GROUP 6 - COMPRESSOR UNITS */}
+          <Section id="compressors" title="Group 6 - Compressor Units">
             {HALFMANN_UNITS.map((u, i) => {
               const dm = unitMaps[i]
               const groups = u.type === 'asc' ? ASC_GROUPS : C4_GROUPS
@@ -789,8 +841,8 @@ export default function HalfmannTelemetryView() {
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: "'Arial Black'" }}>{u.label}</div>
                       <div style={{ fontSize: 9, color: '#555' }}>
-                        {u.type === 'asc' ? 'ASC C5 — Flow PID Controlled' : 'C4 EICS — RPM Controlled (Standby)'}
-                        {' · '}{isRunning ? `RUNNING @ ${Math.round(rpm)} RPM` : hasData ? 'STOPPED' : 'NO DATA'}
+                        {u.type === 'asc' ? 'ASC C5 - Flow PID Controlled' : 'C4 EICS - RPM Controlled (Standby)'}
+                        {' | '}{isRunning ? `RUNNING @ ${Math.round(rpm)} RPM` : hasData ? 'STOPPED' : 'NO DATA'}
                       </div>
                     </div>
                     {unitFlows[i] != null && (
@@ -802,9 +854,44 @@ export default function HalfmannTelemetryView() {
                   </div>
                   {!u.deviceId && (
                     <div style={{ padding: '14px 18px', background: '#0f0a00', border: '1px solid #5a3a00', borderRadius: 10, marginBottom: 18, fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>
-                      ⚠ MLink Device ID not configured for {u.label}. Contact Jim or Murphy Field Services to get the MLink device ID, then update HALFMANN_DEVICES.unit1396 in the code. All live registers will appear automatically once the ID is set.
+                      Warning: MLink Device ID not configured for {u.label}. Contact Jim or Murphy Field Services to get the MLink device ID, then update HALFMANN_DEVICES.unit1396 in the code. All live registers will appear automatically once the ID is set.
                     </div>
                   )}
+                  <SubSection title="Command & Flow">
+                    <GaugeGrid>
+                      {u.type === 'asc' ? (
+                        <>
+                          <Gauge
+                            label="Desired Flow"
+                            value={unitDesired[i] != null ? fmt(unitDesired[i]) : null}
+                            unit="MMSCFD"
+                            sub={unitDesired[i] == null ? NOT_PUBLISHED_COPY : undefined}
+                          />
+                          <Gauge
+                            label="Actual Flow"
+                            value={unitFlows[i] != null ? fmt(unitFlows[i]) : null}
+                            unit="MMSCFD"
+                            sub={unitFlows[i] == null ? NOT_PUBLISHED_COPY : undefined}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <Gauge
+                            label="Desired RPM"
+                            value={getN(dm, ['Target Speed', 'Speed Control SP', 'RPM Setpoint']) != null ? fmt(getN(dm, ['Target Speed', 'Speed Control SP', 'RPM Setpoint']), 0) : null}
+                            unit="RPM"
+                            sub={getN(dm, ['Target Speed', 'Speed Control SP', 'RPM Setpoint']) == null ? NOT_PUBLISHED_COPY : undefined}
+                          />
+                          <Gauge
+                            label="Actual RPM"
+                            value={rpm != null ? fmt(rpm, 0) : null}
+                            unit="RPM"
+                            sub={rpm == null ? NOT_PUBLISHED_COPY : undefined}
+                          />
+                        </>
+                      )}
+                    </GaugeGrid>
+                  </SubSection>
                   {groups.map(g => (
                     <SubSection key={g.title} title={g.title}>
                       <ParamGauges params={g.params} dataMap={dm} isAdmin={isAdmin} onSettings={openSettings} />
@@ -853,7 +940,7 @@ export default function HalfmannTelemetryView() {
           </Section>
 
           <footer style={{ textAlign: 'center', padding: '16px 0', borderTop: '1px solid #1a1a2a', marginTop: 8 }}>
-            <span style={{ fontSize: 8, color: '#2a2a3a' }}>Halfmann 1214 · Telemetry Dashboard · Refreshes every 60 seconds</span>
+            <span style={{ fontSize: 8, color: '#2a2a3a' }}>Halfmann 1214 - Telemetry Dashboard - Refreshes every 60 seconds</span>
           </footer>
         </div>
       </div>

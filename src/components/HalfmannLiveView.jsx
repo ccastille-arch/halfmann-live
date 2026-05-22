@@ -98,6 +98,64 @@ function getNumeric(dataMap, labels) {
   return parseLiveNumeric(resolvePreferredDatapoint(dataMap, labels)?.value)
 }
 
+function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
+  const liveDatapoint = resolvePreferredDatapoint(dataMap, [
+    `Wellhead #${wellNumber} Calculated Desired Flow`,
+    `Wellhead #${wellNumber} Setpoint From Customer PLC`,
+    `Well ${wellNumber} Calculated Desired Flow`,
+    `Well ${wellNumber} Setpoint From Customer PLC`,
+    `Well ${wellNumber} Setpoint`,
+  ])
+  const liveValue = parseLiveNumeric(liveDatapoint?.value)
+  if (liveValue != null) return { value: liveValue, source: 'live' }
+  if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
+  return { value: null, source: null }
+}
+
+function getUnitDesiredFlowDatapoint(panelDataMap, unitDataMap, unitKey, unitLabel) {
+  const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
+  const unitNum = unitLabel.match(/\d{4}/)?.[0]
+  return resolvePreferredDatapoint(panelDataMap, [
+    ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
+    ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desired Flow SP For PID Murphy`] : []),
+    ...(compNum ? [
+      `Compressor #${compNum} Desire Flow SP For PID Murphy`,
+      `Compressor ${compNum} Desire Flow SP For PID Murphy`,
+      `Compressor #${compNum} Desired Flow SP For PID Murphy`,
+      `Compressor ${compNum} Desired Flow SP For PID Murphy`,
+      `Compressor #${compNum} Desired Flow`,
+      `Compressor ${compNum} Desired Flow`,
+      `Compressor #${compNum} Flow Setpoint`,
+      `Compressor ${compNum} Flow Setpoint`,
+    ] : []),
+  ]) ?? resolvePreferredDatapoint(unitDataMap, [
+    'Flow Rate PID Auto Sp',
+    'Speed Auto SP Flow',
+    'Speed Auto Sp Flow',
+    'Desire Flow SP For PID Murphy',
+    'Desired Flow SP For PID Murphy',
+    'Flow Rate PID SP',
+    'Quck Start Setting - Desired Flow Rate',
+    'Quick Start Setting - Desired Flow Rate',
+    'Flow Rate Setpoint',
+    'Flow Setpoint',
+    'Desired Flow',
+    'Desired Flow Rate',
+    'Target Flow',
+  ])
+}
+
+function getUnitActualFlowDatapoint(dataMap) {
+  return resolvePreferredDatapoint(dataMap, [
+    'Flow Rate',
+    'Flow Rate PID PV',
+    'Flow Rate PV',
+    'Flow PID PV',
+    'Compressor Flow Rate PID PV',
+    'Stage 3 Flow Rate',
+  ])
+}
+
 function computeMatchPct(actual, desired) {
   if (actual == null || desired == null || desired <= 0) return null
   return Math.max(0, 100 - (Math.abs(actual - desired) / desired) * 100)
@@ -171,8 +229,12 @@ function getCompressorColor(label, value) {
 
 function cleanUnit(u) {
   if (!u) return ''
-  // MLink API sometimes double-encodes UTF-8: °F arrives as Â°F — strip it
-  return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
+  return u
+    .replace(/Ã‚Â°/g, '°')
+    .replace(/Â°/g, '°')
+    .replace(/Ãƒâ€š/g, '')
+    .replace(/Ã‚/g, '')
+    .trim()
 }
 
 function getRegisterCount(data) {
@@ -304,7 +366,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         </div>
       )}
       {standby && !isRunning && (
-        <div className="mt-2 text-[11px] text-[#4d6080] italic">Unit on standby — will activate if primary units fault</div>
+        <div className="mt-2 text-[11px] text-[#4d6080] italic">Unit on standby - will activate if primary units fault</div>
       )}
       {time && <div className="text-[10px] text-[#4d6080] mt-2 text-right">Updated: {time.toLocaleString()}</div>}
     </div>
@@ -338,7 +400,7 @@ function RefreshCountdown({ secondsLeft, loading, onRefresh }) {
           strokeDashoffset={`${2 * Math.PI * 15 * (1 - pct / 100)}`}
           strokeLinecap="round" style={{ transition: 'stroke-dashoffset 1s linear' }} />
       </svg>
-      <span className="text-[10px] text-[#888]">{loading ? 'Loading…' : `Refreshes in ${secondsLeft}s`}</span>
+      <span className="text-[10px] text-[#888]">{loading ? 'Loading...' : `Refreshes in ${secondsLeft}s`}</span>
     </button>
   )
 }
@@ -353,7 +415,7 @@ function PressureCell({ label, value, unit = 'PSI', warn, danger }) {
     <div className="bg-[#0a0a14] rounded border border-[#1e1e2e] p-2.5">
       <div className="text-[8px] text-[#666] uppercase tracking-wider mb-1">{label}</div>
       <div className="text-[16px] font-black leading-none" style={{ color, fontFamily: "'Arial Black'" }}>
-        {n != null ? n.toFixed(0) : '—'}
+        {n != null ? n.toFixed(0) : '--'}
       </div>
       {n != null && <div className="text-[8px] text-[#555] mt-0.5">{unit}</div>}
     </div>
@@ -424,26 +486,17 @@ export default function HalfmannLiveView() {
   const panelTime = getTimestamp(panelData)
   const unitDataMaps = HALFMANN_UNITS.map(u => parseLiveDatapoints(unitDataRaw[u.key]))
 
-  // Site-level total desired — used ONLY for site header comparison, NOT split across wells.
+  // Site-level total desired - used only for site header comparison, not split across wells.
   // Individual well setpoints vary (e.g. 1.225 / 1.100 / 1.450 / 1.000 / 1.350 MMSCFD from Altronic panel).
-  // Dividing total÷5 produces wrong ON TARGET / LOW per well — do not use as per-well fallback.
+  // Dividing total by 5 produces wrong ON TARGET / LOW per well - do not use as a per-well fallback.
   const totalDesiredSite = parseLiveNumeric(resolvePreferredDatapoint(panel, ['Total Desired Site Flow'])?.value)
-  const perWellTarget = null // intentionally null — equal split is misleading; wait for individual setpoints
+  const perWellTarget = null
 
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const actual = parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
-    // True setpoint registers (separate Modbus addresses — Jim needs to configure them in MLink).
-    // NOT falling back to "Injection Flow Rate" — that desc is an alias of the actual flow register.
-    // Using it as desired would make desired = actual (misleading). Show null until real setpoints arrive.
-    const desiredDatapoint = resolvePreferredDatapoint(panel, [
-      `Wellhead #${wellNumber} Calculated Desired Flow`,
-      `Wellhead #${wellNumber} Setpoint From Customer PLC`,
-      `Well ${wellNumber} Calculated Desired Flow`,
-      `Well ${wellNumber} Setpoint From Customer PLC`,
-      `Well ${wellNumber} Setpoint`,
-    ])
-    const desired = parseLiveNumeric(desiredDatapoint?.value) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget
+    const desiredInfo = getWellSetpointInfo(panel, wellNumber, HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget)
+    const desired = desiredInfo.value
     const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
     const staticPres = getNumeric(panel, [
       `Wellhead #${wellNumber} Injection Static Pressure From Customer PLC`,
@@ -462,36 +515,24 @@ export default function HalfmannLiveView() {
       `Wellhead #${wellNumber} Tubing Pressure`,
     ])
     return {
-      wellNumber, actual, desired, yesterday,
-      staticPres, diffPres, casingPres, tubingPres,
+      wellNumber,
+      actual,
+      desired,
+      desiredSource: desiredInfo.source,
+      yesterday,
+      staticPres,
+      diffPres,
+      casingPres,
+      tubingPres,
       gap: actual != null && desired != null ? actual - desired : null,
       matchPct: computeMatchPct(actual, desired),
       atTarget: isWithinTarget(actual, desired),
     }
   })
 
-  // MLink config assigns compressor numbers by unit ID (not array position):
-  //   Compressor #1 = Unit 2128,  #2 = Unit 2130,  #3 = Unit 2127,  #4 = Unit 2129
-  const UNIT_TO_COMP_NUM = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
-  const unitDesiredFlows = HALFMANN_UNITS.map((u, i) => {
-    const compNum = UNIT_TO_COMP_NUM[u.key]
-    const unitNum = u.label.match(/\d{4}/)?.[0]
-    return resolvePreferredDatapoint(panel, [
-      // Exact name from MLink JSON config (e.g. "Compressor #1 Unit 2128 Desire Flow SP For PID Murphy")
-      ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
-      // Fallback without unit suffix (older MLink configs)
-      ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`, `Compressor ${compNum} Desire Flow SP For PID Murphy`] : []),
-    ]) ??
-    resolvePreferredDatapoint(unitDataMaps[i], [
-      'Flow Rate PID Auto Sp', 'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP',
-    ])
-  })
+  const unitDesiredFlows = HALFMANN_UNITS.map((u, i) => getUnitDesiredFlowDatapoint(panel, unitDataMaps[i], u.key, u.label))
+  const rawUnitActualFlows = unitDataMaps.map((dataMap) => getUnitActualFlowDatapoint(dataMap))
 
-  const rawUnitActualFlows = unitDataMaps.map(dataMap =>
-    resolvePreferredDatapoint(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV'])
-  )
-
-  // Per-compressor pressure readings
   const unitDischargePrs = unitDataMaps.map(dataMap =>
     getNumeric(dataMap, ['Discharge Pressure', 'Compressor Discharge Prs', '3rd Stage Discharge Prs', 'Stage 3 Discharge Prs'])
   )
@@ -507,10 +548,11 @@ export default function HalfmannLiveView() {
   const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
 
   const totalActualFlow = liveWellPerformance.reduce((sum, w) => sum + (w.actual ?? 0), 0)
-  // Derive total desired from per-well data (works even when panel register is missing)
   const wellsWithBoth = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
   const totalDesiredFromWells = wellsWithBoth.reduce((sum, w) => sum + (w.desired ?? 0), 0)
   const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
+  const liveSetpointCount = liveWellPerformance.filter((well) => well.desiredSource === 'live').length
+  const fallbackSetpointCount = liveWellPerformance.filter((well) => well.desiredSource === 'fallback').length
 
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
   // Only compare wells where we have BOTH actual AND a real setpoint (avoids false YES/NO without targets)
@@ -522,7 +564,7 @@ export default function HalfmannLiveView() {
     : null
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
-  // Per-well individual setpoints not yet in MLink, but site total IS available and accurate.
+  // Per-well individual setpoints may still be missing, but the site total can still be valid.
   const siteOnTarget = totalDesiredSite != null && totalDesiredSite > 0
     ? Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite <= 0.05
     : wellsWithBoth.length > 0 && totalDesiredFromWells > 0
@@ -567,8 +609,8 @@ export default function HalfmannLiveView() {
         <div className="flex items-center gap-3">
           <div className="w-2.5 h-2.5 rounded-full bg-[#22c55e] shadow-lg shadow-[#22c55e]/60 animate-pulse" />
           <div>
-            <div className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>Live Field Data — Halfmann 1214</div>
-            <div className="text-[10px] text-[#666]">Active Pad Logic panel · read-only public view</div>
+            <div className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>Live Field Data - Halfmann 1214</div>
+            <div className="text-[10px] text-[#666]">Active Pad Logic panel - read-only public view</div>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -592,24 +634,24 @@ export default function HalfmannLiveView() {
       <div className="flex-1 overflow-auto p-4 sm:p-5">
         <div className="max-w-[1280px] mx-auto">
           {loading && !panelData ? (
-            <div className="text-center py-24 text-[#888] text-sm">Connecting to field units…</div>
+            <div className="text-center py-24 text-[#888] text-sm">Connecting to field units...</div>
           ) : (
             <>
               {liveError && (
                 <div className="mb-4 rounded-lg border border-[#5a1d1d] bg-[#1f0c0c] px-4 py-3 text-[11px] text-[#fca5a5]">{liveError}</div>
               )}
 
-              {/* ── 3 YES/NO Status Cards ── */}
+              {/* 3 status cards */}
               <div className="grid gap-4 sm:grid-cols-3 mb-5">
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={allOnTarget}
                   value={siteWellScore != null ? `${siteWellScore.toFixed(0)}%` : undefined}
                   detail={wellsWithTarget.length > 0
-                    ? `${wellsAtTargetCount} of ${wellsWithTarget.length} wells within 5% of setpoint`
-                    : activeWells.length > 0
-                      ? 'Well setpoints are not being returned by the current site feed'
-                      : 'Waiting for flow data…'}
+                    ? (fallbackSetpointCount > 0 && liveSetpointCount === 0
+                      ? 'Using confirmed fallback well targets until live setpoint tags appear'
+                      : `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}${fallbackSetpointCount > 0 ? ` and ${fallbackSetpointCount} fallback target${fallbackSetpointCount === 1 ? '' : 's'}` : ''}`)
+                    : 'Waiting for flow data...'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
@@ -619,8 +661,8 @@ export default function HalfmannLiveView() {
                     : wellsWithBoth.length > 0
                       ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
                       : activeWells.length > 0
-                        ? 'Well setpoints are not being returned by the current site feed'
-                        : 'Waiting for flow data…'}
+                        ? 'Well targets are not available yet'
+                        : 'Waiting for flow data...'}
                 />
                 <StatusCard
                   question="Are all compressors meeting flow commands?"
@@ -645,8 +687,10 @@ export default function HalfmannLiveView() {
                   {liveWellPerformance.map((well) => {
                     const hasData = well.actual != null
                     const onTarget = well.atTarget
-                    const borderColor = !hasData ? '#1a1a2a' : onTarget ? '#1d6c3d' : '#5a3a10'
-                    const bgColor = !hasData ? '#0a0a14' : onTarget ? '#071410' : '#130e04'
+                    const sacrificed = hasData && !onTarget && siteOnTarget === true
+                    const tone = !hasData ? 'none' : onTarget ? 'good' : sacrificed ? 'warn' : 'bad'
+                    const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'warn' ? '#8a5b10' : tone === 'bad' ? '#7a1a1a' : '#1a1a2a'
+                    const bgColor = tone === 'good' ? '#071410' : tone === 'warn' ? '#171107' : tone === 'bad' ? '#180909' : '#0a0a14'
                     return (
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
@@ -655,20 +699,20 @@ export default function HalfmannLiveView() {
                         </div>
                         <div className="mb-1">
                           <div className="text-[24px] font-black leading-none"
-                            style={{ color: !hasData ? '#333' : onTarget ? '#22c55e' : '#f59e0b', fontFamily: "'Arial Black'" }}>
+                            style={{ color: !hasData ? '#333' : tone === 'good' ? '#22c55e' : tone === 'warn' ? '#f59e0b' : '#ef4444', fontFamily: "'Arial Black'" }}>
                             {hasData ? well.actual.toFixed(3) : 'NO DATA'}
                           </div>
-                          {hasData && <div className="text-[9px] mt-0.5" style={{ color: onTarget ? '#4ade80' : '#fbbf24' }}>MMSCFD actual</div>}
+                          {hasData && <div className="text-[9px] mt-0.5" style={{ color: tone === 'good' ? '#4ade80' : tone === 'warn' ? '#fbbf24' : '#fca5a5' }}>MMSCFD actual</div>}
                         </div>
                         {well.desired != null ? (
                           <div className="mb-2">
                             <div className="text-[16px] font-black leading-none text-[#4fc3f7]" style={{ fontFamily: "'Arial Black'" }}>
                               {well.desired.toFixed(3)}
                             </div>
-                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD setpoint</div>
+                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD {well.desiredSource === 'live' ? 'live setpoint' : 'confirmed target'}</div>
                           </div>
                         ) : (
-                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not returned by current site feed</div>
+                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not visible in live payload</div>
                         )}
                         {well.matchPct != null && (
                           <div className="mb-2">
@@ -684,15 +728,15 @@ export default function HalfmannLiveView() {
                         )}
                         {hasData && well.desired != null && (
                           <div className="text-[14px] font-black mb-3"
-                            style={{ color: onTarget ? '#22c55e' : '#f59e0b', fontFamily: "'Arial Black'" }}>
-                            {onTarget ? 'ON TARGET' : 'LOW'}
+                            style={{ color: tone === 'good' ? '#22c55e' : tone === 'warn' ? '#f59e0b' : '#ef4444', fontFamily: "'Arial Black'" }}>
+                            {onTarget ? 'ON TARGET' : sacrificed ? 'SACRIFICED' : 'LOW'}
                           </div>
                         )}
                         <div className="border-t border-[#1a1a2a] my-2" />
                         <div className="mb-2">
                           <div className="text-[7px] text-[#555] uppercase tracking-wider">Yesterday</div>
                           <div className="text-[14px] font-black leading-none text-white" style={{ fontFamily: "'Arial Black'" }}>
-                            {well.yesterday != null ? well.yesterday.toFixed(3) : '—'}
+                            {well.yesterday != null ? well.yesterday.toFixed(3) : '--'}
                           </div>
                           {well.yesterday != null && <div className="text-[8px] text-[#555]">MMSCFD</div>}
                         </div>
@@ -702,7 +746,7 @@ export default function HalfmannLiveView() {
                 </div>
               </div>
 
-              {/* ── Recycle Valve Large Block + Pressure Summary ── */}
+              {/* Recycle valve and pressure summary */}
               <div className="mb-5 rounded-2xl border p-5"
                 style={{ borderColor: recycleOpen === null ? '#1e1e30' : recycleOpen ? '#7a1a1a' : '#1d6c3d', background: recycleOpen ? '#1a0a0a' : '#0a1410' }}>
                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#49D0E2] mb-4" style={{ fontFamily: "'Montserrat', sans-serif" }}>
@@ -715,14 +759,14 @@ export default function HalfmannLiveView() {
                     <div className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: '#49D0E2' }}>Recycle Valve</div>
                     <div className="text-[52px] font-black leading-none mb-1"
                       style={{ color: recycleVal == null ? '#444' : recycleOpen ? '#E8200C' : '#22c55e', fontFamily: "'Arial Black'" }}>
-                      {recycleVal != null ? `${recycleVal.toFixed(1)}%` : '—'}
+                      {recycleVal != null ? `${recycleVal.toFixed(1)}%` : '--'}
                     </div>
                     <div className="text-[13px] font-black mb-3"
                       style={{ color: recycleVal == null ? '#555' : recycleOpen ? '#E8200C' : '#22c55e', fontFamily: "'Arial Black'" }}>
                       {recycleVal == null ? 'PENDING' : recycleOpen ? 'NOT MEETING TARGET' : 'ON TARGET'}
                     </div>
                     <div className="text-[9px] text-[#555] uppercase tracking-wider">
-                      Target: ≤ {recycleAlertThreshold}% · Adjustable via admin
+                      Target: {'<='} {recycleAlertThreshold}% - Adjustable via admin
                     </div>
                     {/* Position bar */}
                     <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ background: '#1a1a2a' }}>
@@ -736,7 +780,7 @@ export default function HalfmannLiveView() {
 
                   {/* Discharge / Suction Pressures per Compressor */}
                   <div>
-                    <div className="text-[9px] text-[#49D0E2] uppercase tracking-[0.15em] font-bold mb-2">Discharge &amp; Suction Pressures — Per Compressor</div>
+                    <div className="text-[9px] text-[#49D0E2] uppercase tracking-[0.15em] font-bold mb-2">Discharge &amp; Suction Pressures - Per Compressor</div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                       {HALFMANN_UNITS.map((u, i) => (
                         <div key={u.key} className="rounded-lg border border-[#1e1e30] bg-[#0a0a14] p-2.5">
@@ -746,7 +790,7 @@ export default function HalfmannLiveView() {
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Discharge</div>
                               <div className="text-[16px] font-black leading-none"
                                 style={{ color: unitDischargePrs[i] != null ? (unitDischargePrs[i] > 900 ? '#ef4444' : '#22c55e') : '#444', fontFamily: "'Arial Black'" }}>
-                                {unitDischargePrs[i] != null ? `${unitDischargePrs[i].toFixed(0)}` : '—'}
+                                {unitDischargePrs[i] != null ? `${unitDischargePrs[i].toFixed(0)}` : '--'}
                               </div>
                               {unitDischargePrs[i] != null && <div className="text-[7px] text-[#555]">PSI</div>}
                             </div>
@@ -754,7 +798,7 @@ export default function HalfmannLiveView() {
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Suction</div>
                               <div className="text-[16px] font-black leading-none"
                                 style={{ color: unitSuctionPrs[i] != null ? (unitSuctionPrs[i] < 30 ? '#f59e0b' : '#22c55e') : '#444', fontFamily: "'Arial Black'" }}>
-                                {unitSuctionPrs[i] != null ? `${unitSuctionPrs[i].toFixed(0)}` : '—'}
+                                {unitSuctionPrs[i] != null ? `${unitSuctionPrs[i].toFixed(0)}` : '--'}
                               </div>
                               {unitSuctionPrs[i] != null && <div className="text-[7px] text-[#555]">PSI</div>}
                             </div>
@@ -770,7 +814,7 @@ export default function HalfmannLiveView() {
                     </div>
 
                     {/* Per-Well Pressures (from Customer PLC) */}
-                    <div className="text-[9px] text-[#49D0E2] uppercase tracking-[0.15em] font-bold mb-2">Static, Casing &amp; Tubing Pressures — Per Well</div>
+                    <div className="text-[9px] text-[#49D0E2] uppercase tracking-[0.15em] font-bold mb-2">Static, Casing &amp; Tubing Pressures - Per Well</div>
                     <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                       {liveWellPerformance.map((well, i) => (
                         <div key={i} className="rounded-lg border border-[#1e1e30] bg-[#0a0a14] p-2">
@@ -780,7 +824,7 @@ export default function HalfmannLiveView() {
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Static</div>
                               <div className="text-[14px] font-black leading-none"
                                 style={{ color: well.staticPres != null ? (dischargeTriggerSP != null && well.staticPres >= dischargeTriggerSP ? '#ef4444' : '#22c55e') : '#444', fontFamily: "'Arial Black'" }}>
-                                {well.staticPres != null ? well.staticPres.toFixed(0) : '—'}
+                                {well.staticPres != null ? well.staticPres.toFixed(0) : '--'}
                               </div>
                               {well.staticPres != null && <div className="text-[7px] text-[#555]">PSI</div>}
                             </div>
@@ -788,7 +832,7 @@ export default function HalfmannLiveView() {
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Casing</div>
                               <div className="text-[14px] font-black leading-none"
                                 style={{ color: well.casingPres != null ? '#22c55e' : '#2a2a3a', fontFamily: "'Arial Black'" }}>
-                                {well.casingPres != null ? well.casingPres.toFixed(0) : '—'}
+                                {well.casingPres != null ? well.casingPres.toFixed(0) : '--'}
                               </div>
                               {well.casingPres != null && <div className="text-[7px] text-[#555]">PSI</div>}
                             </div>
@@ -796,7 +840,7 @@ export default function HalfmannLiveView() {
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Tubing</div>
                               <div className="text-[14px] font-black leading-none"
                                 style={{ color: well.tubingPres != null ? '#22c55e' : '#2a2a3a', fontFamily: "'Arial Black'" }}>
-                                {well.tubingPres != null ? well.tubingPres.toFixed(0) : '—'}
+                                {well.tubingPres != null ? well.tubingPres.toFixed(0) : '--'}
                               </div>
                               {well.tubingPres != null && <div className="text-[7px] text-[#555]">PSI</div>}
                             </div>
@@ -814,7 +858,7 @@ export default function HalfmannLiveView() {
                     {dischargeTriggerSP != null && (
                       <div className="mt-2 text-[9px] text-[#555]">
                         Altronic discharge trigger SP: <span className="text-[#4fc3f7] font-bold">{dischargeTriggerSP.toFixed(0)} PSI</span>
-                        {' '}— static pressure readings shown in red when at or above trigger
+                        {' '}- static pressure readings shown in red when at or above trigger
                       </div>
                     )}
                   </div>
@@ -866,7 +910,7 @@ export default function HalfmannLiveView() {
                             <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD setpoint</div>
                           </div>
                         ) : (
-                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not returned by current site feed</div>
+                          <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not visible in live payload</div>
                         )}
 
                         {/* Progress bar */}
@@ -910,14 +954,14 @@ export default function HalfmannLiveView() {
               </>
               )}
 
-              {/* ── Online Indicator ── */}
+              {/* Online indicator */}
               <div className="flex items-center gap-3 mb-5">
                 <div className="w-3 h-3 rounded-full bg-[#22c55e] shadow-lg shadow-[#22c55e]/50" />
-                <span className="text-[13px] text-[#22c55e] font-bold">ONLINE — Panel Active</span>
+                <span className="text-[13px] text-[#22c55e] font-bold">ONLINE - Panel Active</span>
                 {panelTime && <span className="text-[10px] text-[#555] ml-auto">Data from: {panelTime.toLocaleString()}</span>}
               </div>
 
-              {/* ── Compressor Units ── */}
+              {/* Compressor units */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {HALFMANN_UNITS.map((u, i) => (
                   <CompressorCard
@@ -939,7 +983,7 @@ export default function HalfmannLiveView() {
       </div>
 
       <footer className="px-5 py-3 bg-[#0c0c16] border-t border-[#1a1a2a] text-center shrink-0">
-        <span className="text-[9px] text-[#444]">Halfmann 1214 · Read-only public view · Data refreshes every 60 seconds</span>
+        <span className="text-[9px] text-[#444]">Halfmann 1214 - Read-only public view - Data refreshes every 60 seconds</span>
       </footer>
     </div>
   )
