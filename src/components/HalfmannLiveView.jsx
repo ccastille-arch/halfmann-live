@@ -99,17 +99,22 @@ function getNumeric(dataMap, labels) {
 }
 
 function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
-  const liveDatapoint = resolvePreferredDatapoint(dataMap, [
-    `Wellhead #${wellNumber} Calculated Desired Flow`,
+  const customerTargetDatapoint = resolvePreferredDatapoint(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
-    `Well ${wellNumber} Calculated Desired Flow`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
   ])
-  const liveValue = parseLiveNumeric(liveDatapoint?.value)
-  if (liveValue != null) return { value: liveValue, source: 'live' }
+  const customerTargetValue = parseLiveNumeric(customerTargetDatapoint?.value)
+  if (customerTargetValue != null) return { value: customerTargetValue, source: 'live' }
   if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
   return { value: null, source: null }
+}
+
+function getWellCalculatedDesiredFlow(dataMap, wellNumber) {
+  return parseLiveNumeric(resolvePreferredDatapoint(dataMap, [
+    `Wellhead #${wellNumber} Calculated Desired Flow`,
+    `Well ${wellNumber} Calculated Desired Flow`,
+  ])?.value)
 }
 
 function getUnitDesiredFlowDatapoint(panelDataMap, unitDataMap, unitKey, unitLabel) {
@@ -496,6 +501,7 @@ export default function HalfmannLiveView() {
     const wellNumber = index + 1
     const actual = parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
     const desiredInfo = getWellSetpointInfo(panel, wellNumber, HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget)
+    const calculatedDesired = getWellCalculatedDesiredFlow(panel, wellNumber)
     const desired = desiredInfo.value
     const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
     const staticPres = getNumeric(panel, [
@@ -519,6 +525,7 @@ export default function HalfmannLiveView() {
       actual,
       desired,
       desiredSource: desiredInfo.source,
+      calculatedDesired,
       yesterday,
       staticPres,
       diffPres,
@@ -527,6 +534,7 @@ export default function HalfmannLiveView() {
       gap: actual != null && desired != null ? actual - desired : null,
       matchPct: computeMatchPct(actual, desired),
       atTarget: isWithinTarget(actual, desired),
+      sacrificed: calculatedDesired != null && desired != null && calculatedDesired < desired,
     }
   })
 
@@ -687,7 +695,7 @@ export default function HalfmannLiveView() {
                   {liveWellPerformance.map((well) => {
                     const hasData = well.actual != null
                     const onTarget = well.atTarget
-                    const sacrificed = hasData && !onTarget && siteOnTarget === true
+                    const sacrificed = hasData && !onTarget && well.sacrificed
                     const tone = !hasData ? 'none' : onTarget ? 'good' : sacrificed ? 'warn' : 'bad'
                     const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'warn' ? '#8a5b10' : tone === 'bad' ? '#7a1a1a' : '#1a1a2a'
                     const bgColor = tone === 'good' ? '#071410' : tone === 'warn' ? '#171107' : tone === 'bad' ? '#180909' : '#0a0a14'

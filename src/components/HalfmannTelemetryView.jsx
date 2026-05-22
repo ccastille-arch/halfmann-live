@@ -151,15 +151,19 @@ function resolveDP(dataMap, labels) {
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
 function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
   const liveValue = getN(dataMap, [
-    `Wellhead #${wellNumber} Calculated Desired Flow`,
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
-    `Well ${wellNumber} Calculated Desired Flow`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
   ])
   if (liveValue != null) return { value: liveValue, source: 'live' }
   if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
   return { value: null, source: null }
+}
+function getWellCalculatedDesired(dataMap, wellNumber) {
+  return getN(dataMap, [
+    `Wellhead #${wellNumber} Calculated Desired Flow`,
+    `Well ${wellNumber} Calculated Desired Flow`,
+  ])
 }
 function getUnitDesiredFlow(dataMapPanel, dataMapUnit, unitKey, unitLabel) {
   const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
@@ -566,6 +570,7 @@ export default function HalfmannTelemetryView() {
       desired: desiredInfo.value,
       desiredSource: desiredInfo.source,
       liveDesired: desiredInfo.source === 'live' ? desiredInfo.value : null,
+      calculatedDesired: getWellCalculatedDesired(panel, i + 1),
       choke: getN(panel, WELL_CHOKE_KEYS[i]),
       casing: getN(panel, WELL_CASING_KEYS[i]),
       tubing: getN(panel, WELL_TUBING_KEYS[i]),
@@ -583,8 +588,6 @@ export default function HalfmannTelemetryView() {
   // Do not split totalDesiredSite by 5 as a per-well target - individual setpoints differ significantly.
   // Example: 1.225 / 1.100 / 1.450 / 1.000 / 1.350 from the Altronic panel.
   const perWellTarget = null
-  const siteNearTarget = totalDesired != null && totalDesired > 0 ? Math.abs(totalActual - totalDesired) / totalDesired <= 0.05 : false
-
   const activeWells = wellData.filter(w => w.actual != null).length
   // Only evaluate wells that have an actual target to compare against.
   const wellsWithTarget = wellData.filter(w => w.actual != null && (w.desired != null || perWellTarget != null))
@@ -787,14 +790,16 @@ export default function HalfmannTelemetryView() {
                           if (w.actual == null || !t) return 'unknown'
                           const d = Math.abs(w.actual - t) / t * 100
                           if (d <= wellTargetPct) return 'good'
-                          return siteNearTarget ? 'warn' : 'bad'
+                          return w.calculatedDesired != null && w.desired != null && w.calculatedDesired < w.desired ? 'warn' : 'bad'
                         })()}
                         sub={(() => {
                           const t = w.desired ?? perWellTarget
                           if (w.actual == null || !t) return undefined
                           const d = Math.abs(w.actual - t) / t * 100
                           if (d <= wellTargetPct) return 'Within target'
-                          return siteNearTarget ? 'Being sacrificed to hold pad total' : 'Below target'
+                          return w.calculatedDesired != null && w.desired != null && w.calculatedDesired < w.desired
+                            ? 'Panel calculated desired is below customer target'
+                            : 'Below target'
                         })()} />
                       <Gauge label={`Well ${w.n} Choke Position`}
                         value={w.choke != null ? fmt(w.choke, 1) : null} unit="%"
