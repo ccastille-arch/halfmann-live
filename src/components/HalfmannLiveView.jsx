@@ -350,9 +350,11 @@ export default function HalfmannLiveView() {
   const panelTime = getTimestamp(panelData)
   const unitDataMaps = HALFMANN_UNITS.map(u => parseLiveDatapoints(unitDataRaw[u.key]))
 
-  // Compute site totals FIRST so they can serve as per-well fallback
+  // Site-level total desired — used ONLY for site header comparison, NOT split across wells.
+  // Individual well setpoints vary (e.g. 1.225 / 1.100 / 1.450 / 1.000 / 1.350 MMSCFD from Altronic panel).
+  // Dividing total÷5 produces wrong ON TARGET / LOW per well — do not use as per-well fallback.
   const totalDesiredSite = parseLiveNumeric(resolvePreferredDatapoint(panel, ['Total Desired Site Flow'])?.value)
-  const perWellTarget = totalDesiredSite != null ? totalDesiredSite / LIVE_WELL_FLOW_KEYS.length : null
+  const perWellTarget = null // intentionally null — equal split is misleading; wait for individual setpoints
 
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
@@ -433,10 +435,13 @@ export default function HalfmannLiveView() {
   const wellsAtTargetCount = wellsWithTarget.filter(w => w.atTarget).length
   const allOnTarget = wellsWithTarget.length > 0 ? wellsAtTargetCount === wellsWithTarget.length : null
 
-  // Site on target: derived from per-well comparison (no separate panel register needed)
-  const siteOnTarget = wellsWithBoth.length > 0 && totalDesiredFromWells > 0
-    ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
-    : null
+  // Site on target: compare total actual vs Total Desired Site Flow panel register.
+  // Per-well individual setpoints not yet in MLink, but site total IS available and accurate.
+  const siteOnTarget = totalDesiredSite != null && totalDesiredSite > 0
+    ? Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite <= 0.05
+    : wellsWithBoth.length > 0 && totalDesiredFromWells > 0
+      ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
+      : null
 
   const recycleVal = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
@@ -504,11 +509,13 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Is site injection on target?"
                   good={siteOnTarget}
-                  detail={wellsWithBoth.length > 0
-                    ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
-                    : activeWells.length > 0
-                      ? 'Setpoints pending — add Wellhead Setpoint registers to MLink'
-                      : 'Waiting for flow data…'}
+                  detail={totalDesiredSite != null
+                    ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredSite.toFixed(3)} MMSCFD site total`
+                    : wellsWithBoth.length > 0
+                      ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
+                      : activeWells.length > 0
+                        ? 'Well setpoints not yet in MLink config'
+                        : 'Waiting for flow data…'}
                 />
                 <StatusCard
                   question="Is the recycle valve closed?"

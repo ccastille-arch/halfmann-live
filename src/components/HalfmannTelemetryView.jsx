@@ -424,7 +424,9 @@ export default function HalfmannTelemetryView() {
   const hasSetpoints = wellData.some(w => w.desired != null)
   const totalDesired = hasSetpoints ? sumSetpoints : totalDesiredSite
   const totalActual  = wellData.reduce((s, w) => s + (w.actual ?? 0), 0)
-  const perWellTarget = !hasSetpoints && totalDesiredSite ? totalDesiredSite / 5 : null
+  // Do NOT split totalDesiredSite÷5 as per-well target — individual setpoints differ significantly.
+  // (e.g. 1.225 / 1.100 / 1.450 / 1.000 / 1.350 from Altronic panel — equal split produces wrong LOW/ON TARGET)
+  const perWellTarget = null
 
   const activeWells = wellData.filter(w => w.actual != null).length
   // Only evaluate wells that have an actual target to compare against — avoids false NO when MLink has no setpoints
