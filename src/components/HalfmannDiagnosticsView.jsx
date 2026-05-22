@@ -115,6 +115,16 @@ function formatPct(value, decimals = 1) {
   return value != null && Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '--'
 }
 
+function isWellMeetingTarget(actual, desired, tolerancePct = TARGET_TOLERANCE_PCT) {
+  if (actual == null || desired == null || desired <= 0) return false
+  return actual >= desired * (1 - (tolerancePct / 100))
+}
+
+function isWellOvershoot(actual, desired, tolerancePct = TARGET_TOLERANCE_PCT) {
+  if (actual == null || desired == null || desired <= 0) return false
+  return actual > desired * (1 + (tolerancePct / 100))
+}
+
 function statusColors(tone) {
   if (tone === 'good') return { border: '#1d6c3d', bg: '#0b1a12', title: '#4ade80', text: '#d1fae5' }
   if (tone === 'warn') return { border: '#8a5b10', bg: '#171207', title: '#fbbf24', text: '#fef3c7' }
@@ -166,7 +176,7 @@ function OperatorCallout({ diagnosis }) {
 }
 
 function WellRow({ well }) {
-  const tone = well.atTarget ? 'good' : 'warn'
+  const tone = well.atTarget ? (well.overshoot ? 'neutral' : 'good') : 'warn'
   const c = statusColors(tone)
   return (
     <div style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 14, padding: '12px 14px', display: 'grid', gridTemplateColumns: '90px 1fr auto', gap: 14, alignItems: 'center' }}>
@@ -176,11 +186,13 @@ function WellRow({ well }) {
           {formatValue(well.actual)} actual / {formatValue(well.desired)} target MMSCFD
         </div>
         <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
-          {well.atTarget ? 'Meeting target' : `Short by ${formatValue(well.shortfall)} MMSCFD`} | static {well.staticPressure != null ? `${formatValue(well.staticPressure, 0)} PSI` : '--'}
+          {well.atTarget
+            ? (well.overshoot ? `Potential optimization: ${formatValue(well.actual - well.desired)} MMSCFD above target` : 'Meeting target')
+            : `Short by ${formatValue(well.shortfall)} MMSCFD`} | static {well.staticPressure != null ? `${formatValue(well.staticPressure, 0)} PSI` : '--'}
         </div>
       </div>
-      <div style={{ fontSize: 10, color: well.atTarget ? '#4ade80' : '#fbbf24', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-        {well.atTarget ? 'OK' : 'LOW'}
+      <div style={{ fontSize: 10, color: well.atTarget ? (well.overshoot ? '#93c5fd' : '#4ade80') : '#fbbf24', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+        {well.atTarget ? (well.overshoot ? 'HIGH' : 'OK') : 'LOW'}
       </div>
     </div>
   )
@@ -249,7 +261,7 @@ function buildDiagnosis({
     return {
       tone: 'good',
       headline: 'Meeting rate',
-      reason: 'All wells with targets are currently within 5% of setpoint.',
+      reason: 'All wells with targets are at or above 95% of setpoint.',
       evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. ${wellsShort.length} wells are short.`,
       action: 'No action needed right now. Keep watching discharge pressure and recycle position.',
     }
@@ -380,7 +392,8 @@ export default function HalfmannDiagnosticsView() {
         calculatedDesired,
         staticPressure,
         shortfall,
-        atTarget: meetingState.wells[String(wellNumber)] ?? (actual != null && desired != null && Math.abs(actual - desired) <= desired * (wellTargetPct / 100)),
+        atTarget: meetingState.wells[String(wellNumber)] ?? isWellMeetingTarget(actual, desired, wellTargetPct),
+        overshoot: isWellOvershoot(actual, desired, wellTargetPct),
       }
     })
 
@@ -555,7 +568,7 @@ export default function HalfmannDiagnosticsView() {
             <SummaryCard
               label="Wells Meeting"
               value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
-              sub={`Target band is +/-${TARGET_TOLERANCE_PCT}%`}
+              sub={`Only flagged low if more than ${TARGET_TOLERANCE_PCT}% below target`}
               tone={derived.allOnTarget ? 'good' : derived.wellsShort.length > 0 ? 'warn' : 'neutral'}
             />
             <SummaryCard

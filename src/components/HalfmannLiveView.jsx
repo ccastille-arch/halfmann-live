@@ -164,12 +164,13 @@ function getUnitActualFlowDatapoint(dataMap) {
 
 function computeMatchPct(actual, desired) {
   if (actual == null || desired == null || desired <= 0) return null
-  return Math.max(0, 100 - (Math.abs(actual - desired) / desired) * 100)
+  if (actual >= desired) return 100
+  return Math.max(0, (actual / desired) * 100)
 }
 
 function isWithinTarget(actual, desired) {
   if (actual == null || desired == null || desired <= 0) return false
-  return Math.abs(actual - desired) <= desired * 0.05
+  return actual >= desired * 0.95
 }
 
 function average(values) {

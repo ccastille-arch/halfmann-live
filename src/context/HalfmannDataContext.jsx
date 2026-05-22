@@ -163,6 +163,11 @@ function getUnitActualFlow(unitMap) {
   return getNumeric(unitMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
 }
 
+function isWellMeetingTarget(actual, desired, tolerancePct) {
+  if (actual == null || desired == null || desired <= 0) return null
+  return actual >= desired * (1 - (tolerancePct / 100))
+}
+
 function deriveMissingCompressorFlowValues(unitFlows, totalActualFlow) {
   if (totalActualFlow == null || !Number.isFinite(totalActualFlow)) return unitFlows
   const next = [...unitFlows]
@@ -361,9 +366,7 @@ export function HalfmannDataProvider({ children }) {
       const wellNumber = index + 1
       const actual = getNumeric(panel, LIVE_WELL_FLOW_KEYS[index])
       const desired = getWellTarget(panel, wellNumber)
-      rawWellStates[wellNumber] = actual != null && desired != null && desired > 0
-        ? Math.abs(actual - desired) <= desired * ((Number(siteSettings.wellTargetPct) || 5) / 100)
-        : null
+      rawWellStates[wellNumber] = isWellMeetingTarget(actual, desired, Number(siteSettings.wellTargetPct) || 5)
     }
 
     const rawUnitDesired = HALFMANN_UNITS.map((unit, index) => getUnitDesiredFlow(panel, unitMaps[index], unit.key, unit.label))
