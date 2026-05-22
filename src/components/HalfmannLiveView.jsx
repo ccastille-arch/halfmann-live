@@ -151,20 +151,20 @@ function cleanUnit(u) {
 
 function DataPoint({ label, value, unit, color, compact = false }) {
   return (
-    <div className="bg-[#0a0a14] rounded border border-[#2a2a3a] p-2">
-      <div className="text-[8px] text-[#888] uppercase tracking-wider">{label}</div>
-      <div className="flex items-baseline gap-1">
-        <span className={compact ? 'text-[16px] font-bold' : 'text-[14px] font-bold'} style={{ color: color || '#fff', fontFamily: "'Arial Black'" }}>
+    <div className="bg-[#1c2333] rounded border border-[#1e2638] p-2">
+      <div className="text-[10px] text-[#94a3b8] uppercase tracking-wider leading-tight">{label}</div>
+      <div className="flex items-baseline gap-1 mt-0.5">
+        <span className={compact ? 'text-[16px] font-bold' : 'text-[14px] font-bold'} style={{ color: color || '#e8efff', fontFamily: "'Arial Black'" }}>
           {value || '--'}
         </span>
-        <span className="text-[8px] text-[#666]">{cleanUnit(unit)}</span>
+        <span className="text-[10px] text-[#7a8fb0]">{cleanUnit(unit)}</span>
       </div>
     </div>
   )
 }
 
 function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers, standby = false, rawDatapoints = [] }) {
-  const rpm = data['RPM'] || data['Compressor Speed'] || data['Driver Speed'] || data['Engine Speed'] || data['Engine Speed From EICS']
+  const rpm = data['RPM'] || data['Compressor Speed'] || data['Driver Speed'] || data['Engine Speed'] || data['Engine Speed From EICS'] || data['ENGINE RPM']
   const shutdown = data['Skid - Shutdown']
   const isShutdown = shutdown && String(shutdown.value).toLowerCase().includes('shutdown')
   const hasRpm = rpm && parseFloat(rpm.value) > 100
@@ -172,7 +172,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
   const isRunning = (hasRpm || hasFlow) && !isShutdown
 
   // Standby (RPM-controlled) units: show speed as primary metric, not flow
-  const desiredRpmDp = data['Speed Control SP'] || data['RPM Setpoint'] || data['Speed Setpoint']
+  const desiredRpmDp = data['Target Speed'] || data['Speed Control SP'] || data['RPM Setpoint'] || data['Speed Setpoint']
     || data['Altronic Speed Control SP'] || data['Speed Discharge SP'] || data['Desired Speed']
   const actualRpmNum = rpm ? parseFloat(rpm.value) : null
   const desiredRpmNum = desiredRpmDp ? parseFloat(desiredRpmDp.value) : null
@@ -181,8 +181,8 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
 
   // Filter registers shown in the detail grid — skip what's already shown in the primary metric row
   const skipLabels = standby
-    ? new Set(['RPM', 'Engine Speed', 'Engine Speed From EICS', 'Driver Speed', 'Compressor Speed',
-               'Speed Control SP', 'RPM Setpoint', 'Speed Setpoint', 'Altronic Speed Control SP',
+    ? new Set(['RPM', 'Engine Speed', 'Engine Speed From EICS', 'Driver Speed', 'Compressor Speed', 'ENGINE RPM',
+               'Target Speed', 'Speed Control SP', 'RPM Setpoint', 'Speed Setpoint', 'Altronic Speed Control SP',
                'Speed Discharge SP', 'Desired Speed', 'Flow Rate PID PV'])
     : new Set(['Flow Rate PID PV'])
   const visibleRegisters = registers.filter(meta => !skipLabels.has(meta.label))
@@ -212,11 +212,11 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
   const desiredFlowValue = formatFlowValue(desiredFlow?.value)
   const actualFlowValue = formatFlowValue(actualFlow?.value)
   return (
-    <div className="bg-[#111118] rounded-xl border border-[#222] p-5">
+    <div className="bg-[#161b27] rounded-xl border border-[#1e2638] p-5">
       <div className="flex items-center gap-2 mb-3">
         <div className={`w-3 h-3 rounded-full ${isRunning ? 'bg-[#22c55e] shadow-lg shadow-[#22c55e]/50' : 'bg-[#E8200C]'}`} />
         <h3 className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>{label}</h3>
-        <span className={`text-[9px] font-bold ml-auto ${isRunning ? 'text-[#22c55e]' : 'text-[#E8200C]'}`}>
+        <span className={`text-[11px] font-bold ml-auto ${isRunning ? 'text-[#22c55e]' : 'text-[#E8200C]'}`}>
           {isRunning ? 'RUNNING' : 'STOPPED'}
         </span>
       </div>
@@ -225,7 +225,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
           <div className="grid grid-cols-2 gap-2">
             <DataPoint label="Desired RPM" value={desiredRpmStr} unit="RPM" color="#4fc3f7" compact />
             <DataPoint label="Actual RPM" value={actualRpmStr} unit="RPM"
-              color={actualRpmNum != null && Number.isFinite(actualRpmNum) && actualRpmNum > 100 ? '#22c55e' : '#555'} compact />
+              color={actualRpmNum != null && Number.isFinite(actualRpmNum) && actualRpmNum > 100 ? '#22c55e' : '#647a9a'} compact />
           </div>
         ) : desiredFlow != null ? (
           <div className="grid grid-cols-2 gap-2">
@@ -235,7 +235,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         ) : (
           <div>
             <DataPoint label="Actual Flow" value={actualFlowValue} unit={cleanUnit(actualFlow?.units) || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
-            <div className="text-[8px] mt-1" style={{ color: '#3a3a55' }}>Desired flow setpoint not in MLink config</div>
+            <div className="text-[10px] mt-1" style={{ color: '#4a5a7a' }}>Desired flow setpoint not in MLink config</div>
           </div>
         )}
       </div>
@@ -270,9 +270,9 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         </div>
       )}
       {standby && !isRunning && (
-        <div className="mt-2 text-[9px] text-[#444] italic">Unit on standby — will activate if primary units fault</div>
+        <div className="mt-2 text-[11px] text-[#4d6080] italic">Unit on standby — will activate if primary units fault</div>
       )}
-      {time && <div className="text-[8px] text-[#444] mt-2 text-right">Updated: {time.toLocaleString()}</div>}
+      {time && <div className="text-[10px] text-[#4d6080] mt-2 text-right">Updated: {time.toLocaleString()}</div>}
     </div>
   )
 }
@@ -280,12 +280,12 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
 function StatusCard({ question, good, detail }) {
   const isUnknown = good === null
   return (
-    <div className={`rounded-2xl border p-5 flex flex-col gap-2 ${isUnknown ? 'border-[#2a2a3a] bg-[#0e0e1a]' : good ? 'border-[#1d6c3d] bg-[#0a1a10]' : 'border-[#7a1a1a] bg-[#1a0a0a]'}`}>
-      <div className="text-[12px] font-semibold uppercase tracking-[0.15em] text-[#888]">{question}</div>
-      <div className={`text-[42px] font-black leading-none ${isUnknown ? 'text-[#555]' : good ? 'text-[#22c55e]' : 'text-[#E8200C]'}`} style={{ fontFamily: "'Arial Black'" }}>
+    <div className={`rounded-2xl border p-5 flex flex-col gap-2 ${isUnknown ? 'border-[#2d3a52] bg-[#131d2e]' : good ? 'border-[#1d6c3d] bg-[#0c1e14]' : 'border-[#7a1a1a] bg-[#1c0e0e]'}`}>
+      <div className="text-[12px] font-semibold uppercase tracking-[0.15em] text-[#94a3b8]">{question}</div>
+      <div className={`text-[42px] font-black leading-none ${isUnknown ? 'text-[#647a9a]' : good ? 'text-[#22c55e]' : 'text-[#E8200C]'}`} style={{ fontFamily: "'Arial Black'" }}>
         {isUnknown ? '—' : good ? 'YES' : 'NO'}
       </div>
-      <div className={`text-[12px] font-medium ${isUnknown ? 'text-[#555]' : good ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{detail}</div>
+      <div className={`text-[12px] font-medium ${isUnknown ? 'text-[#647a9a]' : good ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{detail}</div>
     </div>
   )
 }
@@ -294,7 +294,7 @@ function RefreshCountdown({ secondsLeft, loading, onRefresh }) {
   const pct = Math.round((secondsLeft / REFRESH_INTERVAL_S) * 100)
   return (
     <button onClick={onRefresh} disabled={loading}
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#2a2a3a] bg-[#111120] hover:bg-[#1a1a2a] disabled:opacity-50 transition-colors"
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#2d3a52] bg-[#161b27] hover:bg-[#1e2638] disabled:opacity-50 transition-colors"
       title="Click to refresh now">
       <svg width="16" height="16" viewBox="0 0 36 36" className="shrink-0 -rotate-90">
         <circle cx="18" cy="18" r="15" fill="none" stroke="#1a2a1a" strokeWidth="3" />
@@ -446,7 +446,7 @@ export default function HalfmannLiveView() {
       ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`, `Compressor ${compNum} Desire Flow SP For PID Murphy`] : []),
     ]) ??
     resolvePreferredDatapoint(unitDataMaps[i], [
-      'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP',
+      'Flow Rate PID Auto Sp', 'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP',
     ])
   })
 

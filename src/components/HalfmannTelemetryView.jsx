@@ -94,7 +94,8 @@ const C4_GROUPS = [
   {
     title: 'Performance & Pressures',
     params: [
-      { label: 'Driver Speed',            keys: ['Driver Speed'],                            unit: 'RPM', dec: 0 },
+      { label: 'Desired RPM',             keys: ['Target Speed'],                            unit: 'RPM', dec: 0 },
+      { label: 'Actual RPM',              keys: ['ENGINE RPM', 'Driver Speed'],              unit: 'RPM', dec: 0 },
       { label: 'Suction Pressure',        keys: ['Suction Pressure'],                       unit: 'psi', dec: 1 },
       { label: 'Discharge Pressure',      keys: ['Discharge Pressure'],                     unit: 'psi', dec: 0 },
       { label: 'Engine Oil Pressure',     keys: ['Engine Oil Pressure'],                    unit: 'psi', dec: 1 },
@@ -464,7 +465,7 @@ export default function HalfmannTelemetryView() {
       ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
       ...(compNum ? [`Compressor #${compNum} Desire Flow SP For PID Murphy`] : []),
     ]) ??
-    getN(unitMaps[i], ['Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP'])
+    getN(unitMaps[i], ['Flow Rate PID Auto Sp', 'Desire Flow SP For PID Murphy', 'Desired Flow SP For PID Murphy', 'Flow Rate PID SP'])
   })
 
   const wellScores = wellData.map(w => {
@@ -660,7 +661,7 @@ export default function HalfmannTelemetryView() {
             {HALFMANN_UNITS.map((u, i) => {
               const dm = unitMaps[i]
               const groups = u.type === 'asc' ? ASC_GROUPS : C4_GROUPS
-              const rpm = getN(dm, ['RPM', 'Driver Speed', 'Engine Speed From EICS'])
+              const rpm = getN(dm, ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed From EICS'])
               const isRunning = rpm != null && rpm > 100
               const hasData = unitDataRaw[u.key] != null
               return (
