@@ -111,19 +111,48 @@ function getNumeric(dataMap, labels) {
 
 function getNumericByAddress(data, addresses) { return sharedGetNumericByAddress(data, addresses) }
 
-function getPanelCompressorsMeetingFlow(data, dataMap) {
-  const raw = resolveDatapointByAddress(data, [PANEL_ADDRESSES.compressorsMeetingFlowDemand, PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow])?.value ?? resolvePreferredDatapoint(dataMap, [
-    'Compressors Meeting Flow Demand',
-    'Compressor Meeting Flow Demand',
-    'Meeting Flow Demand',
-    'Compressors Meeting Desired Flow',
-    'Any Compressor Not Meeting Desired Flow',
-  ])?.value
+function parsePanelBooleanValue(raw) {
   if (raw == null) return null
   const normalized = String(raw).trim().toLowerCase()
   if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
   if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
   return null
+}
+
+function getPanelCompressorMeetingSignals(data, dataMap) {
+  const directFlags = [420014, 420015, 420029, 420030]
+    .map((address) => parsePanelBooleanValue(resolveDatapointByAddress(data, [address])?.value))
+    .filter((value) => value != null)
+
+  const aggregateMeetingValue = resolveDatapointByAddress(data, [420013])?.value ?? resolvePreferredDatapoint(dataMap, [
+    'Meeting Flow Demand',
+    'Compressors Meeting Desired Flow',
+  ])?.value
+  const aggregateMeeting = parsePanelBooleanValue(aggregateMeetingValue)
+
+  const anyNotMeetingValue = resolveDatapointByAddress(data, [PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow])?.value ?? resolvePreferredDatapoint(dataMap, [
+    'Any Compressor Not Meeting Desired Flow',
+  ])?.value
+  const anyNotMeeting = parsePanelBooleanValue(anyNotMeetingValue)
+
+  const broadSummaryValue = resolveDatapointByAddress(data, [PANEL_ADDRESSES.compressorsMeetingFlowDemand])?.value ?? resolvePreferredDatapoint(dataMap, [
+    'Compressors Meeting Flow Demand',
+    'Compressor Meeting Flow Demand',
+  ])?.value
+  const broadSummary = parsePanelBooleanValue(broadSummaryValue)
+
+  const perCompressor = directFlags.length === 4 ? directFlags.every(Boolean) : null
+  const inverseAnyNotMeeting = anyNotMeeting == null ? null : !anyNotMeeting
+  const effective = perCompressor ?? aggregateMeeting ?? inverseAnyNotMeeting ?? broadSummary
+
+  return {
+    effective,
+    perCompressor,
+    aggregateMeeting,
+    inverseAnyNotMeeting,
+    broadSummary,
+    directFlags,
+  }
 }
 
 function getWellSetpointInfo(data, dataMap, wellNumber) {
@@ -604,11 +633,29 @@ export default function HalfmannLiveView() {
     const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
     return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05)
   }).length
-  const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panelData, panel)
+  const compressorMeetingSignals = getPanelCompressorMeetingSignals(panelData, panel)
+  const panelCompressorsMeetingFlow = compressorMeetingSignals.effective
   const allCompressorsMeetingCommands = panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
   const compressorCommandScore = compressorCommandScores.length > 0
     ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length
     : null
+  const compressorSignalSummary = []
+  if (compressorMeetingSignals.perCompressor != null) {
+    compressorSignalSummary.push(`Per-compressor panel bits: ${compressorMeetingSignals.perCompressor ? 'YES' : 'NO'}`)
+  }
+  if (
+    compressorMeetingSignals.broadSummary != null &&
+    compressorMeetingSignals.perCompressor != null &&
+    compressorMeetingSignals.broadSummary !== compressorMeetingSignals.perCompressor
+  ) {
+    compressorSignalSummary.push(`summary bit disagrees: ${compressorMeetingSignals.broadSummary ? 'YES' : 'NO'}`)
+  } else if (compressorMeetingSignals.aggregateMeeting != null && compressorMeetingSignals.perCompressor == null) {
+    compressorSignalSummary.push(`Panel says: ${compressorMeetingSignals.aggregateMeeting ? 'YES' : 'NO'}`)
+  } else if (compressorMeetingSignals.inverseAnyNotMeeting != null && compressorMeetingSignals.perCompressor == null && compressorMeetingSignals.aggregateMeeting == null) {
+    compressorSignalSummary.push(`Any-not-meeting bit says: ${compressorMeetingSignals.inverseAnyNotMeeting ? 'YES' : 'NO'}`)
+  } else if (compressorMeetingSignals.broadSummary != null && compressorSignalSummary.length === 0) {
+    compressorSignalSummary.push(`Panel says: ${compressorMeetingSignals.broadSummary ? 'YES' : 'NO'}`)
+  }
 
   const recycleVal = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition) ?? getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position',
     'Station Recycle Header Valve Command Output'])
@@ -705,7 +752,7 @@ export default function HalfmannLiveView() {
                   question="Are all compressors meeting flow commands?"
                   good={allCompressorsMeetingCommands}
                   detail={panelCompressorsMeetingFlow != null
-                    ? `Panel says: ${panelCompressorsMeetingFlow ? 'YES' : 'NO'} | ${compressorCommandScore != null ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score` : 'Using well-panel derived result'}`
+                    ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
                     : compressorCommandScore != null
                     ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score`
                     : 'Desired flow command not visible on current site feed'}

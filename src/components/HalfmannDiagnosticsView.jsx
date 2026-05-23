@@ -101,19 +101,47 @@ function getNumericByAddress(data, addresses) {
   return sharedGetNumericByAddress(data, addresses)
 }
 
-function getPanelCompressorsMeetingFlow(data, dataMap) {
-  const raw = resolveDatapointByAddress(data, [PANEL_ADDRESSES.compressorsMeetingFlowDemand, PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow])?.value ?? resolveDatapoint(dataMap, [
-    'Compressors Meeting Flow Demand',
-    'Compressor Meeting Flow Demand',
-    'Meeting Flow Demand',
-    'Compressors Meeting Desired Flow',
-    'Any Compressor Not Meeting Desired Flow',
-  ])?.value
+function parsePanelBooleanValue(raw) {
   if (raw == null) return null
   const normalized = String(raw).trim().toLowerCase()
   if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
   if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
   return null
+}
+
+function getPanelCompressorMeetingSignals(data, dataMap) {
+  const directFlags = [420014, 420015, 420029, 420030]
+    .map((address) => parsePanelBooleanValue(resolveDatapointByAddress(data, [address])?.value))
+    .filter((value) => value != null)
+
+  const aggregateMeetingValue = resolveDatapointByAddress(data, [420013])?.value ?? resolveDatapoint(dataMap, [
+    'Meeting Flow Demand',
+    'Compressors Meeting Desired Flow',
+  ])?.value
+  const aggregateMeeting = parsePanelBooleanValue(aggregateMeetingValue)
+
+  const anyNotMeetingValue = resolveDatapointByAddress(data, [PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow])?.value ?? resolveDatapoint(dataMap, [
+    'Any Compressor Not Meeting Desired Flow',
+  ])?.value
+  const anyNotMeeting = parsePanelBooleanValue(anyNotMeetingValue)
+
+  const broadSummaryValue = resolveDatapointByAddress(data, [PANEL_ADDRESSES.compressorsMeetingFlowDemand])?.value ?? resolveDatapoint(dataMap, [
+    'Compressors Meeting Flow Demand',
+    'Compressor Meeting Flow Demand',
+  ])?.value
+  const broadSummary = parsePanelBooleanValue(broadSummaryValue)
+
+  const perCompressor = directFlags.length === 4 ? directFlags.every(Boolean) : null
+  const inverseAnyNotMeeting = anyNotMeeting == null ? null : !anyNotMeeting
+  const effective = perCompressor ?? aggregateMeeting ?? inverseAnyNotMeeting ?? broadSummary
+
+  return {
+    effective,
+    perCompressor,
+    aggregateMeeting,
+    inverseAnyNotMeeting,
+    broadSummary,
+  }
 }
 
 function getTimestamp(data) {
@@ -288,6 +316,7 @@ function buildDiagnosis({
   wellheadControlOverride,
   wellheadControlOverrideCompSpeedSp,
   panelCompressorsMeetingFlow,
+  panelCompressorSignalMismatch,
 }) {
   if (allOnTarget) {
     return {
@@ -395,8 +424,10 @@ function buildDiagnosis({
     return {
       tone: 'warn',
       headline: 'Not meeting rate because the panel says compressors are not meeting flow demand',
-      reason: 'The M-Link panel signal `Compressors Meeting Flow Demand` is reporting NO, so this page should treat compressor flow compliance as failed even when per-unit desired-flow tags are incomplete.',
-      evidence: `Compressors Meeting Flow Demand = No (0). ${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}.`,
+      reason: panelCompressorSignalMismatch
+        ? 'The panel-wide summary bit disagrees with the direct per-compressor meeting bits, so treat this as a panel signal conflict instead of a proven compressor miss.'
+        : 'The M-Link panel signal for compressor flow compliance is reporting NO.',
+      evidence: `${panelCompressorSignalMismatch ? 'Direct compressor bits say YES while one panel summary bit says NO.' : 'Compressor flow compliance signal = NO.'} ${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}.`,
       action: 'Trust the panel latch first. Check which compressor is under-delivering, then inspect suction, discharge, and any active override logic.',
     }
   }
@@ -507,7 +538,12 @@ export default function HalfmannDiagnosticsView() {
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
     const speedDischargePressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Discharge Press PID Auto Sp']), null)
-    const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panelData, panel)
+    const compressorMeetingSignals = getPanelCompressorMeetingSignals(panelData, panel)
+    const panelCompressorsMeetingFlow = compressorMeetingSignals.effective
+    const panelCompressorSignalMismatch =
+      compressorMeetingSignals.perCompressor != null &&
+      compressorMeetingSignals.broadSummary != null &&
+      compressorMeetingSignals.perCompressor !== compressorMeetingSignals.broadSummary
     const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
     const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
 
@@ -576,6 +612,7 @@ export default function HalfmannDiagnosticsView() {
       suctionMatchAvg,
       suctionComparisonLines,
       panelCompressorsMeetingFlow,
+      panelCompressorSignalMismatch,
     }
   }, [panelData, unitDataRaw, siteSettings.wellTargetPct, meetingState.wells])
 
@@ -686,7 +723,9 @@ export default function HalfmannDiagnosticsView() {
               value={derived.panelCompressorsMeetingFlow == null ? '--' : derived.panelCompressorsMeetingFlow ? 'YES' : 'NO'}
               sub={derived.panelCompressorsMeetingFlow == null
                 ? 'Compressors Meeting Flow Demand not visible'
-                : 'Direct panel signal from M-Link'}
+                : derived.panelCompressorSignalMismatch
+                  ? 'Direct compressor bits say YES, but one panel summary bit says NO'
+                  : 'Direct panel signal from M-Link'}
               tone={derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : 'bad'}
             />
           </div>
