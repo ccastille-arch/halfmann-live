@@ -587,7 +587,7 @@ export default function HalfmannOptimizationView() {
             <div style={{ border: '1px solid #1f3650', borderRadius: 16, background: 'rgba(7,18,30,0.72)', padding: '14px 16px' }}>
               <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>Decision Logic</div>
               <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.7 }}>
-                Wells are compared to calculated desired flow when available, otherwise to customer PLC setpoint or the site fallback values. Compressors are compared to their requested dispatch and balanced against total site flow when one live flow tag is missing.
+                Wells are compared to calculated desired flow when available, otherwise to the customer PLC setpoint. Compressors are compared to their requested dispatch, and site balance is only used to estimate a single missing actual flow tag when the rest of the running unit flows are present.
               </div>
             </div>
             <div style={{ border: '1px solid #1f3650', borderRadius: 16, background: 'rgba(7,18,30,0.72)', padding: '14px 16px' }}>

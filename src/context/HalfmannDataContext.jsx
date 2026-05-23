@@ -23,8 +23,6 @@ export const HALFMANN_UNITS = [
   { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, standby: true, type: 'c4' },
 ]
 
-export const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
-
 const LIVE_WELL_FLOW_KEYS = [
   ['Well 1 Injection Gas Flow Rate', 'Well #1 Flow Rate'],
   ['Well 2 Injection Gas Flow Rate', 'Well #2 Flow Rate'],

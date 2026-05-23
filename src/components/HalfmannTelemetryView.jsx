@@ -159,14 +159,13 @@ function resolveDP(dataMap, labels) {
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
 function resolveDPByAddress(data, addresses) { return sharedResolveDatapointByAddress(data, addresses) }
 function getNByAddress(data, addresses) { return sharedGetNumericByAddress(data, addresses) }
-function getWellSetpointInfo(data, dataMap, wellNumber, fallbackValue = null) {
+function getWellSetpointInfo(data, dataMap, wellNumber) {
   const liveValue = getNByAddress(data, [WELL_SETPOINT_ADDRESSES[wellNumber - 1]]) ?? getN(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
   ])
   if (liveValue != null) return { value: liveValue, source: 'live' }
-  if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
   return { value: null, source: null }
 }
 function getWellCalculatedDesired(data, dataMap, wellNumber) {
@@ -602,7 +601,6 @@ export default function HalfmannTelemetryView() {
   const sumSetpoints = wellData.reduce((s, w) => s + (w.desired ?? 0), 0)
   const hasAnySetpoints = wellData.some(w => w.desired != null)
   const liveSetpointCount = wellData.filter(w => w.desiredSource === 'live').length
-  const fallbackSetpointCount = wellData.filter(w => w.desiredSource === 'fallback').length
   const totalDesired = hasAnySetpoints ? sumSetpoints : totalDesiredSite
   const totalActual  = wellData.reduce((s, w) => s + (w.actual ?? 0), 0)
   // Do not split totalDesiredSite by 5 as a per-well target - individual setpoints differ significantly.
@@ -825,7 +823,7 @@ export default function HalfmannTelemetryView() {
                     <GaugeGrid>
                       <Gauge label={`Well ${w.n} Setpoint`}
                         value={w.desired != null ? fmt(w.desired) : null} unit="MMSCFD"
-                        sub={w.desired == null ? NOT_PUBLISHED_COPY : w.desiredSource === 'live' ? 'Live setpoint tag' : 'Confirmed fallback target'} />
+                        sub={w.desired == null ? NOT_PUBLISHED_COPY : 'Live setpoint tag'} />
                       <Gauge label={`Well ${w.n} Injection Flow`}
                         value={w.actual != null ? fmt(w.actual) : null} unit="MMSCFD"
                         status={(() => {

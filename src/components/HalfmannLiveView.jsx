@@ -126,7 +126,7 @@ function getPanelCompressorsMeetingFlow(data, dataMap) {
   return null
 }
 
-function getWellSetpointInfo(data, dataMap, wellNumber, fallbackValue = null) {
+function getWellSetpointInfo(data, dataMap, wellNumber) {
   const customerTargetDatapoint = resolveDatapointByAddress(data, [LIVE_WELL_SETPOINT_ADDRESSES[wellNumber - 1]]) ?? resolvePreferredDatapoint(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
@@ -134,7 +134,6 @@ function getWellSetpointInfo(data, dataMap, wellNumber, fallbackValue = null) {
   ])
   const customerTargetValue = parseLiveNumeric(customerTargetDatapoint?.value)
   if (customerTargetValue != null) return { value: customerTargetValue, source: 'live' }
-  if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
   return { value: null, source: null }
 }
 
@@ -575,8 +574,6 @@ export default function HalfmannLiveView() {
   const totalDesiredFromWells = wellsWithBoth.reduce((sum, w) => sum + (w.desired ?? 0), 0)
   const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
   const liveSetpointCount = liveWellPerformance.filter((well) => well.desiredSource === 'live').length
-  const fallbackSetpointCount = liveWellPerformance.filter((well) => well.desiredSource === 'fallback').length
-
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
   // Only compare wells where we have BOTH actual AND a real setpoint (avoids false YES/NO without targets)
   const wellsWithTarget = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
@@ -689,7 +686,9 @@ export default function HalfmannLiveView() {
                   value={siteWellScore != null ? `${siteWellScore.toFixed(0)}%` : undefined}
                   detail={wellsWithTarget.length > 0
                     ? `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}`
-                    : 'Waiting for flow data...'}
+                    : activeWells.length > 0
+                      ? 'Live well setpoint tags are not visible yet'
+                      : 'Waiting for flow data...'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
@@ -749,7 +748,7 @@ export default function HalfmannLiveView() {
                             <div className="text-[16px] font-black leading-none text-[#4fc3f7]" style={{ fontFamily: "'Arial Black'" }}>
                               {well.desired.toFixed(3)}
                             </div>
-                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD {well.desiredSource === 'live' ? 'live setpoint' : 'confirmed target'}</div>
+                            <div className="text-[9px] text-[#4fc3f7]/70">MMSCFD live setpoint</div>
                           </div>
                         ) : (
                           <div className="mb-2 text-[9px]" style={{ color: '#4a4a60' }}>Setpoint not visible in live payload</div>

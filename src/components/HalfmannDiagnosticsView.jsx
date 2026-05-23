@@ -227,14 +227,13 @@ function WellRow({ well }) {
   )
 }
 
-function UnitRow({ unit, actualFlow, desiredFlow, desiredFlowDerived, suctionActual, suctionTarget, rpm, discharge, derivedFlow }) {
+function UnitRow({ unit, actualFlow, desiredFlow, suctionActual, suctionTarget, rpm, discharge, derivedFlow }) {
   const running = rpm != null && rpm > 100
   return (
     <div style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 14, padding: '12px 14px', display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 14, alignItems: 'center' }}>
       <div style={{ fontSize: 13, color: '#fff', fontWeight: 800 }}>{unit.label}{unit.standby ? ' (Standby)' : ''}</div>
         <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.65 }}>
         Flow {formatValue(actualFlow)} actual / {formatValue(desiredFlow)} desired MMSCFD
-        {desiredFlowDerived ? ' | desired derived from total site target' : ''}
         {derivedFlow ? ' | actual derived from site balance' : ''}
         <br />
         Suction {formatValue(suctionActual, 1)} actual / {formatValue(suctionTarget, 1)} Loaded Auto Sp PSI
@@ -305,8 +304,8 @@ function buildDiagnosis({
       tone: 'neutral',
       headline: 'Need more live target data',
       reason: 'The page cannot fully judge the pad until it has live well target data for every well.',
-      evidence: 'Flow is visible, but at least some target comparison is still using confirmed fallback targets.',
-      action: 'Use the target numbers shown here for now, then verify the panel target registers stay visible in MLink.',
+      evidence: 'Flow is visible, but at least some live well target tags are still missing from the current feed.',
+      action: 'Wait for the panel target registers to publish again before trusting a full well-by-well rate judgment.',
     }
   }
 
@@ -715,7 +714,6 @@ export default function HalfmannDiagnosticsView() {
                       unit={unit}
                       actualFlow={derived.unitActualFlows[index]}
                       desiredFlow={derived.unitDesiredFlows[index]}
-                      desiredFlowDerived={derived.unitDesiredIsDerived[index]}
                       suctionActual={derived.unitSuction[index]}
                       suctionTarget={derived.unitSuctionTarget[index]}
                       rpm={derived.unitRpm[index]}
