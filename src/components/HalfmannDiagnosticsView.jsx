@@ -257,6 +257,8 @@ function buildDiagnosis({
   commandMatchAvg,
   speedSuctionPressAutoSp,
   speedDischargePressAutoSp,
+  wellheadControlOverride,
+  wellheadControlOverrideCompSpeedSp,
 }) {
   if (allOnTarget) {
     return {
@@ -285,6 +287,16 @@ function buildDiagnosis({
       reason: 'At least one compressor is at or below its suction slow-down target, so the panel protects suction pressure before it chases flow.',
       evidence: `Lowest live suction is ${formatValue(lowestSuction, 1)} PSI and the low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
       action: 'Check gas supply and suction conditions first. The units may ignore flow demand until suction pressure recovers.',
+    }
+  }
+
+  if (wellheadControlOverride != null && wellheadControlOverride > 0) {
+    return {
+      tone: 'bad',
+      headline: 'Not meeting rate because the DE4000 override latch is active',
+      reason: 'The Wellhead Control in Override latch is on, which means the DE4000 is actively overriding normal wellhead control because the compressors are flowing too much for current pressure conditions.',
+      evidence: `Wellhead Control in Override = ${formatValue(wellheadControlOverride, 0)}. Override comp speed SP = ${formatValue(wellheadControlOverrideCompSpeedSp, 0)}. Highest site discharge is ${formatValue(highestDischarge, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Treat this as an active pressure-protection limit. Check discharge-side conditions and the DE4000 override logic before chasing flow on the wells.',
     }
   }
 
@@ -449,6 +461,8 @@ export default function HalfmannDiagnosticsView() {
     const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
     const recycleValvePosition = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
     const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null
+    const wellheadControlOverride = getNumeric(panel, ['Wellhead Control in Override'])
+    const wellheadControlOverrideCompSpeedSp = getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
     const dischargeTrigger = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
@@ -511,6 +525,8 @@ export default function HalfmannDiagnosticsView() {
       recommendedCompressors,
       recycleValvePosition,
       recycleOpen,
+      wellheadControlOverride,
+      wellheadControlOverrideCompSpeedSp,
       dischargeTrigger,
       speedSuctionPressAutoSp,
       speedDischargePressAutoSp,
@@ -602,6 +618,14 @@ export default function HalfmannDiagnosticsView() {
               value={derived.recycleValvePosition != null ? `${formatValue(derived.recycleValvePosition, 1)}%` : '--'}
               sub={derived.recycleOpen == null ? 'Valve position not visible' : derived.recycleOpen ? 'Open' : 'Closed'}
               tone={derived.recycleOpen ? 'bad' : derived.recycleOpen === false ? 'good' : 'neutral'}
+            />
+            <SummaryCard
+              label="DE4000 Override Latch"
+              value={derived.wellheadControlOverride != null ? (derived.wellheadControlOverride > 0 ? 'ACTIVE' : 'CLEAR') : '--'}
+              sub={derived.wellheadControlOverride != null
+                ? `Wellhead Control in Override = ${formatValue(derived.wellheadControlOverride, 0)}${derived.wellheadControlOverrideCompSpeedSp != null ? ` | Override Comp Speed SP ${formatValue(derived.wellheadControlOverrideCompSpeedSp, 0)}` : ''}`
+                : 'Wellhead Control in Override not visible'}
+              tone={derived.wellheadControlOverride == null ? 'neutral' : derived.wellheadControlOverride > 0 ? 'bad' : 'good'}
             />
             <SummaryCard
               label="Discharge Pressure Site"
