@@ -305,14 +305,12 @@ function buildDiagnosis({
   siteMatchPct,
   lowestSuction,
   highestDischarge,
-  dischargeTrigger,
   recycleOpen,
   recycleValvePosition,
   runningUnits,
   recommendedCompressors,
   commandMatchAvg,
   speedSuctionPressAutoSp,
-  speedDischargePressAutoSp,
   wellheadControlOverride,
   wellheadControlOverrideCompSpeedSp,
   panelCompressorsMeetingFlow,
@@ -355,26 +353,6 @@ function buildDiagnosis({
       reason: 'The Wellhead Control in Override latch is on, which means the DE4000 is actively overriding normal wellhead control because the compressors are flowing too much for current pressure conditions.',
       evidence: `Wellhead Control in Override = ${formatValue(wellheadControlOverride, 0)}. Override comp speed SP = ${formatValue(wellheadControlOverrideCompSpeedSp, 0)}. Highest site discharge is ${formatValue(highestDischarge, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
       action: 'Treat this as an active pressure-protection limit. Check discharge-side conditions and the DE4000 override logic before chasing flow on the wells.',
-    }
-  }
-
-  if (speedDischargePressAutoSp != null && highestDischarge != null && highestDischarge >= speedDischargePressAutoSp) {
-    return {
-      tone: 'bad',
-      headline: 'Not meeting rate because discharge protection is slowing units down',
-      reason: 'At least one compressor is at or above its discharge slow-down target, so the panel protects discharge pressure before it chases flow.',
-      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI and the high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
-      action: 'Check discharge pressure and downstream restriction before changing well targets.',
-    }
-  }
-
-  if (dischargeTrigger != null && highestDischarge != null && highestDischarge >= dischargeTrigger) {
-    return {
-      tone: 'bad',
-      headline: 'Not meeting rate because discharge pressure is too high',
-      reason: 'The panel is likely pulling flow back to protect discharge pressure before it tries to feed the short wells.',
-      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI and the unit high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp ?? dischargeTrigger, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
-      action: 'Look at discharge pressure first. Do not chase well flow until the high discharge condition clears.',
     }
   }
 
@@ -436,7 +414,7 @@ function buildDiagnosis({
     tone: 'warn',
     headline: 'Not meeting rate and no specific limiting condition is proven yet',
     reason: 'The wells are short, but this page does not currently prove suction slow-down, discharge slow-down, recycle-open loss, too few compressors online, or panel sacrifice.',
-    evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}. Low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI and high-discharge slow-down target is ${formatValue(speedDischargePressAutoSp, 0)} PSI.`,
+    evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}. Low-suction slow-down target is ${formatValue(speedSuctionPressAutoSp, 1)} PSI.`,
     action: 'Check compressor desired flow versus actual flow on each running unit, then inspect the short wells individually for local restriction.',
   }
 }
@@ -709,8 +687,12 @@ export default function HalfmannDiagnosticsView() {
             <SummaryCard
               label="Discharge Pressure Site"
               value={derived.highestDischarge != null ? `${formatValue(derived.highestDischarge, 0)} PSI` : '--'}
-              sub={derived.speedDischargePressAutoSp != null ? `Unit slow-down target ${formatValue(derived.speedDischargePressAutoSp, 0)} PSI` : derived.dischargeTrigger != null ? `Panel trigger ${formatValue(derived.dischargeTrigger, 0)} PSI` : 'Slow-down target not visible'}
-              tone={derived.highestDischarge != null && ((derived.speedDischargePressAutoSp != null && derived.highestDischarge >= derived.speedDischargePressAutoSp) || (derived.dischargeTrigger != null && derived.highestDischarge >= derived.dischargeTrigger)) ? 'bad' : 'neutral'}
+              sub={derived.wellheadControlOverride != null
+                ? derived.wellheadControlOverride > 0
+                  ? 'Slowing compressors down due to discharge pressure'
+                  : 'Live site discharge pressure reading'
+                : 'Discharge override status not visible'}
+              tone={derived.wellheadControlOverride == null ? 'neutral' : derived.wellheadControlOverride > 0 ? 'bad' : 'neutral'}
             />
             <SummaryCard
               label="Suction Controller Score"
