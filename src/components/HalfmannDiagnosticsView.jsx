@@ -503,8 +503,8 @@ export default function HalfmannDiagnosticsView() {
     const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
     const recycleValvePosition = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
     const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null
-    const wellheadControlOverride = getNumeric(panel, ['Wellhead Control in Override'])
-    const wellheadControlOverrideCompSpeedSp = getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
+    const wellheadControlOverride = getNumericByAddress(panelData, ['460018']) ?? getNumeric(panel, ['Wellhead Control in Override'])
+    const wellheadControlOverrideCompSpeedSp = getNumericByAddress(panelData, ['460020']) ?? getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
     const dischargeTrigger = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
@@ -665,7 +665,7 @@ export default function HalfmannDiagnosticsView() {
             />
             <SummaryCard
               label="DE4000 Override Latch"
-              value={derived.wellheadControlOverride != null ? (derived.wellheadControlOverride > 0 ? 'ACTIVE' : 'CLEAR') : '--'}
+              value={derived.wellheadControlOverride != null ? (derived.wellheadControlOverride > 0 ? 'YES' : 'NO') : '--'}
               sub={derived.wellheadControlOverride != null
                 ? `Wellhead Control in Override = ${formatValue(derived.wellheadControlOverride, 0)}${derived.wellheadControlOverrideCompSpeedSp != null ? ` | Override Comp Speed SP ${formatValue(derived.wellheadControlOverrideCompSpeedSp, 0)}` : ''}`
                 : 'Wellhead Control in Override not visible'}
