@@ -30,6 +30,26 @@ const MAIN_COMPRESSOR_COUNT = 4
 const MATCH_TOLERANCE_PCT = 98
 const DEFAULT_SAMPLE_MS = 2000
 const MAX_CONTIGUOUS_SAMPLE_MS = 5000
+const RELATIVE_PRESET_OPTIONS = [
+  { key: 'last-30-minutes', label: 'Last 30 Minutes', minutes: 30 },
+  ...Array.from({ length: 24 }, (_, index) => ({
+    key: `last-${index + 1}-hour${index === 0 ? '' : 's'}`,
+    label: `Last ${index + 1} Hour${index === 0 ? '' : 's'}`,
+    hours: index + 1,
+  })),
+  ...Array.from({ length: 6 }, (_, index) => ({
+    key: `last-${index + 2}-days`,
+    label: `Last ${index + 2} Days`,
+    days: index + 2,
+  })),
+  { key: 'last-14-days', label: 'Last 14 Days', days: 14 },
+  { key: 'last-21-days', label: 'Last 21 Days', days: 21 },
+  { key: 'last-30-days', label: 'Last 30 Days', days: 30 },
+  { key: 'current-month', label: 'Month to Date' },
+  { key: 'previous-month', label: 'Last Month' },
+  { key: 'last-90-days', label: 'Last 90 Days', days: 90 },
+  { key: 'custom', label: 'Custom Range' },
+]
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -44,6 +64,73 @@ function average(values) {
 function toIso(value) {
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function getTimeZoneDateParts(date = new Date(), timeZone = 'America/Chicago') {
+  const normalizedDate = date instanceof Date ? date : new Date(date)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(normalizedDate)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  )
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+  }
+}
+
+function endOfLocalDay(parts, timezone) {
+  return new Date(zonedDateTimeToUtc({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day + 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  }, timezone).getTime() - 1)
+}
+
+function beginningOfLocalDay(parts, timezone) {
+  return zonedDateTimeToUtc({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  }, timezone)
+}
+
+function previousLocalDateParts(now, timezone) {
+  const parts = getCalendarContext(now, timezone)
+  const currentDayStart = zonedDateTimeToUtc({
+    year: Number(parts.monthKey.slice(0, 4)),
+    month: Number(parts.monthKey.slice(5, 7)),
+    day: parts.dayOfMonth,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  }, timezone)
+  return getTimeZoneDateParts(new Date(currentDayStart.getTime() - 1000), timezone)
+}
+
+function findPresetOption(key) {
+  return RELATIVE_PRESET_OPTIONS.find((option) => option.key === key) || null
 }
 
 function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new Date() }) {
@@ -62,6 +149,37 @@ function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new 
   const timezone = calendar.timezone
   const currentYear = Number(calendar.monthKey.slice(0, 4))
   const currentMonth = Number(calendar.monthKey.slice(5, 7))
+
+  const relativePreset = findPresetOption(preset)
+  if (relativePreset?.minutes) {
+    const start = new Date(effectiveNow.getTime() - (relativePreset.minutes * 60 * 1000))
+    const clampedStart = clampHalfmannHistoryStart(start, timezone)
+    return {
+      startAt: clampedStart,
+      endAt: effectiveNow < clampedStart ? new Date(clampedStart) : effectiveNow,
+      preset,
+    }
+  }
+
+  if (relativePreset?.hours) {
+    const start = new Date(effectiveNow.getTime() - (relativePreset.hours * 60 * 60 * 1000))
+    const clampedStart = clampHalfmannHistoryStart(start, timezone)
+    return {
+      startAt: clampedStart,
+      endAt: effectiveNow < clampedStart ? new Date(clampedStart) : effectiveNow,
+      preset,
+    }
+  }
+
+  if (relativePreset?.days && !['current-month', 'previous-month'].includes(preset)) {
+    const start = new Date(effectiveNow.getTime() - (relativePreset.days * 24 * 60 * 60 * 1000))
+    const clampedStart = clampHalfmannHistoryStart(start, timezone)
+    return {
+      startAt: clampedStart,
+      endAt: effectiveNow < clampedStart ? new Date(clampedStart) : effectiveNow,
+      preset,
+    }
+  }
 
   if (preset === 'current-month') {
     const clampedStart = clampHalfmannHistoryStart(calendar.monthStartIso, timezone)
@@ -84,16 +202,11 @@ function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new 
     const clampedStart = clampHalfmannHistoryStart(start, timezone)
     return { startAt: clampedStart, endAt: end < clampedStart ? new Date(clampedStart) : end, preset }
   }
-
-  const lookbackDays = preset === 'last-7-days' ? 7 : preset === 'last-14-days' ? 14 : 30
-  const start = new Date(effectiveNow)
-  start.setUTCDate(start.getUTCDate() - lookbackDays)
-  start.setUTCHours(0, 0, 0, 0)
-  const clampedStart = clampHalfmannHistoryStart(start, timezone)
+  const clampedStart = clampHalfmannHistoryStart(calendar.monthStartIso, timezone)
   return {
     startAt: clampedStart,
     endAt: effectiveNow < clampedStart ? new Date(clampedStart) : effectiveNow,
-    preset,
+    preset: 'current-month',
   }
 }
 
@@ -105,6 +218,7 @@ function buildControlMeta() {
       selectedByDefault: true,
     })),
     defaultDeviceIds: HALF_MANN_DEVICE_MANIFEST.map((unit) => unit.deviceId),
+    presetOptions: RELATIVE_PRESET_OPTIONS,
   }
 }
 
@@ -342,12 +456,74 @@ export async function getPerformanceReportMeta() {
   }
 }
 
+function sameWindow(left, right) {
+  return left?.startAt === right?.startAt && left?.endAt === right?.endAt && left?.preset === right?.preset
+}
+
+export function buildScheduledArchiveRanges(now = new Date()) {
+  const timezone = getCalendarContext(now).timezone
+  const yesterdayParts = previousLocalDateParts(now, timezone)
+  const dailyStart = clampHalfmannHistoryStart(beginningOfLocalDay(yesterdayParts, timezone), timezone)
+  const dailyEnd = endOfLocalDay(yesterdayParts, timezone)
+
+  const weeklyEnd = dailyEnd
+  const weeklyStart = clampHalfmannHistoryStart(new Date(dailyStart.getTime() - (6 * 24 * 60 * 60 * 1000)), timezone)
+
+  const calendar = getCalendarContext(now, timezone)
+  const currentYear = Number(calendar.monthKey.slice(0, 4))
+  const currentMonth = Number(calendar.monthKey.slice(5, 7))
+  const previousMonth = currentMonth === 1
+    ? { year: currentYear - 1, month: 12 }
+    : { year: currentYear, month: currentMonth - 1 }
+  const nextMonth = previousMonth.month === 12
+    ? { year: previousMonth.year + 1, month: 1 }
+    : { year: previousMonth.year, month: previousMonth.month + 1 }
+  const monthlyStart = clampHalfmannHistoryStart(zonedDateTimeToUtc({
+    ...previousMonth,
+    day: 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  }, timezone), timezone)
+  const monthlyEnd = new Date(zonedDateTimeToUtc({
+    ...nextMonth,
+    day: 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  }, timezone).getTime() - 1)
+
+  return [
+    { kind: 'daily', preset: 'last-24-hours', startAt: dailyStart, endAt: dailyEnd },
+    { kind: 'weekly', preset: 'last-7-days', startAt: weeklyStart, endAt: weeklyEnd },
+    { kind: 'monthly', preset: 'previous-month', startAt: monthlyStart, endAt: monthlyEnd },
+  ]
+}
+
+export async function ensureScheduledPerformanceArchives(now = new Date()) {
+  const existingReports = listArchivedPerformanceReports(500)
+  for (const range of buildScheduledArchiveRanges(now)) {
+    const reportWindow = {
+      startAt: toIso(range.startAt),
+      endAt: toIso(range.endAt),
+      preset: range.preset,
+    }
+    const existing = existingReports.find((item) => item.kind === range.kind && sameWindow(item.reportWindow, reportWindow))
+    if (existing) continue
+    const report = buildReportSnapshot(range)
+    archivePerformanceReport(report, { kind: range.kind })
+  }
+}
+
 export async function generatePerformanceReport({
   startAt,
   endAt,
   preset = 'current-month',
 } = {}) {
   const anchorNow = new Date()
+  ensureScheduledPerformanceArchives(anchorNow)
   const selectedRange = resolveDateRange({ preset, startAt, endAt, now: anchorNow })
   const selectedReport = buildReportSnapshot(selectedRange)
   const monthToDateReport = buildReportSnapshot(resolveDateRange({ preset: 'current-month', now: anchorNow }))

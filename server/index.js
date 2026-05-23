@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
-import { generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
+import { ensureScheduledPerformanceArchives, generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
 import { ensureHalfmannHistoryBootstrapped, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
 import { listArchivedPerformanceReports, resolveArchivedPerformanceReportPath } from './halfmannReportArchive.js'
@@ -416,6 +416,7 @@ async function materializeMonthToDatePerformanceReport() {
   if (halfmannMonthlyReportMaterializeInFlight) return
   halfmannMonthlyReportMaterializeInFlight = true
   try {
+    await ensureScheduledPerformanceArchives()
     await generatePerformanceReport({ preset: 'current-month' })
   } catch (err) {
     console.error('halfmann month-to-date report materialize failed:', err.message)

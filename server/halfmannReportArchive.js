@@ -197,11 +197,19 @@ export function archivePerformanceReport(report, { kind = 'generated' } = {}) {
   const workbookBuffer = XLSX.write(buildWorkbook(report), { type: 'buffer', bookType: 'xlsx' })
   writeFileSync(xlsxPath, workbookBuffer)
 
+  const label = kind === 'month-to-date'
+    ? `Month-to-date report ${startKey} to ${endKey}`
+    : kind === 'daily'
+      ? `Daily archive ${startKey} to ${endKey}`
+      : kind === 'weekly'
+        ? `Weekly archive ${startKey} to ${endKey}`
+        : kind === 'monthly'
+          ? `Monthly archive ${startKey} to ${endKey}`
+          : `Stored report ${startKey} to ${endKey}`
+
   const meta = {
     id: `${monthKey}/${baseName}`,
-    label: kind === 'month-to-date'
-      ? `Month-to-date report ${startKey} to ${endKey}`
-      : `Stored report ${startKey} to ${endKey}`,
+    label,
     generatedAt: new Date().toISOString(),
     kind,
     monthKey,

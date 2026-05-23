@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const PRESETS = [
-  { key: 'current-month', label: 'Current Month' },
-  { key: 'previous-month', label: 'Previous Month' },
-  { key: 'last-7-days', label: 'Last 7 Days' },
+const FALLBACK_PRESETS = [
+  { key: 'last-30-minutes', label: 'Last 30 Minutes' },
+  ...Array.from({ length: 24 }, (_, index) => ({
+    key: `last-${index + 1}-hour${index === 0 ? '' : 's'}`,
+    label: `Last ${index + 1} Hour${index === 0 ? '' : 's'}`,
+  })),
+  ...Array.from({ length: 6 }, (_, index) => ({
+    key: `last-${index + 2}-days`,
+    label: `Last ${index + 2} Days`,
+  })),
   { key: 'last-14-days', label: 'Last 14 Days' },
+  { key: 'last-21-days', label: 'Last 21 Days' },
   { key: 'last-30-days', label: 'Last 30 Days' },
+  { key: 'current-month', label: 'Month to Date' },
+  { key: 'previous-month', label: 'Last Month' },
+  { key: 'last-90-days', label: 'Last 90 Days' },
   { key: 'custom', label: 'Custom Range' },
 ]
 
@@ -39,6 +49,22 @@ function getRangeFromPreset(preset) {
   const now = new Date()
   const start = new Date(now)
   const end = new Date(now)
+  const minuteMatch = /^last-(\d+)-minutes$/.exec(preset)
+  if (minuteMatch) {
+    start.setTime(now.getTime() - (Number(minuteMatch[1]) * 60 * 1000))
+    return { start, end }
+  }
+  const hourMatch = /^last-(\d+)-hours?$/.exec(preset)
+  if (hourMatch) {
+    start.setTime(now.getTime() - (Number(hourMatch[1]) * 60 * 60 * 1000))
+    return { start, end }
+  }
+  const dayMatch = /^last-(\d+)-days$/.exec(preset)
+  if (dayMatch) {
+    start.setTime(now.getTime() - (Number(dayMatch[1]) * 24 * 60 * 60 * 1000))
+    return { start, end }
+  }
+
   if (preset === 'previous-month') {
     start.setUTCDate(1)
     start.setUTCMonth(start.getUTCMonth() - 1)
@@ -47,10 +73,13 @@ function getRangeFromPreset(preset) {
     end.setUTCHours(23, 59, 59, 999)
     return { start, end }
   }
-  if (preset === 'last-7-days') start.setUTCDate(start.getUTCDate() - 7)
-  else if (preset === 'last-14-days') start.setUTCDate(start.getUTCDate() - 14)
-  else if (preset === 'last-30-days') start.setUTCDate(start.getUTCDate() - 30)
-  else start.setUTCDate(1)
+
+  if (preset === 'last-90-days') {
+    start.setUTCDate(start.getUTCDate() - 90)
+    return { start, end }
+  }
+
+  start.setUTCDate(1)
   start.setUTCHours(0, 0, 0, 0)
   end.setUTCHours(23, 59, 59, 999)
   return { start, end }
@@ -125,19 +154,19 @@ function Section({ title, eyebrow, children, actions = null }) {
   )
 }
 
-function InlineButton({ children, onClick, currentTone = 'blue', href }) {
+function InlineButton({ children, onClick, currentTone = 'blue', href, disabled = false }) {
   const style = toneStyles(currentTone)
   const commonStyle = {
     borderRadius: 14,
-    border: `1px solid ${style.border}`,
-    background: style.bg,
-    color: style.label,
+    border: `1px solid ${disabled ? 'rgba(90,103,123,0.35)' : style.border}`,
+    background: disabled ? 'rgba(16,22,30,0.9)' : style.bg,
+    color: disabled ? '#6b7f98' : style.label,
     fontWeight: 800,
     fontSize: 12,
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
     padding: '10px 14px',
-    cursor: 'pointer',
+    cursor: disabled ? 'not-allowed' : 'pointer',
     textDecoration: 'none',
     display: 'inline-flex',
     alignItems: 'center',
@@ -148,7 +177,7 @@ function InlineButton({ children, onClick, currentTone = 'blue', href }) {
   }
 
   return (
-    <button onClick={onClick} style={commonStyle}>
+    <button onClick={onClick} style={commonStyle} disabled={disabled}>
       {children}
     </button>
   )
@@ -201,10 +230,16 @@ export default function HalfmannPerformanceReportView() {
   const [loadingMeta, setLoadingMeta] = useState(true)
   const [loadingReport, setLoadingReport] = useState(true)
   const [error, setError] = useState('')
-  const [preset, setPreset] = useState('current-month')
+  const [selectedPreset, setSelectedPreset] = useState('current-month')
   const [customStart, setCustomStart] = useState(toInputDate(getRangeFromPreset('current-month').start))
   const [customEnd, setCustomEnd] = useState(toInputDate(new Date()))
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [reportRequest, setReportRequest] = useState({
+    preset: 'current-month',
+    customStart: '',
+    customEnd: '',
+    sequence: 0,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -228,11 +263,15 @@ export default function HalfmannPerformanceReportView() {
 
   useEffect(() => {
     let cancelled = false
-    const derivedRange = preset === 'custom'
-      ? { start: customStart ? new Date(`${customStart}T00:00:00`) : null, end: customEnd ? new Date(`${customEnd}T23:59:59`) : null }
-      : getRangeFromPreset(preset)
+    const derivedRange = reportRequest.preset === 'custom'
+      ? {
+          start: reportRequest.customStart ? new Date(`${reportRequest.customStart}T00:00:00`) : null,
+          end: reportRequest.customEnd ? new Date(`${reportRequest.customEnd}T23:59:59`) : null,
+        }
+      : getRangeFromPreset(reportRequest.preset)
+
     const query = buildQueryString({
-      preset,
+      preset: reportRequest.preset,
       startAt: derivedRange.start?.toISOString?.(),
       endAt: derivedRange.end?.toISOString?.(),
     })
@@ -255,10 +294,23 @@ export default function HalfmannPerformanceReportView() {
       })
 
     return () => { cancelled = true }
-  }, [preset, customStart, customEnd, refreshNonce])
+  }, [reportRequest, refreshNonce])
 
   const isBusy = loadingMeta || loadingReport
   const controls = meta?.controls || { siteName: 'Halfmann 1214', units: [] }
+  const presetOptions = controls.presetOptions || FALLBACK_PRESETS
+  const isCustomPreset = selectedPreset === 'custom'
+  const canGenerate = selectedPreset !== 'custom' || (customStart && customEnd)
+
+  function handleGenerateReport() {
+    if (!canGenerate) return
+    setReportRequest({
+      preset: selectedPreset,
+      customStart,
+      customEnd,
+      sequence: Date.now(),
+    })
+  }
 
   const monthToDateCards = useMemo(() => {
     const mtd = report?.monthToDate
@@ -306,6 +358,7 @@ export default function HalfmannPerformanceReportView() {
           actions={(
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <InlineButton onClick={() => setRefreshNonce((value) => value + 1)}>Refresh</InlineButton>
+              <InlineButton onClick={handleGenerateReport} currentTone="green" disabled={!canGenerate}>Generate Report</InlineButton>
               <InlineButton href={report?.archives?.selectedReport?.xlsxDownloadUrl} currentTone="green">Download Current Workbook</InlineButton>
               <InlineButton href={report?.archives?.selectedReport?.jsonDownloadUrl} currentTone="blue">Download Current JSON</InlineButton>
               <InlineButton onClick={() => window.print()} currentTone="yellow">Print</InlineButton>
@@ -318,19 +371,26 @@ export default function HalfmannPerformanceReportView() {
               <div style={{ ...selectStyle, display: 'flex', alignItems: 'center' }}>{controls.siteName} well panel only</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Date Range Preset</label>
-              <select value={preset} onChange={(event) => setPreset(event.target.value)} style={selectStyle}>
-                {PRESETS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+              <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Performance Period</label>
+              <select value={selectedPreset} onChange={(event) => setSelectedPreset(event.target.value)} style={selectStyle}>
+                {presetOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Start Date</label>
-              <input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} style={selectStyle} disabled={preset !== 'custom'} />
+              <input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} style={selectStyle} disabled={!isCustomPreset} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>End Date</label>
-              <input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} style={selectStyle} disabled={preset !== 'custom'} />
+              <input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} style={selectStyle} disabled={!isCustomPreset} />
             </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
+              Selected period: <strong style={{ color: '#f4f8ff' }}>{presetOptions.find((option) => option.key === selectedPreset)?.label || 'Month to Date'}</strong>
+            </div>
+            <InlineButton onClick={handleGenerateReport} currentTone="green" disabled={!canGenerate}>Generate Report</InlineButton>
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -352,12 +412,12 @@ export default function HalfmannPerformanceReportView() {
           </div>
 
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            Halfmann reporting is currently hard-clamped to {report?.historyFloor?.localLabel || meta?.historyFloor?.localLabel || 'the new panel logic go-live timestamp'}, so no performance or optimization scoring uses older pre-install data. Month-to-date KPI cards reset on the first day of the month at midnight after that go-live floor, and every generated report is archived into the Halfmann Railway volume for download.
+            Halfmann reporting is currently hard-clamped to {report?.historyFloor?.localLabel || meta?.historyFloor?.localLabel || 'the new panel logic go-live timestamp'}, so no performance or optimization scoring uses older pre-install data. Month-to-date KPI cards reset on the first day of the month at midnight after that go-live floor, and scheduled daily, weekly, and monthly archives are stored in the Halfmann Railway volume for download.
           </div>
 
           {error ? <div style={{ color: '#fda4af', fontSize: 14 }}>{error}</div> : null}
           <div style={{ fontSize: 12, color: '#8ca0be' }}>
-            {isBusy ? 'Building report…' : `Last refresh ${formatDateTime(report?.fetchedAt)} | Samples ${report?.dataQuality?.sampleCount ?? '--'} | Stored reports ${storedReports.length} | Timezone ${report?.calendar?.timezone || meta?.calendar?.timezone || '--'}`}
+            {isBusy ? 'Building report...' : `Last refresh ${formatDateTime(report?.fetchedAt)} | Samples ${report?.dataQuality?.sampleCount ?? '--'} | Stored reports ${storedReports.length} | Timezone ${report?.calendar?.timezone || meta?.calendar?.timezone || '--'}`}
           </div>
         </Section>
 
@@ -367,7 +427,7 @@ export default function HalfmannPerformanceReportView() {
           </div>
         </Section>
 
-        <Section title="Selected Report Window" eyebrow={`${report?.reportWindow?.preset || preset} | ${formatDateTime(report?.reportWindow?.startAt)} to ${formatDateTime(report?.reportWindow?.endAt)}`}>
+        <Section title="Selected Report Window" eyebrow={`${report?.reportWindow?.preset || reportRequest.preset} | ${formatDateTime(report?.reportWindow?.startAt)} to ${formatDateTime(report?.reportWindow?.endAt)}`}>
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
             This section follows the selected date range, but it will never score anything earlier than {report?.historyFloor?.localLabel || meta?.historyFloor?.localLabel || 'the Halfmann logic go-live floor'}. Month-to-date KPI cards above stay pinned to the live calendar month after that floor.
           </div>
@@ -476,7 +536,7 @@ export default function HalfmannPerformanceReportView() {
 
         <Section title="Stored Reports" eyebrow="Archived In Railway Volume">
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            Current-month reports are automatically regenerated and stored in the Halfmann volume. Any report window opened on this page is also stored and can be downloaded again later.
+            Daily archives store the prior 24-hour day window, weekly archives store the prior 7-day window, monthly archives store the prior month, and every manually generated report is also saved here.
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={tableStyle}>
@@ -492,7 +552,7 @@ export default function HalfmannPerformanceReportView() {
                   <tr key={item.id}>
                     <td style={cellStyle}>{formatDateTime(item.generatedAt)}</td>
                     <td style={cellStyleStrong}>{item.label}</td>
-                    <td style={cellStyle}>{`${item.reportWindow?.startAt || '--'} → ${item.reportWindow?.endAt || '--'}`}</td>
+                    <td style={cellStyle}>{`${item.reportWindow?.startAt || '--'} -> ${item.reportWindow?.endAt || '--'}`}</td>
                     <td style={cellStyle}><a href={item.jsonDownloadUrl} style={{ color: '#7dd3fc' }}>Download JSON</a></td>
                     <td style={cellStyle}><a href={item.xlsxDownloadUrl} style={{ color: '#4ade80' }}>Download XLSX</a></td>
                   </tr>
