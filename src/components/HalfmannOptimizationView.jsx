@@ -44,6 +44,7 @@ function toneStyles(tone) {
 
 function scoreTone(score) {
   if (score >= 90) return 'green'
+  if (score >= 80) return 'blue'
   if (score >= 75) return 'yellow'
   if (score >= 60) return 'orange'
   return 'red'
@@ -51,22 +52,25 @@ function scoreTone(score) {
 
 function scoreLabel(score) {
   if (score >= 90) return 'Stable'
+  if (score >= 80) return 'Stable / Watch'
   if (score >= 75) return 'Watch'
-  if (score >= 60) return 'Tune Needed'
+  if (score >= 60) return 'Tune Only If Consequence Exists'
   return 'Investigate'
 }
 
-function evidenceBadge(live, historical, event) {
+function evidenceBadge({ live, historical, event, contradictory }) {
+  if (contradictory) return 'Contradictory Evidence'
   if (event) return 'Event Supported'
   if (historical) return 'Trend Supported'
   if (live) return 'Snapshot Only'
-  return 'Insufficient History'
+  return 'Insufficient Evidence'
 }
 
 function badgeTone(text) {
   if (text === 'Event Supported') return 'green'
   if (text === 'Trend Supported') return 'yellow'
   if (text === 'Snapshot Only') return 'blue'
+  if (text === 'Contradictory Evidence') return 'red'
   return 'orange'
 }
 
@@ -222,7 +226,19 @@ function buildHistoryFlags(history) {
   }
 }
 
-function makeSetting({ setting, action, amount, confidence, reason, whatToWatch, liveEvidence, historicalEvidence, eventEvidence, whenNotToChange }) {
+function makeSetting({
+  setting,
+  action,
+  amount,
+  confidence,
+  reason,
+  whatToWatch,
+  liveEvidence,
+  historicalEvidence,
+  eventEvidence,
+  contradictoryEvidence = false,
+  whenNotToChange,
+}) {
   return {
     setting,
     action,
@@ -233,7 +249,13 @@ function makeSetting({ setting, action, amount, confidence, reason, whatToWatch,
     liveEvidence,
     historicalEvidence,
     eventEvidence,
-    badge: evidenceBadge(liveEvidence, historicalEvidence, eventEvidence),
+    contradictoryEvidence,
+    badge: evidenceBadge({
+      live: liveEvidence,
+      historical: historicalEvidence,
+      event: eventEvidence,
+      contradictory: contradictoryEvidence,
+    }),
     whenNotToChange,
   }
 }
@@ -276,6 +298,7 @@ export default function HalfmannOptimizationView() {
     const wells = buildWellRows(panelData)
     const compressors = buildCompressorRows(panelData, unitDataRaw)
     const historyFlags = buildHistoryFlags(history)
+    const historyContext = history?.optimizationHistoryContext || {}
 
     const underTargetCount = wells.filter((well) => well.underTarget).length
     const overTargetCount = wells.filter((well) => well.overTarget).length
@@ -295,24 +318,42 @@ export default function HalfmannOptimizationView() {
     const maxCompressorMismatch = compressors.filter((unit) => !unit.standby && unit.mismatchPct != null).reduce((max, unit) => Math.max(max, unit.mismatchPct), 0)
     const dischargeSpread = compressors.filter((unit) => !unit.standby && unit.discharge != null).map((unit) => unit.discharge)
     const dischargeInstability = dischargeSpread.length >= 2 ? Math.max(...dischargeSpread) - Math.min(...dischargeSpread) : 0
-    const compressorSlowdownActive = dischargeOverrideActive || historyFlags.discharge
-    const mismatchPersistent = (history?.optimizationHistoryContext?.compressorMismatchPersistenceMinutes || 0) >= 10
-    const wellBelowPersistent = (history?.optimizationHistoryContext?.wellBelowTargetPersistenceMinutes || 0) >= 10
+    const compressorSlowdownActive = dischargeOverrideActive
+    const mismatchPersistent = (historyContext.compressorMismatchPersistenceMinutes || 0) >= 10
+    const wellBelowPersistent = (historyContext.wellBelowTargetPersistenceMinutes || 0) >= 10
+    const lowFlowRetriggerCount = historyContext.repeatedLowFlowRetriggerCount || 0
+    const dischargeRetriggerCount = historyContext.repeatedDischargeRetriggerCount || 0
+    const pressureRecoveryPattern = historyContext.pressureRecoveryPattern || ''
+    const noRetainedDischargePattern = /no retained discharge override events/i.test(pressureRecoveryPattern)
+    const allWellsMeeting = underTargetCount === 0 && overTargetCount === 0
+    const minorCompressorVariance = avgCompressorMismatch <= REVIEW_BAND && maxCompressorMismatch <= REVIEW_BAND
+    const consequenceExists = (
+      underTargetCount > 0 ||
+      recycleActive ||
+      dischargeOverrideActive ||
+      compressorSlowdownActive ||
+      (mismatchPersistent && maxCompressorMismatch > REVIEW_BAND) ||
+      (lowFlowRetriggerCount > 0 && wellBelowPersistent) ||
+      historyFlags.sacrifice ||
+      historyFlags.constraint
+    )
+    const lowFlowEventEvidenceSupported = historyFlags.lowFlow && lowFlowRetriggerCount > 0 && wellBelowPersistent && consequenceExists
+    const dischargeEventEvidenceSupported = historyFlags.discharge && !noRetainedDischargePattern && dischargeRetriggerCount > 0
 
     let compressorScore = 100
-    if (avgCompressorMismatch > MONITOR_BAND) compressorScore -= Math.min(25, (avgCompressorMismatch - MONITOR_BAND) * 2.5)
-    if (maxCompressorMismatch > REVIEW_BAND) compressorScore -= Math.min(18, (maxCompressorMismatch - REVIEW_BAND) * 2)
+    if (avgCompressorMismatch > MONITOR_BAND) compressorScore -= Math.min(16, (avgCompressorMismatch - MONITOR_BAND) * 1.8)
+    if (maxCompressorMismatch > REVIEW_BAND) compressorScore -= Math.min(16, (maxCompressorMismatch - REVIEW_BAND) * 1.5)
     if (dischargeInstability > 40) compressorScore -= 10
     if (recycleActive) compressorScore -= 12
     if (compressorSlowdownActive) compressorScore -= 16
     if (panelConstraintFlag) compressorScore -= 10
-    if (mismatchPersistent) compressorScore -= 10
+    if (mismatchPersistent && maxCompressorMismatch > REVIEW_BAND) compressorScore -= 10
     compressorScore = clamp(compressorScore, 20, 100)
 
     let wellScore = 100
-    wellScore -= Math.min(30, averageWellMismatch * 1.7)
+    wellScore -= Math.min(18, averageWellMismatch * 1.4)
     wellScore -= underTargetCount * 10
-    wellScore -= Math.max(0, overTargetCount - 1) * 4
+    wellScore -= overTargetCount * 4
     wellScore -= highChokeCount * 4
     wellScore -= restrictedCount * 10
     if (historyFlags.sacrifice && underTargetCount > 0) wellScore -= 8
@@ -338,11 +379,20 @@ export default function HalfmannOptimizationView() {
         why: 'Pressure protection is active, so adding more flow now risks chasing the pad into compressor slowdown or recycle.',
         whenNotToChange: 'Do not change well-allocation settings until recycle is closed and discharge protection is inactive.',
       }
+    } else if (allWellsMeeting && !recycleActive && !dischargeOverrideActive && minorCompressorVariance) {
+      primaryRecommendation = {
+        title: 'HOLD — system is stable. No panel setting change justified right now.',
+        action: 'Nothing at this time.',
+        amount: 'No change.',
+        confidence: 96,
+        why: 'All wells are meeting target, recycle is closed, discharge override is inactive, and compressor mismatch is minor.',
+        whenNotToChange: 'Do not adjust settings based on watch-level variance without persistence and consequence.',
+      }
     } else if (compressorScore > 90 && wellScore > 90) {
       primaryRecommendation = {
         title: 'HOLD',
         action: 'No tuning change justified.',
-        amount: '—',
+        amount: 'No change.',
         confidence: 94,
         why: 'Compressor stability, well stability, and pressure stability are all strong. No setting adjustment is supported by current evidence.',
         whenNotToChange: 'Do not change anything unless a meaningful mismatch persists and causes a real consequence.',
@@ -358,20 +408,24 @@ export default function HalfmannOptimizationView() {
       }
     } else if (compressorScore < 90 && wellScore >= 90) {
       primaryRecommendation = {
-        title: 'Review compressor-side stability first',
-        action: 'Monitor compressor mismatch or local compressor tuning before touching well allocation.',
-        amount: maxCompressorMismatch > INVESTIGATE_BAND ? 'Investigate >12% mismatch' : 'Monitor only',
-        confidence: mismatchPersistent ? 79 : 67,
-        why: 'Wells are broadly stable, so the unstable signal is coming from compressor loading or dispatch rather than well allocation.',
+        title: minorCompressorVariance ? 'HOLD — pad is stable; monitor compressor variance only.' : 'Review compressor-side stability first',
+        action: minorCompressorVariance ? 'Nothing at this time.' : 'Monitor compressor mismatch or local compressor tuning before touching well allocation.',
+        amount: minorCompressorVariance ? 'No change.' : maxCompressorMismatch > INVESTIGATE_BAND ? 'Investigate >12% mismatch' : 'Monitor only',
+        confidence: minorCompressorVariance ? 91 : mismatchPersistent ? 79 : 67,
+        why: minorCompressorVariance
+          ? 'Wells are stable and the compressor variance is still inside a watch-level band with no proven site consequence.'
+          : 'Wells are broadly stable, so the unstable signal is coming from compressor loading or dispatch rather than well allocation.',
         whenNotToChange: 'Do not change well-side timers while the compressor side is the weaker score.',
       }
     } else {
       primaryRecommendation = {
-        title: 'Stabilize compressor / discharge side before allocation changes',
-        action: 'Treat compressor and pressure stability as the first target.',
-        amount: 'No aggressive change now',
-        confidence: 74,
-        why: 'Both compressor and well scores are soft, which means the safest next move is to calm the compressor/discharge side before changing allocation behavior.',
+        title: consequenceExists ? 'Stabilize compressor / discharge side before allocation changes' : 'HOLD — pad is stable; monitor compressor variance only.',
+        action: consequenceExists ? 'Treat compressor and pressure stability as the first target.' : 'Nothing at this time.',
+        amount: consequenceExists ? 'No aggressive change now' : 'No change.',
+        confidence: consequenceExists ? 74 : 88,
+        why: consequenceExists
+          ? 'Both compressor and well scores are soft, which means the safest next move is to calm the compressor/discharge side before changing allocation behavior.'
+          : 'Watch-level variance exists, but there is no operational consequence to justify a panel setting change.',
         whenNotToChange: 'Do not stack multiple setting changes at once.',
       }
     }
@@ -380,89 +434,128 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Timer',
-        action: historyFlags.lowFlow && wellBelowPersistent ? 'Increase' : 'Hold',
-        amount: historyFlags.lowFlow && wellBelowPersistent ? '30–60 sec' : '—',
-        confidence: historyFlags.lowFlow && wellBelowPersistent ? 76 : 91,
-        reason: historyFlags.lowFlow && wellBelowPersistent
-          ? 'Low-flow events are repeating before the process has clearly recovered.'
-          : 'No repeated low-flow retriggers are visible in retained history.',
+        action: lowFlowEventEvidenceSupported ? 'Increase' : historyFlags.lowFlow ? 'Monitor' : 'Hold',
+        amount: lowFlowEventEvidenceSupported ? '30–60 sec' : '—',
+        confidence: lowFlowEventEvidenceSupported ? 76 : historyFlags.lowFlow ? 72 : 93,
+        reason: lowFlowEventEvidenceSupported
+          ? 'Low-flow events are repeating before recovery and they are tied to real consequence.'
+          : historyFlags.lowFlow
+            ? 'Low-flow history exists, but current wells are meeting target and no harmful retrigger pattern is proven.'
+            : 'No repeated low-flow retriggers are visible in retained history.',
         whatToWatch: 'Watch 2-minute and 5-minute well recovery after any timer change.',
-        liveEvidence: underTargetCount > 0,
+        liveEvidence: underTargetCount > 0 || lowFlowRetriggerCount > 0,
         historicalEvidence: historyFlags.lowFlow,
-        eventEvidence: historyFlags.lowFlow && wellBelowPersistent,
+        eventEvidence: lowFlowEventEvidenceSupported,
         whenNotToChange: 'Do not shorten the timer unless a sustained shortfall is clearly lagging too long.',
       }),
     )
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Amount',
-        action: recycleActive || dischargeOverrideActive ? 'Decrease' : underTargetCount > 0 && compressorScore >= 90 && !restrictedCount ? 'Monitor' : 'Hold',
+        action: recycleActive || dischargeOverrideActive ? 'Decrease' : 'Hold',
         amount: recycleActive || dischargeOverrideActive ? '5–10%' : '—',
-        confidence: recycleActive || dischargeOverrideActive ? 80 : 72,
+        confidence: recycleActive || dischargeOverrideActive ? 80 : 94,
         reason: recycleActive || dischargeOverrideActive
           ? 'Flow corrections are happening into pressure/recycle instability.'
-          : 'No current evidence shows low-flow bumps are causing a harmful consequence.',
+          : 'All wells are meeting target and no event history proves low-flow bumps are causing harmful consequence.',
         whatToWatch: 'Watch whether lower bump sizes reduce pressure/recycle upset without creating well shortfall.',
-        liveEvidence: recycleActive || dischargeOverrideActive || underTargetCount > 0,
+        liveEvidence: recycleActive || dischargeOverrideActive,
         historicalEvidence: historyFlags.lowFlow || historyFlags.discharge || historyFlags.recycle,
-        eventEvidence: historyFlags.lowFlow && (historyFlags.discharge || historyFlags.recycle),
+        eventEvidence: lowFlowEventEvidenceSupported && (historyFlags.discharge || historyFlags.recycle),
         whenNotToChange: 'Do not reduce the amount if wells are short and pressure protection is inactive.',
       }),
     )
     settings.push(
       makeSetting({
+        setting: 'Low Flow Override Max Change',
+        action: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 'Decrease' : 'Hold',
+        amount: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5–10%' : '—',
+        confidence: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 74 : 92,
+        reason: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive)
+          ? 'Low-flow corrections appear too aggressive for the current pressure response.'
+          : 'No supported event history proves max-change aggressiveness is hurting pad stability.',
+        whatToWatch: 'Watch for overshoot, pressure spikes, or recycle after each low-flow correction.',
+        liveEvidence: recycleActive || dischargeOverrideActive,
+        historicalEvidence: historyFlags.lowFlow,
+        eventEvidence: lowFlowEventEvidenceSupported,
+        whenNotToChange: 'Do not lower max change when wells are stable and pressure protection is inactive.',
+      }),
+    )
+    settings.push(
+      makeSetting({
         setting: 'Discharge Settle-Out Timer',
-        action: historyFlags.discharge && (history?.optimizationHistoryContext?.repeatedDischargeRetriggerCount || 0) > 0 ? 'Increase' : 'Hold',
-        amount: historyFlags.discharge && (history?.optimizationHistoryContext?.repeatedDischargeRetriggerCount || 0) > 0 ? '60–120 sec' : '—',
-        confidence: historyFlags.discharge ? 78 : 88,
-        reason: historyFlags.discharge && (history?.optimizationHistoryContext?.repeatedDischargeRetriggerCount || 0) > 0
+        action: dischargeEventEvidenceSupported ? 'Increase' : 'Hold',
+        amount: dischargeEventEvidenceSupported ? '60–120 sec' : '—',
+        confidence: dischargeEventEvidenceSupported ? 78 : noRetainedDischargePattern ? 90 : 86,
+        reason: dischargeEventEvidenceSupported
           ? 'Discharge events are clustering before pressure has settled.'
-          : 'No repeat discharge clustering is retained in history.',
+          : noRetainedDischargePattern
+            ? 'No retained discharge override events are available to support a timer change.'
+            : 'No repeat discharge clustering is retained in history.',
         whatToWatch: 'Watch whether discharge events space out after the increase.',
         liveEvidence: dischargeOverrideActive,
         historicalEvidence: historyFlags.discharge,
-        eventEvidence: historyFlags.discharge && (history?.optimizationHistoryContext?.repeatedDischargeRetriggerCount || 0) > 0,
+        eventEvidence: dischargeEventEvidenceSupported,
+        contradictoryEvidence: historyFlags.discharge && noRetainedDischargePattern,
         whenNotToChange: 'Do not increase it if high discharge is staying elevated too long before any correction.',
       }),
     )
     settings.push(
       makeSetting({
         setting: 'Discharge Override Amount',
-        action: dischargeOverrideActive && underTargetCount === 0 ? 'Hold' : dischargeOverrideActive && underTargetCount > 0 ? 'Decrease' : 'Hold',
+        action: dischargeOverrideActive && underTargetCount > 0 ? 'Decrease' : 'Hold',
         amount: dischargeOverrideActive && underTargetCount > 0 ? '5–10%' : '—',
-        confidence: dischargeOverrideActive ? 73 : 90,
+        confidence: dischargeOverrideActive && underTargetCount > 0 ? 73 : 92,
         reason: dischargeOverrideActive && underTargetCount > 0
           ? 'Pressure protection is active and wells are going short, which suggests the reduction may be a little too strong.'
-          : 'No supported evidence shows the discharge amount needs to move right now.',
+          : 'Hold unless discharge override is active now or retained events prove poor recovery.',
         whatToWatch: 'Watch discharge pressure recovery and whether wells stay inside target after the next event.',
         liveEvidence: dischargeOverrideActive,
         historicalEvidence: historyFlags.discharge,
-        eventEvidence: historyFlags.discharge && underTargetCount > 0,
+        eventEvidence: dischargeEventEvidenceSupported && underTargetCount > 0,
+        contradictoryEvidence: historyFlags.discharge && noRetainedDischargePattern,
         whenNotToChange: 'Do not increase the amount from one live snapshot.',
       }),
     )
     settings.push(
       makeSetting({
+        setting: 'Discharge Override Timer',
+        action: dischargeEventEvidenceSupported && dischargeOverrideActive ? 'Monitor' : 'Hold',
+        amount: '—',
+        confidence: dischargeEventEvidenceSupported ? 70 : 91,
+        reason: dischargeEventEvidenceSupported && dischargeOverrideActive
+          ? 'Monitor timer behavior only if high discharge remains sustained before correction.'
+          : 'Hold unless discharge override is active now or retained events prove poor timing.',
+        whatToWatch: 'Watch for nuisance early triggers or delayed correction during sustained high discharge.',
+        liveEvidence: dischargeOverrideActive,
+        historicalEvidence: historyFlags.discharge,
+        eventEvidence: false,
+        contradictoryEvidence: historyFlags.discharge && noRetainedDischargePattern,
+        whenNotToChange: 'Do not move the timer from isolated historical counts alone.',
+      }),
+    )
+    settings.push(
+      makeSetting({
         setting: 'Well Sacrifice Amount',
-        action: historyFlags.sacrifice && underTargetCount > 0 ? 'Investigate' : 'Hold',
-        amount: historyFlags.sacrifice && underTargetCount > 0 ? 'Manual validation first' : '—',
+        action: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Investigate' : 'Hold',
+        amount: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Manual validation first' : '—',
         confidence: historyFlags.sacrifice ? 70 : 92,
-        reason: historyFlags.sacrifice && underTargetCount > 0
+        reason: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists
           ? 'Sacrifice behavior is present, but priority-well protection needs validation before changing the amount.'
           : 'No active compressor constraint or failed priority-protection event supports a sacrifice amount change.',
         whatToWatch: 'Watch whether priority wells stay protected when lower-priority wells absorb reduction.',
         liveEvidence: underTargetCount > 0,
         historicalEvidence: historyFlags.sacrifice,
-        eventEvidence: historyFlags.sacrifice,
+        eventEvidence: historyFlags.sacrifice && consequenceExists,
         whenNotToChange: 'Do not move sacrifice amount without a real compressor constraint consequence.',
       }),
     )
     settings.push(
       makeSetting({
         setting: 'Compressor Flow PV Offset',
-        action: maxCompressorMismatch <= MONITOR_BAND ? 'Monitor' : maxCompressorMismatch <= REVIEW_BAND ? 'Hold' : maxCompressorMismatch <= INVESTIGATE_BAND ? 'Investigate' : 'Investigate',
+        action: maxCompressorMismatch <= REVIEW_BAND ? 'Monitor' : mismatchPersistent && consequenceExists ? 'Investigate' : 'Monitor',
         amount: '—',
-        confidence: mismatchPersistent ? 79 : 66,
+        confidence: mismatchPersistent && consequenceExists ? 79 : 84,
         reason: maxCompressorMismatch <= MONITOR_BAND
           ? 'Unit mismatch is inside the ±3% monitor band.'
           : maxCompressorMismatch <= REVIEW_BAND
@@ -473,13 +566,21 @@ export default function HalfmannOptimizationView() {
         whatToWatch: 'Watch persistence, not just magnitude, before changing offsets.',
         liveEvidence: maxCompressorMismatch > 0,
         historicalEvidence: historyFlags.dispatch,
-        eventEvidence: historyFlags.dispatch && mismatchPersistent,
+        eventEvidence: historyFlags.dispatch && mismatchPersistent && consequenceExists,
         whenNotToChange: 'Do not retune offsets off a one-off mismatch spike.',
       }),
     )
 
     const relevantSettings = settings.filter((item) =>
-      item.action !== 'Hold' || item.setting === 'Compressor Flow PV Offset' || item.setting === 'Low Flow Override Timer'
+      [
+        'Low Flow Override Timer',
+        'Low Flow Override Amount',
+        'Low Flow Override Max Change',
+        'Discharge Settle-Out Timer',
+        'Discharge Override Amount',
+        'Compressor Flow PV Offset',
+        'Well Sacrifice Amount',
+      ].includes(item.setting)
     )
 
     return {
