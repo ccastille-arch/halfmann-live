@@ -1,208 +1,29 @@
-const DEFAULT_SOURCE_KEY = 'service-compression-fleet'
-const DEFAULT_ACCESS_BASE = 'https://mlink-ingest-production.up.railway.app'
+import { getHalfmannHistoryPaths, loadHalfmannPanelMatchHistory } from './halfmannHistoryStore.js'
+
 const HALF_MANN_DEVICE_MANIFEST = [
-  { deviceId: '2507-501508', unitName: 'Halfmann Well Panel', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
-  { deviceId: '2507-501442', unitName: 'Unit 1396 (Standby)', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
-  { deviceId: '2504-504108', unitName: 'Unit 2127', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
-  { deviceId: '2507-500076', unitName: 'Unit 2128', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
-  { deviceId: '2504-504102', unitName: 'Unit 2129', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
-  { deviceId: '2507-500709', unitName: 'Unit 2130', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2507-501508', unitName: 'Halfmann Well Panel' },
+  { deviceId: '2507-501442', unitName: 'Unit 1396 (Standby)' },
+  { deviceId: '2504-504108', unitName: 'Unit 2127' },
+  { deviceId: '2507-500076', unitName: 'Unit 2128' },
+  { deviceId: '2504-504102', unitName: 'Unit 2129' },
+  { deviceId: '2507-500709', unitName: 'Unit 2130' },
 ]
-const HALF_MANN_DEFAULT_DEVICE_IDS = HALF_MANN_DEVICE_MANIFEST.map((unit) => unit.deviceId)
-const WELL_NAMES = ['214', '444', '334', '213', '333']
-const PANEL_ADDRESSES = {
-  totalDesiredSiteFlow: '420003',
-  wellCalculatedDesiredFlow: ['460050', '460052', '460054', '460056', '460058'],
-  wellFlow: ['460212', '460226', '460240', '460254', '460268'],
-  wellSetpoint: ['460220', '460234', '460248', '460262', '460276'],
-  wellChokePosition: ['400017', '400035', '400053', '400071', '400089'],
-  wellCasingPressure: ['400231', '400235', '400239', '400243', '400247'],
-  wellTubingPressure: ['400233', '400237', '400241', '400245', '400249'],
-}
-const UNIT_ADDRESSES = {
-  actualFlow: ['400656'],
-  suctionPressure: ['400505'],
-  dischargePressure: ['400510'],
-  loadedAutoSp: ['401018'],
-  engineSpeed: ['0x01000000', '16777216'],
-}
-const WELL_GAS_PRIORITY_ADDRESSES = ['461002', '461004', '461006', '461008', '461010']
-const WELL_OIL_PRIORITY_ADDRESSES = ['461036', '461038', '461040', '461042', '461044']
-const WELL_MAX_FLOW_ADDRESSES = ['461134', '461136', '461138', '461140', '461142']
-const UNIT_MAX_FLOW_ADDRESSES = ['461062', '461064', '461066', '461068']
-const UNIT_DESIRED_FLOW_ADDRESSES = ['460002', '460004', '460006', '460008']
-const UNIT_DEVICE_ORDER = ['2507-500076', '2507-500709', '2504-504108', '2504-504102']
 
-const STATUS_NO_DATA = new Set(['No Data'])
-const STATUS_RUNNING = new Set(['Running'])
-const STATUS_STOPPED = new Set(['Stopped', 'Faulted', 'WarmupCooldown', 'Unknown'])
+const WELL_CONFIG = [
+  { wellName: 'Well 214', key: '214', priority: 2 },
+  { wellName: 'Well 444', key: '444', priority: 5 },
+  { wellName: 'Well 334', key: '334', priority: 4 },
+  { wellName: 'Well 213', key: '213', priority: 3 },
+  { wellName: 'Well 333', key: '333', priority: 1 },
+]
 
-function normalizeRegisterAddress(value) {
-  return String(value ?? '').trim().toLowerCase()
-}
+const MAIN_COMPRESSOR_COUNT = 4
+const MATCH_TOLERANCE_PCT = 98
+const DEFAULT_SAMPLE_MS = 2000
+const MAX_CONTIGUOUS_SAMPLE_MS = 5000
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
-}
-
-function normalizeEnvValue(value) {
-  let normalized = String(value || '').trim()
-  if (!normalized) return ''
-  let previous = null
-  while (normalized && normalized !== previous) {
-    previous = normalized
-    normalized = normalized.replace(/^[`"'“”]+|[`"'“”]+$/g, '').trim()
-  }
-  return normalized
-}
-
-function normalizeToken(token) {
-  const normalized = normalizeEnvValue(token)
-  return normalized.replace(/^bearer\s+/i, '').trim()
-}
-
-function buildFleetHeaders(token) {
-  const normalized = normalizeToken(token)
-  return {
-    accept: 'application/json',
-    'content-type': 'application/json',
-    'x-api-token': normalized,
-    authorization: `Bearer ${normalized}`,
-  }
-}
-
-async function fetchFleetJson(baseUrl, token, path, options = {}) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...options,
-    headers: {
-      ...buildFleetHeaders(token),
-      ...(options.headers || {}),
-    },
-  })
-
-  const text = await response.text()
-  let data = text
-  try {
-    data = JSON.parse(text)
-  } catch {}
-
-  if (!response.ok) {
-    const error = new Error(typeof data === 'string' ? data : data?.error || response.statusText)
-    error.status = response.status
-    error.payload = data
-    throw error
-  }
-
-  return data
-}
-
-function dedupe(values) {
-  return [...new Set(values.filter(Boolean))]
-}
-
-function restrictToHalfmann(deviceIds) {
-  if (!deviceIds?.length) return [...HALF_MANN_DEFAULT_DEVICE_IDS]
-  const allowed = new Set(HALF_MANN_DEFAULT_DEVICE_IDS)
-  const filtered = deviceIds.filter((deviceId) => allowed.has(deviceId))
-  return filtered.length ? filtered : [...HALF_MANN_DEFAULT_DEVICE_IDS]
-}
-
-function buildHalfmannUnits(units = []) {
-  const byId = new Map(units.map((unit) => [unit.deviceId, unit]))
-  return HALF_MANN_DEVICE_MANIFEST.map((manifestUnit) => {
-    const catalogUnit = byId.get(manifestUnit.deviceId) || {}
-    return {
-      ...catalogUnit,
-      ...manifestUnit,
-      unitName: catalogUnit.unitName || manifestUnit.unitName,
-      groupKey: catalogUnit.groupKey || manifestUnit.groupKey,
-      groupPath: catalogUnit.groupPath || manifestUnit.groupPath,
-    }
-  })
-}
-
-function parseDeviceIds(value) {
-  if (!value) return []
-  if (Array.isArray(value)) return dedupe(value.flatMap((entry) => String(entry).split(',').map((part) => part.trim())))
-  return dedupe(String(value).split(',').map((part) => part.trim()))
-}
-
-function parseDateValue(value) {
-  if (!value) return null
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
-function toIsoOrNull(value) {
-  if (!value) return null
-  const parsed = value instanceof Date ? value : new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
-}
-
-function hoursBetween(startAt, endAt) {
-  if (!(startAt instanceof Date) || !(endAt instanceof Date)) return 0
-  return Math.max(0, (endAt.getTime() - startAt.getTime()) / 3600000)
-}
-
-function toTitle(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim()
-}
-
-function parseNumber(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  const normalized = String(value ?? '').trim()
-  if (!normalized || normalized === 'UNAVAILABLE' || normalized === 'INVALID') return null
-  const numeric = Number(normalized.replace(/,/g, ''))
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function parseBoolean(value) {
-  if (value == null) return null
-  const normalized = String(value).trim().toLowerCase()
-  if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
-  if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
-  return null
-}
-
-function getSnapshotDatapoints(snapshot) {
-  return Array.isArray(snapshot?.datapoints) ? snapshot.datapoints : []
-}
-
-function matchesAddress(datapoint, addresses) {
-  const normalized = normalizeRegisterAddress(datapoint?.address ?? datapoint?.addressStr ?? datapoint?.addressNumeric)
-  return addresses.some((address) => normalizeRegisterAddress(address) === normalized)
-}
-
-function findSnapshotDatapoint(snapshot, { addresses = [], labels = [] }) {
-  const datapoints = getSnapshotDatapoints(snapshot)
-  if (!datapoints.length) return null
-  if (addresses.length) {
-    const match = datapoints.find((datapoint) => matchesAddress(datapoint, addresses))
-    if (match) return match
-  }
-  if (labels.length) {
-    const labelSet = labels.map((entry) => String(entry).trim().toLowerCase())
-    const match = datapoints.find((datapoint) => {
-      const label = toTitle(datapoint.alias || datapoint.description || datapoint.name).toLowerCase()
-      return labelSet.includes(label)
-    })
-    if (match) return match
-  }
-  return null
-}
-
-function getSnapshotNumber(snapshot, config) {
-  const datapoint = findSnapshotDatapoint(snapshot, config)
-  if (!datapoint) return null
-  return parseNumber(datapoint.valueNumber ?? datapoint.valueText)
-}
-
-function getSnapshotText(snapshot, config) {
-  const datapoint = findSnapshotDatapoint(snapshot, config)
-  if (!datapoint) return null
-  const raw = datapoint.valueText ?? datapoint.valueNumber
-  const text = String(raw ?? '').trim()
-  return text || null
 }
 
 function average(values) {
@@ -211,611 +32,259 @@ function average(values) {
   return usable.reduce((sum, value) => sum + value, 0) / usable.length
 }
 
-function gradeFromPct(score, coveragePct = 100) {
-  if (coveragePct < 70) return 'D'
-  if (coveragePct < 50) return 'F'
-  if (score == null) return 'Incomplete'
-  if (score >= 93) return 'A'
-  if (score >= 85) return 'B'
-  if (score >= 75) return 'C'
-  if (score >= 65) return 'D'
-  return 'F'
+function toIso(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-function getReportHours(report) {
-  const summaryHours = Array.isArray(report?.summaries)
-    ? report.summaries.reduce((sum, item) => sum + (parseNumber(item.hours) || 0), 0)
-    : 0
-  if (summaryHours > 0) return summaryHours
-  const startAt = parseDateValue(report?.windowStart)
-  const endAt = parseDateValue(report?.windowEnd)
-  return hoursBetween(startAt, endAt)
-}
+function resolveDateRange({ preset = 'current-month', startAt, endAt }) {
+  if (startAt && endAt) return { startAt: new Date(startAt), endAt: new Date(endAt) }
 
-function collectStatusHours(reports) {
-  const totals = {}
-  for (const report of reports || []) {
-    for (const summary of report?.summaries || []) {
-      const key = summary?.statusKey || 'Unknown'
-      totals[key] = (totals[key] || 0) + (parseNumber(summary?.hours) || 0)
-    }
-  }
-  return totals
-}
+  const now = new Date()
+  const start = new Date(now)
+  const end = new Date(now)
 
-function listDetailRows(bundle) {
-  return (bundle?.reports || []).flatMap((report) =>
-    (report?.details || []).map((detail) => ({
-      report,
-      detail,
-      unit: bundle?.unit,
-      snapshot: bundle?.latestSnapshot,
-    })),
-  )
-}
-
-function classifyDetailEvent(detail) {
-  const reason = toTitle(detail?.reason || '')
-  const status = toTitle(detail?.statusLabel || '')
-  const combined = `${reason} ${status}`.toLowerCase()
-  if (!combined) return null
-  if (combined.includes('no data') || combined.includes('comm')) return 'Data Quality Issue'
-  if (combined.includes('recycle')) return 'Recycle Active'
-  if (combined.includes('recover')) return 'Recovery Complete'
-  if (combined.includes('oscillat') || combined.includes('hunting')) return 'Oscillation Detected'
-  if (combined.includes('stopped') || combined.includes('fault') || combined.includes('shutdown')) return 'Compressor Down'
-  if (combined.includes('suction') || combined.includes('discharge') || combined.includes('unload') || combined.includes('capacity') || combined.includes('flow')) {
-    return 'Compressor Constraint'
-  }
-  return null
-}
-
-function inferUnitMaxFlow(panelSnapshot, bundle, unitIndex) {
-  const fromPanel = unitIndex >= 0 ? getSnapshotNumber(panelSnapshot, { addresses: [UNIT_MAX_FLOW_ADDRESSES[unitIndex]] }) : null
-  return fromPanel ?? null
-}
-
-function getPriorityTier(rank) {
-  if (rank == null) return 'Unknown'
-  if (rank <= 2) return 'Tier 1'
-  if (rank === 3) return 'Tier 2'
-  return 'Tier 3'
-}
-
-function buildWellMetrics(panelSnapshot, runtimeAvailableHours) {
-  const wells = WELL_NAMES.map((name, index) => {
-    const desired = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellSetpoint[index]] })
-    const actual = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellFlow[index]] })
-    const calculatedDesired = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellCalculatedDesiredFlow[index]] })
-    const chokePosition = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellChokePosition[index]] })
-    const casingPressure = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellCasingPressure[index]] })
-    const tubingPressure = getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.wellTubingPressure[index]] })
-    const gasPriority = getSnapshotNumber(panelSnapshot, { addresses: [WELL_GAS_PRIORITY_ADDRESSES[index]] })
-    const oilPriority = getSnapshotNumber(panelSnapshot, { addresses: [WELL_OIL_PRIORITY_ADDRESSES[index]] })
-    const maxFlowRate = getSnapshotNumber(panelSnapshot, { addresses: [WELL_MAX_FLOW_ADDRESSES[index]] })
-    const target = calculatedDesired ?? desired
-    const flowMatchPct = actual != null && target != null && target > 0 ? clamp((actual / target) * 100, 0, 160) : null
-    const shortfall = actual != null && target != null ? Math.max(0, target - actual) : null
-    const aboveTarget = actual != null && target != null ? Math.max(0, actual - target) : null
-    const withinTolerance = actual != null && target != null ? actual >= target * 0.98 && actual <= target * 1.02 : null
-    const complianceGrade = gradeFromPct(flowMatchPct, runtimeAvailableHours > 0 ? 100 : 0)
-
-    return {
-      wellName: `Well ${name}`,
-      priorityTier: getPriorityTier(oilPriority ?? gasPriority),
-      gasPriority,
-      oilPriority,
-      desiredFlowAverage: target,
-      actualFlowAverage: actual,
-      flowMatchPct,
-      runtimeAvailableHours: runtimeAvailableHours || null,
-      meetingDesiredRateHours: null,
-      notMeetingDesiredRateHours: null,
-      meetingDesiredRatePct: withinTolerance == null ? null : withinTolerance ? 100 : 0,
-      timeAboveTargetHours: aboveTarget != null && aboveTarget > 0 ? null : 0,
-      timeBelowTargetHours: shortfall != null && shortfall > 0 ? null : 0,
-      longestBelowTargetDurationHours: null,
-      averageShortfallMmscfd: shortfall,
-      maximumShortfallMmscfd: shortfall,
-      compressorConstrainedCompliancePct: null,
-      sacrificeModeCompliancePct: null,
-      monthlyComplianceGrade: complianceGrade,
-      chokePosition,
-      chokeCommand: null,
-      casingPressure,
-      tubingPressure,
-      maxFlowRate,
-      evidenceBasis: 'latest-retained-telemetry',
-    }
-  })
-
-  return wells
-}
-
-function buildCompressorMetrics(bundles, panelSnapshot, siteDesiredFlow) {
-  return bundles.map((bundle) => {
-    const deviceId = bundle?.unit?.deviceId
-    const unitIndex = UNIT_DEVICE_ORDER.indexOf(deviceId)
-    const latestSnapshot = bundle?.latestSnapshot
-    const desiredFlow = unitIndex >= 0 ? getSnapshotNumber(panelSnapshot, { addresses: [UNIT_DESIRED_FLOW_ADDRESSES[unitIndex]] }) : null
-    const actualFlow = getSnapshotNumber(latestSnapshot, { addresses: UNIT_ADDRESSES.actualFlow, labels: ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV'] })
-    const suctionPressure = getSnapshotNumber(latestSnapshot, { addresses: UNIT_ADDRESSES.suctionPressure, labels: ['Suction Pressure', 'Stage 1 Suction Prs'] })
-    const dischargePressure = getSnapshotNumber(latestSnapshot, { addresses: UNIT_ADDRESSES.dischargePressure, labels: ['Discharge Pressure', 'Stage 3 Discharge Prs'] })
-    const loadedAutoSp = getSnapshotNumber(latestSnapshot, { addresses: UNIT_ADDRESSES.loadedAutoSp, labels: ['Loaded Auto Sp', 'Loaded Auto SP'] })
-    const rpm = getSnapshotNumber(latestSnapshot, { addresses: UNIT_ADDRESSES.engineSpeed, labels: ['RPM', 'Driver Speed', 'Engine Speed'] })
-    const maxFlowRate = inferUnitMaxFlow(panelSnapshot, bundle, unitIndex)
-    const commandMatchPct = actualFlow != null && desiredFlow != null && desiredFlow > 0 ? clamp((actualFlow / desiredFlow) * 100, 0, 160) : null
-    const utilizationPct = actualFlow != null && maxFlowRate != null && maxFlowRate > 0 ? clamp((actualFlow / maxFlowRate) * 100, 0, 160) : null
-    const belowDesired = actualFlow != null && desiredFlow != null && desiredFlow > 0 ? actualFlow < desiredFlow * 0.95 : null
-    const reportStatusHours = collectStatusHours(bundle?.reports || [])
-    const validHours = Object.entries(reportStatusHours)
-      .filter(([key]) => !STATUS_NO_DATA.has(key))
-      .reduce((sum, [, value]) => sum + value, 0)
-
-    return {
-      deviceId,
-      unitName: bundle?.unit?.unitName || bundle?.unit?.deviceId,
-      desiredFlow,
-      actualFlow,
-      suctionPressure,
-      dischargePressure,
-      loadedAutoSp,
-      rpm,
-      maxFlowRate,
-      commandMatchPct,
-      utilizationPct,
-      belowDesired,
-      runtimeHours: validHours || null,
-      isStandby: /standby/i.test(bundle?.unit?.unitName || ''),
-      siteDesiredFlow,
-      evidenceBasis: 'latest-retained-telemetry',
-    }
-  })
-}
-
-function buildCompressorEvents(compressorBundles, panelSnapshot, currentSiteSnapshot) {
-  const events = []
-  for (const bundle of compressorBundles) {
-    const deviceId = bundle?.unit?.deviceId
-    const unitIndex = UNIT_DEVICE_ORDER.indexOf(deviceId)
-    const unitMaxFlow = inferUnitMaxFlow(panelSnapshot, bundle, unitIndex)
-    const detailRows = listDetailRows(bundle)
-    for (let index = 0; index < detailRows.length; index += 1) {
-      const row = detailRows[index]
-      const eventType = classifyDetailEvent(row.detail)
-      if (!eventType) continue
-      const startAt = parseDateValue(row.detail?.eventTime || row.detail?.actualEventTime || row.report?.windowStart)
-      const durationHours = parseNumber(row.detail?.durationHours)
-      const endAt = startAt && durationHours != null ? new Date(startAt.getTime() + durationHours * 3600000) : parseDateValue(row.report?.windowEnd)
-      const nextRow = detailRows[index + 1]
-      const nextAt = parseDateValue(nextRow?.detail?.eventTime || nextRow?.detail?.actualEventTime)
-      const recoveryTimeHours = endAt && nextAt ? Math.max(0, (nextAt.getTime() - endAt.getTime()) / 3600000) : null
-
-      events.push({
-        eventTime: toIsoOrNull(startAt),
-        eventType,
-        durationHours: durationHours ?? (startAt && endAt ? hoursBetween(startAt, endAt) : null),
-        trigger: row.detail?.reason || row.detail?.statusLabel || 'Stored report detail',
-        wellsAffected: [],
-        compressorsAffected: [bundle?.unit?.unitName || bundle?.unit?.deviceId],
-        priorityProtectionResult: null,
-        sacrificeResult: null,
-        recycleResult: null,
-        recoveryTimeHours,
-        eventGrade: eventType === 'Data Quality Issue' ? 'Caution' : eventType === 'Compressor Down' ? 'Critical' : 'Review',
-        notes: row.detail?.notes || '',
-        estimatedCapacityLostMmscfd: unitMaxFlow != null && durationHours != null ? unitMaxFlow * durationHours : null,
-        desiredSiteFlowAtEvent: getSnapshotNumber(currentSiteSnapshot, { addresses: [PANEL_ADDRESSES.totalDesiredSiteFlow] }),
-        actualSiteFlowAtEvent: getSnapshotNumber(currentSiteSnapshot, { addresses: [PANEL_ADDRESSES.wellFlow[0], PANEL_ADDRESSES.wellFlow[1], PANEL_ADDRESSES.wellFlow[2], PANEL_ADDRESSES.wellFlow[3], PANEL_ADDRESSES.wellFlow[4]] }),
-        recycleActive: null,
-        pressureStable: null,
-        sacrificeModeActive: null,
-      })
-    }
+  if (preset === 'previous-month') {
+    start.setUTCDate(1)
+    start.setUTCMonth(start.getUTCMonth() - 1)
+    start.setUTCHours(0, 0, 0, 0)
+    end.setUTCDate(0)
+    end.setUTCHours(23, 59, 59, 999)
+    return { startAt: start, endAt: end }
   }
 
-  return events.sort((left, right) => String(right.eventTime || '').localeCompare(String(left.eventTime || '')))
+  if (preset === 'last-7-days') start.setUTCDate(start.getUTCDate() - 7)
+  else if (preset === 'last-14-days') start.setUTCDate(start.getUTCDate() - 14)
+  else if (preset === 'last-30-days') start.setUTCDate(start.getUTCDate() - 30)
+  else {
+    start.setUTCDate(1)
+  }
+  start.setUTCHours(0, 0, 0, 0)
+  end.setUTCHours(23, 59, 59, 999)
+  return { startAt: start, endAt: end }
 }
 
-function classifyPriorityProtection(wells, compressorConstrainedHours) {
-  const ranked = [...wells].sort((left, right) => (left.oilPriority ?? 999) - (right.oilPriority ?? 999))
-  const tier1 = ranked.filter((well) => well.priorityTier === 'Tier 1')
-  const lower = ranked.filter((well) => well.priorityTier !== 'Tier 1')
-  const tier1Compliance = tier1.length ? average(tier1.map((well) => well.flowMatchPct)) : null
-  const lowerAbsorption = lower.length ? average(lower.map((well) => Math.max(0, 100 - (well.flowMatchPct ?? 100)))) : null
-  const protectedHours = compressorConstrainedHours != null && tier1Compliance != null ? compressorConstrainedHours * (tier1Compliance / 100) : null
-  const notProtectedHours = compressorConstrainedHours != null && protectedHours != null ? Math.max(0, compressorConstrainedHours - protectedHours) : null
-  const score = clamp(
-    ((tier1Compliance ?? 0) * 0.7) + ((lowerAbsorption != null ? clamp(lowerAbsorption, 0, 100) : 0) * 0.3),
-    0,
-    100,
-  )
-  const bestWell = ranked.find((well) => well.flowMatchPct != null)
-  const worstWell = [...ranked].reverse().find((well) => well.flowMatchPct != null)
-
-  return {
-    score,
-    tier1CompliancePct: tier1Compliance,
-    lowerPriorityAbsorptionPct: lowerAbsorption,
-    protectedHours,
-    notProtectedHours,
-    bestProtectedWell: bestWell?.wellName || null,
-    worstProtectedWell: worstWell?.wellName || null,
-    evidenceBasis: 'current-priority-vs-latest-flow',
-  }
-}
-
-function buildDataQuality(panelBundle, bundles, requestedHours) {
-  const allReports = bundles.flatMap((bundle) => bundle?.reports || [])
-  const allStatusHours = bundles.map((bundle) => collectStatusHours(bundle?.reports || []))
-  const noDataHours = allStatusHours.reduce((sum, hours) => sum + (hours['No Data'] || 0), 0)
-  const runningHours = allStatusHours.reduce((sum, hours) => sum + (hours.Running || 0), 0)
-  const stoppedHours = allStatusHours.reduce((sum, hours) => sum + (hours.Stopped || 0) + (hours.Faulted || 0), 0)
-  const commsLossHours = bundles.flatMap(listDetailRows).reduce((sum, row) => {
-    const text = `${row.detail?.reason || ''} ${row.detail?.statusLabel || ''}`.toLowerCase()
-    return sum + (text.includes('comm') || text.includes('no data') ? (parseNumber(row.detail?.durationHours) || 0) : 0)
-  }, 0)
-  const validHours = Math.max(0, Math.max(runningHours + stoppedHours, requestedHours) - noDataHours)
-  const validDataCoveragePct = requestedHours > 0 ? clamp((validHours / requestedHours) * 100, 0, 100) : null
-
-  return {
-    validDataCoveragePct,
-    missingTelemetryHours: noDataHours || null,
-    invalidSampleHours: null,
-    commsLossHours: commsLossHours || null,
-    excludedOfflineHours: stoppedHours || null,
-    sampleCount: allReports.length,
-    panelSnapshotAt: panelBundle?.latestSnapshot?.capturedAt || null,
-    evidenceBasis: 'stored-run-reports-plus-latest-snapshot',
-  }
-}
-
-function buildNarrative({ siteSummary, priorityProtection, dataQuality, compressorEvents, sacrificeEvents, wells }) {
-  const lines = []
-  lines.push(`During the selected reporting period, WellLogic maintained an overall target-compliance score of ${siteSummary.overallWellTargetCompliancePct != null ? siteSummary.overallWellTargetCompliancePct.toFixed(1) : '--'}%.`)
-  lines.push(`The site experienced ${siteSummary.compressorConstrainedRuntimeHours != null ? siteSummary.compressorConstrainedRuntimeHours.toFixed(1) : '--'} hours of compressor-constrained runtime based on retained run-report evidence.`)
-  lines.push(`Priority wells maintained ${priorityProtection.tier1CompliancePct != null ? priorityProtection.tier1CompliancePct.toFixed(1) : '--'}% compliance on the latest retained priority-vs-flow evidence, while lower-priority wells absorbed ${priorityProtection.lowerPriorityAbsorptionPct != null ? priorityProtection.lowerPriorityAbsorptionPct.toFixed(1) : '--'}% of the current visible mismatch burden.`)
-  lines.push(`Recycle-free runtime is ${siteSummary.recycleFreeRuntimePct != null ? `${siteSummary.recycleFreeRuntimePct.toFixed(1)}%` : 'not yet provable from retained historical valve telemetry'}, and data coverage for this report is ${dataQuality.validDataCoveragePct != null ? `${dataQuality.validDataCoveragePct.toFixed(1)}%` : '--'}.`)
-  if ((compressorEvents || []).length > 0) {
-    lines.push(`The retained event history captured ${compressorEvents.length} compressor-side events, which were used to evaluate recovery behavior and runtime availability.`)
-  }
-  if ((sacrificeEvents || []).length === 0) {
-    lines.push('Historical sacrifice-mode duration is currently evidence-limited in the retained API payload, so the page uses current priority-protection and latest flow state instead of inventing unsupported monthly hours.')
-  }
-  if (wells.some((well) => well.meetingDesiredRateHours == null)) {
-    lines.push('Per-well monthly hours below/above target are shown only when the retained API exposes enough historical well-allocation telemetry; otherwise those cells remain evidence-limited instead of estimated.')
-  }
-  return {
-    summary: lines.join(' '),
-    recommendations: [
-      siteSummary.compressorConstrainedRuntimeHours > 0 ? 'Use compressor-constrained event review to validate standby dispatch timing and recovery behavior.' : 'No major compressor-constrained runtime was retained in the selected window.',
-      priorityProtection.score < 90 ? 'Review lower-priority absorption behavior and verify that Tier 1 wells remain protected during constrained periods.' : 'Priority protection is strong on the retained evidence.',
-      dataQuality.validDataCoveragePct != null && dataQuality.validDataCoveragePct < 85 ? 'Improve retained telemetry coverage before using the monthly score as a commercial proof point.' : 'Data coverage is credible enough to support executive reporting.',
-    ],
-  }
-}
-
-function buildMarketingKpis(siteSummary, priorityProtection, dataQuality) {
-  return [
-    {
-      label: 'Priority Wells Protected',
-      value: priorityProtection.tier1CompliancePct,
-      suffix: '%',
-      tone: priorityProtection.tier1CompliancePct != null && priorityProtection.tier1CompliancePct >= 95 ? 'green' : 'orange',
-      statement: priorityProtection.tier1CompliancePct != null
-        ? `Priority wells maintained ${priorityProtection.tier1CompliancePct.toFixed(1)}% compliance on the retained protection evidence.`
-        : 'Historical priority-protection evidence is limited.',
-    },
-    {
-      label: 'Intelligent Sacrifice',
-      value: priorityProtection.lowerPriorityAbsorptionPct,
-      suffix: '%',
-      tone: priorityProtection.lowerPriorityAbsorptionPct != null && priorityProtection.lowerPriorityAbsorptionPct >= 60 ? 'green' : 'yellow',
-      statement: priorityProtection.lowerPriorityAbsorptionPct != null
-        ? `Lower-priority wells absorbed ${priorityProtection.lowerPriorityAbsorptionPct.toFixed(1)}% of the visible mismatch burden.`
-        : 'Sacrifice absorption cannot be proven without retained historical allocation telemetry.',
-    },
-    {
-      label: 'Reduced Operator Burden',
-      value: siteSummary.stableAllocationRuntimePct,
-      suffix: '%',
-      tone: siteSummary.stableAllocationRuntimePct != null && siteSummary.stableAllocationRuntimePct >= 85 ? 'green' : 'blue',
-      statement: siteSummary.stableAllocationRuntimePct != null
-        ? `Stable autonomous operation score is ${siteSummary.stableAllocationRuntimePct.toFixed(1)}% on available evidence.`
-        : 'Stable autonomous runtime is currently evidence-limited.',
-    },
-    {
-      label: 'Recycle Avoidance',
-      value: siteSummary.recycleFreeRuntimePct,
-      suffix: '%',
-      tone: siteSummary.recycleFreeRuntimePct != null && siteSummary.recycleFreeRuntimePct >= 90 ? 'green' : 'blue',
-      statement: siteSummary.recycleFreeRuntimePct != null
-        ? `Recycle-free runtime held at ${siteSummary.recycleFreeRuntimePct.toFixed(1)}%.`
-        : 'Historical recycle runtime is not retained strongly enough for a monthly percentage.',
-    },
-    {
-      label: 'Stable Recovery',
-      value: siteSummary.averageRecoveryTimeHours,
-      suffix: ' hrs',
-      tone: siteSummary.averageRecoveryTimeHours != null && siteSummary.averageRecoveryTimeHours <= 2 ? 'green' : 'yellow',
-      statement: siteSummary.averageRecoveryTimeHours != null
-        ? `Average recovery time after retained compressor events was ${siteSummary.averageRecoveryTimeHours.toFixed(2)} hours.`
-        : 'Recovery-time evidence is limited in the selected window.',
-    },
-    {
-      label: 'Injection Reliability',
-      value: siteSummary.overallWellTargetCompliancePct,
-      suffix: '%',
-      tone: siteSummary.overallWellTargetCompliancePct != null && siteSummary.overallWellTargetCompliancePct >= 90 ? 'green' : 'orange',
-      statement: siteSummary.overallWellTargetCompliancePct != null
-        ? `Overall well target compliance scored ${siteSummary.overallWellTargetCompliancePct.toFixed(1)}% on the retained evidence set.`
-        : 'Injection reliability cannot be fully scored without historical well-allocation telemetry.',
-    },
-    {
-      label: 'Constraint Transparency',
-      value: dataQuality.validDataCoveragePct,
-      suffix: '%',
-      tone: dataQuality.validDataCoveragePct != null && dataQuality.validDataCoveragePct >= 85 ? 'green' : 'yellow',
-      statement: dataQuality.validDataCoveragePct != null
-        ? `Valid retained report coverage was ${dataQuality.validDataCoveragePct.toFixed(1)}%.`
-        : 'Coverage score unavailable.',
-    },
-    {
-      label: 'Autonomous Allocation Stability',
-      value: siteSummary.optimizationEffectivenessScorePct,
-      suffix: '%',
-      tone: siteSummary.optimizationEffectivenessScorePct != null && siteSummary.optimizationEffectivenessScorePct >= 85 ? 'green' : 'yellow',
-      statement: siteSummary.optimizationEffectivenessScorePct != null
-        ? `The composite optimization score is ${siteSummary.optimizationEffectivenessScorePct.toFixed(1)}%.`
-        : 'Composite optimization score is evidence-limited.',
-    },
-  ]
-}
-
-function buildEventReplay(compressorEvents, sacrificeEvents) {
-  return [...compressorEvents, ...sacrificeEvents].sort((left, right) => String(right.eventTime || '').localeCompare(String(left.eventTime || '')))
-}
-
-function buildSiteSummary({ panelSnapshot, wells, compressorMetrics, compressorEvents, priorityProtection, dataQuality, requestedHours }) {
-  const currentWellCompliance = wells.filter((well) => well.flowMatchPct != null)
-  const overallWellTargetCompliancePct = currentWellCompliance.length ? average(currentWellCompliance.map((well) => well.flowMatchPct)) : null
-  const compressorConstrainedRuntimeHours = compressorEvents
-    .filter((event) => event.eventType === 'Compressor Constraint' || event.eventType === 'Compressor Down')
-    .reduce((sum, event) => sum + (event.durationHours || 0), 0)
-  const recycleFreeRuntimePct = null
-  const stableAllocationRuntimePct = getSnapshotNumber(panelSnapshot, { addresses: ['420116'] })
-  const siteFlowAlignmentPct = getSnapshotNumber(panelSnapshot, { addresses: ['420101'] }) ?? overallWellTargetCompliancePct
-  const stableCompressorLoadingPct = average(compressorMetrics.map((metric) => metric.commandMatchPct))
-  const pressureLimitedHours = compressorEvents
-    .filter((event) => String(event.trigger || '').toLowerCase().includes('discharge') || String(event.trigger || '').toLowerCase().includes('suction'))
-    .reduce((sum, event) => sum + (event.durationHours || 0), 0)
-  const averageRecoveryTimeHours = average(compressorEvents.map((event) => event.recoveryTimeHours))
-  const optimizationEffectivenessScorePct = clamp(
-    average([
-      overallWellTargetCompliancePct,
-      priorityProtection.score,
-      stableAllocationRuntimePct,
-      stableCompressorLoadingPct,
-      dataQuality.validDataCoveragePct,
-    ].filter((value) => value != null)) || 0,
-    0,
-    100,
-  )
-  const grade = gradeFromPct(optimizationEffectivenessScorePct, dataQuality.validDataCoveragePct ?? 0)
-
-  return {
-    overallWellTargetCompliancePct,
-    priorityWellProtectionScorePct: priorityProtection.score,
-    compressorConstrainedRuntimeHours: compressorConstrainedRuntimeHours || null,
-    sacrificeModeRuntimeHours: null,
-    wellBelowDesiredRateHours: null,
-    stableAllocationRuntimePct,
-    recycleFreeRuntimePct,
-    optimizationEffectivenessScorePct,
-    monthlyPerformanceGrade: grade,
-    compressorDispatchMatchPct: stableCompressorLoadingPct,
-    compressorCapacityUtilizationPct: average(compressorMetrics.map((metric) => metric.utilizationPct)),
-    wellConstrainedHours: null,
-    pressureLimitedHours: pressureLimitedHours || null,
-    recycleActiveHours: null,
-    averageRecoveryTimeHours,
-    siteFlowAlignmentPct,
-    totalRequestedHours: requestedHours,
-    evidenceBasis: {
-      wellCompliance: 'latest-retained-telemetry',
-      compressorConstraint: 'stored-run-report-details',
-      recycle: 'historical-valve-telemetry-unavailable',
-      stability: stableAllocationRuntimePct != null ? 'panel-derived-score' : 'unavailable',
-    },
-  }
-}
-
-function buildControlMeta(units, defaultDeviceIds) {
-  const halfmannUnits = buildHalfmannUnits(units)
+function buildControlMeta() {
   return {
     siteName: 'Halfmann 1214',
-    units: halfmannUnits.map((unit) => ({
-      deviceId: unit.deviceId,
-      unitName: unit.unitName,
-      groupKey: unit.groupKey || null,
-      groupPath: unit.groupPath || null,
-      selectedByDefault: defaultDeviceIds.includes(unit.deviceId),
+    units: HALF_MANN_DEVICE_MANIFEST.map((unit) => ({
+      ...unit,
+      selectedByDefault: true,
     })),
-    groups: [
-      {
-        groupKey: 'halfmann-1214',
-        groupPath: 'Halfmann 1214',
-        label: 'Halfmann 1214',
-      },
-    ],
-    defaultDeviceIds,
+    defaultDeviceIds: HALF_MANN_DEVICE_MANIFEST.map((unit) => unit.deviceId),
   }
 }
 
-function detectDefaultDeviceIds(units, requestedDeviceIds) {
-  if (requestedDeviceIds.length) return restrictToHalfmann(requestedDeviceIds)
-  return [...HALF_MANN_DEFAULT_DEVICE_IDS]
+function getDurationHours(currentRecord, nextRecord, reportEndAt) {
+  const currentTs = new Date(currentRecord.ts).getTime()
+  const nextTs = nextRecord ? new Date(nextRecord.ts).getTime() : new Date(reportEndAt).getTime()
+  const rawDurationMs = Number.isFinite(nextTs - currentTs) && nextTs > currentTs ? (nextTs - currentTs) : DEFAULT_SAMPLE_MS
+  const durationMs = rawDurationMs > 0 && rawDurationMs <= MAX_CONTIGUOUS_SAMPLE_MS ? rawDurationMs : DEFAULT_SAMPLE_MS
+  return durationMs / 3600000
 }
 
-async function queryBundles({ baseUrl, token, sourceKey, deviceIds, startAt, endAt, requestedDays }) {
-  const payload = await fetchFleetJson(baseUrl, token, `/api/access/sources/${encodeURIComponent(sourceKey)}/query`, {
-    method: 'POST',
-    body: JSON.stringify({
-      deviceIds,
-      includeLatestSnapshot: true,
-      includeReports: true,
-      includeMlContext: true,
-      reportLimit: Math.min(90, Math.max(7, Math.ceil(requestedDays) + 2)),
-      lookbackDays: clamp(Math.ceil(requestedDays), 1, 30),
-      ...(startAt ? { startAt: toIsoOrNull(startAt) } : {}),
-      ...(endAt ? { endAt: toIsoOrNull(endAt) } : {}),
-    }),
+function summarizeWellRuntime(records, reportEndAt) {
+  const totals = Object.fromEntries(WELL_CONFIG.map((well) => [well.key, {
+    wellName: well.wellName,
+    priority: well.priority,
+    validHours: 0,
+    meetingHours: 0,
+    belowHours: 0,
+    weightedMatch: 0,
+    sampleCount: 0,
+  }]))
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    const durationHours = getDurationHours(record, records[index + 1], reportEndAt)
+    for (const well of WELL_CONFIG) {
+      const match = record.matches?.[well.key]
+      if (match == null || !Number.isFinite(match)) continue
+      const bucket = totals[well.key]
+      bucket.validHours += durationHours
+      bucket.weightedMatch += match * durationHours
+      bucket.sampleCount += 1
+      if (match >= MATCH_TOLERANCE_PCT) bucket.meetingHours += durationHours
+      else bucket.belowHours += durationHours
+    }
+  }
+
+  const wells = WELL_CONFIG.map((well) => {
+    const bucket = totals[well.key]
+    const avgMatchPct = bucket.validHours > 0 ? bucket.weightedMatch / bucket.validHours : null
+    const runtimePct = bucket.validHours > 0 ? (bucket.meetingHours / bucket.validHours) * 100 : null
+    return {
+      wellName: bucket.wellName,
+      priorityRank: bucket.priority,
+      averageMatchPct: avgMatchPct,
+      runtimeMeetingPct: runtimePct,
+      meetingHours: bucket.meetingHours || null,
+      belowHours: bucket.belowHours || null,
+      validHours: bucket.validHours || null,
+      sampleCount: bucket.sampleCount,
+    }
   })
-  return payload
-}
-
-async function getCatalog(baseUrl, token, sourceKey, groupKey) {
-  const params = new URLSearchParams({ page: '1', pageSize: '500' })
-  if (groupKey) params.set('groupKey', groupKey)
-  const payload = await fetchFleetJson(baseUrl, token, `/api/access/sources/${encodeURIComponent(sourceKey)}/units?${params.toString()}`)
-  return Array.isArray(payload?.units) ? payload.units : []
-}
-
-export async function getPerformanceReportMeta({
-  accessBase = DEFAULT_ACCESS_BASE,
-  apiToken,
-  sourceKey = DEFAULT_SOURCE_KEY,
-  groupKey,
-} = {}) {
-  const token = normalizeToken(apiToken)
-  if (!token) {
-    const error = new Error('MLINK_API_TOKEN not configured')
-    error.status = 503
-    throw error
-  }
-
-  const units = buildHalfmannUnits((await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
-    HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
-  ))
-  const defaultDeviceIds = detectDefaultDeviceIds(units, [])
 
   return {
+    tolerancePct: MATCH_TOLERANCE_PCT,
+    wells,
+    overallRuntimeMeetingPct: average(wells.map((well) => well.runtimeMeetingPct)),
+    overallAverageMatchPct: average(wells.map((well) => well.averageMatchPct)),
+  }
+}
+
+function isConstraintActive(record) {
+  if (record.flowTargetBeingReduced === true) return true
+  if (record.compressorLimited === true) return true
+  if (record.runningCompressors != null && record.runningCompressors < MAIN_COMPRESSOR_COUNT) return true
+  if (
+    record.totalAscCompressorFlow != null &&
+    record.totalDesiredSiteFlow != null &&
+    Number.isFinite(record.totalAscCompressorFlow) &&
+    Number.isFinite(record.totalDesiredSiteFlow) &&
+    record.totalAscCompressorFlow + 0.05 < record.totalDesiredSiteFlow
+  ) {
+    return true
+  }
+  return false
+}
+
+function summarizePrioritization(records, reportEndAt) {
+  let totalWeightedScore = 0
+  let totalHours = 0
+  let constrainedHours = 0
+  let autoPerfectHours = 0
+
+  const perWell = Object.fromEntries(WELL_CONFIG.map((well) => [well.key, {
+    wellName: well.wellName,
+    priorityRank: well.priority,
+    constrainedProtectedHours: 0,
+    constrainedShortHours: 0,
+    constrainedValidHours: 0,
+  }]))
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    const durationHours = getDurationHours(record, records[index + 1], reportEndAt)
+    const constrained = isConstraintActive(record)
+    totalHours += durationHours
+
+    if (!constrained) {
+      totalWeightedScore += 100 * durationHours
+      autoPerfectHours += durationHours
+      continue
+    }
+
+    constrainedHours += durationHours
+    const weightedSamples = []
+    let samplePenalty = 0
+
+    for (const well of WELL_CONFIG) {
+      const match = record.matches?.[well.key]
+      if (match == null || !Number.isFinite(match)) continue
+      const weight = 6 - well.priority
+      weightedSamples.push({ match, weight, priority: well.priority, key: well.key })
+
+      const wellBucket = perWell[well.key]
+      wellBucket.constrainedValidHours += durationHours
+      if (match >= MATCH_TOLERANCE_PCT) wellBucket.constrainedProtectedHours += durationHours
+      else wellBucket.constrainedShortHours += durationHours
+    }
+
+    if (!weightedSamples.length) continue
+
+    for (const sample of weightedSamples) {
+      const lowerPriorityBetter = weightedSamples.some((other) =>
+        other.priority > sample.priority &&
+        other.match > sample.match + 2 &&
+        sample.match < MATCH_TOLERANCE_PCT,
+      )
+      if (lowerPriorityBetter) samplePenalty += 6
+    }
+
+    const sampleScore = clamp(
+      (weightedSamples.reduce((sum, sample) => sum + sample.match * sample.weight, 0) /
+        weightedSamples.reduce((sum, sample) => sum + sample.weight, 0)) - samplePenalty,
+      0,
+      100,
+    )
+
+    totalWeightedScore += sampleScore * durationHours
+  }
+
+  const scorePct = totalHours > 0 ? totalWeightedScore / totalHours : null
+  return {
+    scorePct,
+    constrainedRuntimeHours: constrainedHours || null,
+    autoPerfectRuntimeHours: autoPerfectHours || null,
+    ruleNote: 'Priority reliability only scores constrained or sacrifice periods. All unconstrained time auto-scores 100% by design.',
+    wells: WELL_CONFIG.map((well) => {
+      const bucket = perWell[well.key]
+      return {
+        wellName: bucket.wellName,
+        priorityRank: bucket.priorityRank,
+        protectedPctDuringConstraint: bucket.constrainedValidHours > 0
+          ? (bucket.constrainedProtectedHours / bucket.constrainedValidHours) * 100
+          : null,
+        shortHoursDuringConstraint: bucket.constrainedShortHours || null,
+        constrainedValidHours: bucket.constrainedValidHours || null,
+      }
+    }),
+  }
+}
+
+export async function getPerformanceReportMeta() {
+  const historyPaths = getHalfmannHistoryPaths()
+  return {
     fetchedAt: new Date().toISOString(),
-    sourceKey,
-    accessBase,
-    controls: buildControlMeta(units, defaultDeviceIds),
+    controls: buildControlMeta(),
+    storage: {
+      historyDir: historyPaths.historyDir,
+      panelMatchHistoryPath: historyPaths.panelMatchHistoryPath,
+      rawHistoryPath: historyPaths.rawHistoryPath,
+    },
   }
 }
 
 export async function generatePerformanceReport({
-  accessBase = DEFAULT_ACCESS_BASE,
-  apiToken,
-  sourceKey = DEFAULT_SOURCE_KEY,
-  deviceIds = [],
   startAt,
   endAt,
-  groupKey,
   preset = 'current-month',
 } = {}) {
-  const token = normalizeToken(apiToken)
-  if (!token) {
-    const error = new Error('MLINK_API_TOKEN not configured')
-    error.status = 503
-    throw error
-  }
-
-  const rangeStart = startAt instanceof Date ? startAt : parseDateValue(startAt) || new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
-  const rangeEnd = endAt instanceof Date ? endAt : parseDateValue(endAt) || new Date()
-  const requestedDays = Math.max(1, hoursBetween(rangeStart, rangeEnd) / 24)
-  const units = buildHalfmannUnits((await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
-    HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
-  ))
-  const selectedDeviceIds = detectDefaultDeviceIds(units, parseDeviceIds(deviceIds))
-  const queryResult = await queryBundles({
-    baseUrl: accessBase,
-    token,
-    sourceKey,
-    deviceIds: selectedDeviceIds,
-    startAt: rangeStart,
-    endAt: rangeEnd,
-    requestedDays,
-  })
-
-  const bundles = Array.isArray(queryResult?.units) ? queryResult.units : []
-  const panelBundle = bundles.find((bundle) => bundle?.unit?.deviceId === '2507-501508' || /panel/i.test(bundle?.unit?.unitName || '')) || bundles[0] || null
-  const panelSnapshot = panelBundle?.latestSnapshot || null
-  const compressorBundles = bundles.filter((bundle) => bundle?.unit?.deviceId !== panelBundle?.unit?.deviceId)
-  const requestedHours = hoursBetween(rangeStart, rangeEnd)
-
-  const wells = buildWellMetrics(panelSnapshot, requestedHours)
-  const compressorMetrics = buildCompressorMetrics(compressorBundles, panelSnapshot, getSnapshotNumber(panelSnapshot, { addresses: [PANEL_ADDRESSES.totalDesiredSiteFlow] }))
-  const compressorEvents = buildCompressorEvents(compressorBundles, panelSnapshot, panelSnapshot)
-  const sacrificeEvents = []
-  const priorityProtection = classifyPriorityProtection(wells, compressorEvents
-    .filter((event) => event.eventType === 'Compressor Constraint' || event.eventType === 'Compressor Down')
-    .reduce((sum, event) => sum + (event.durationHours || 0), 0))
-  const dataQuality = buildDataQuality(panelBundle, bundles, requestedHours)
-  const siteSummary = buildSiteSummary({
-    panelSnapshot,
-    wells,
-    compressorMetrics,
-    compressorEvents,
-    priorityProtection,
-    dataQuality,
-    requestedHours,
-  })
-  const marketingKpis = buildMarketingKpis(siteSummary, priorityProtection, dataQuality)
-  const eventReplay = buildEventReplay(compressorEvents, sacrificeEvents)
-  const narrative = buildNarrative({
-    siteSummary,
-    priorityProtection,
-    dataQuality,
-    compressorEvents,
-    sacrificeEvents,
-    wells,
-  })
+  const range = resolveDateRange({ preset, startAt, endAt })
+  const records = loadHalfmannPanelMatchHistory({ startAt: range.startAt, endAt: range.endAt, includeFallback: false })
+  const runtime = summarizeWellRuntime(records, range.endAt)
+  const prioritization = summarizePrioritization(records, range.endAt)
+  const firstRecord = records[0] || null
+  const lastRecord = records[records.length - 1] || null
+  const validCoveragePct = runtime.wells.length
+    ? average(runtime.wells.map((well) => (well.runtimeMeetingPct != null ? 100 : 0)))
+    : null
 
   return {
     fetchedAt: new Date().toISOString(),
-    sourceKey,
-    accessBase,
     reportWindow: {
+      startAt: toIso(range.startAt),
+      endAt: toIso(range.endAt),
       preset,
-      startAt: rangeStart.toISOString(),
-      endAt: rangeEnd.toISOString(),
-      requestedHours,
     },
-    controls: buildControlMeta(units, selectedDeviceIds),
-    siteSummary,
-    wells,
-    compressorMetrics,
-    compressorEvents,
-    sacrificeEvents,
-    priorityProtection,
-    marketingKpis,
-    dataQuality,
-    narrative,
-    eventReplay,
-    coverageNotes: [
-      'Stored run-report summaries and details are used as the historical runtime backbone for this report.',
-      'Where the retained consumer API does not expose historical well-allocation telemetry, the page uses latest retained panel telemetry and marks the basis explicitly instead of inventing monthly hours.',
-      'Compressor slowdown or pressure protection is treated as protective behavior, not automatic compressor failure.',
-    ],
-    normalizedReport: {
-      reportWindow: {
-        preset,
-        startAt: rangeStart.toISOString(),
-        endAt: rangeEnd.toISOString(),
-        requestedHours,
-      },
-      siteSummary,
-      wells,
-      compressorEvents,
-      sacrificeEvents,
-      priorityProtection,
-      marketingKpis,
-      dataQuality,
-      narrative,
+    controls: buildControlMeta(),
+    runtime,
+    prioritization,
+    siteSummary: {
+      overallRuntimeMeetingPct: runtime.overallRuntimeMeetingPct,
+      overallAverageMatchPct: runtime.overallAverageMatchPct,
+      prioritizationReliabilityPct: prioritization.scorePct,
+      constrainedRuntimeHours: prioritization.constrainedRuntimeHours,
+      autoPerfectPriorityHours: prioritization.autoPerfectRuntimeHours,
+    },
+    dataQuality: {
+      sampleCount: records.length,
+      firstSampleAt: firstRecord?.ts || null,
+      lastSampleAt: lastRecord?.ts || null,
+      validCoveragePct,
+      fallbackExcluded: true,
+      source: 'volume-history-plus-seeded-csv',
     },
   }
 }

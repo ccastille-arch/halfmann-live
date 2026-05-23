@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
+import { ensureHalfmannHistoryBootstrapped, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -116,6 +117,7 @@ const MLINK_DASHBOARD_BASE = normalizeEnvValue(process.env.MLINK_DASHBOARD_BASE)
 const MLINK_DASHBOARD_COOKIE = normalizeCookieValue(process.env.MLINK_DASHBOARD_COOKIE)
 const MLINK_DASHBOARD_AUTH_HEADER = normalizeAuthHeaderValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
 const HALFMANN_PANEL_DEVICE_ID = '2507-501508'
+const HALFMANN_HISTORY_UNIT_DEVICE_IDS = ['2507-500709', '2504-504108', '2507-500076', '2504-504102', '2507-501442']
 const LATEST_SNAPSHOT_CACHE = new Map()
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
@@ -330,6 +332,84 @@ function mergeDatapointSources(sources) {
   return [...byKey.values()]
 }
 
+function buildSourceSummary(latestResult, runReportDps, runReportState, runReportNote, dashboardResult) {
+  return {
+    latestDeviceData: {
+      count: latestResult?.datapoints?.length || 0,
+      state: latestResult?.state || 'empty',
+      note: latestResult?.note || '',
+      httpStatus: latestResult?.httpStatus ?? null,
+    },
+    runReport: {
+      count: runReportDps?.length || 0,
+      state: runReportState || 'empty',
+      note: runReportNote || '',
+      httpStatus: null,
+    },
+    dashboardSnapshot: {
+      count: dashboardResult?.datapoints?.length || 0,
+      state: dashboardResult?.state || 'empty',
+      note: dashboardResult?.note || '',
+      httpStatus: dashboardResult?.httpStatus ?? null,
+    },
+  }
+}
+
+let halfmannHistoryCaptureInFlight = false
+
+async function captureHalfmannRuntimeHistory() {
+  if (halfmannHistoryCaptureInFlight) return
+  const key = process.env.MLINK_API_KEY
+  if (!key) return
+
+  halfmannHistoryCaptureInFlight = true
+  try {
+    const capturedAt = new Date().toISOString()
+    const panelLatest = await fetchLatestSnapshot(HALFMANN_PANEL_DEVICE_ID, key)
+    const panelDashboard = await fetchDashboardSnapshot(HALFMANN_PANEL_DEVICE_ID)
+    const panelMergedDatapoints = mergeDatapointSources([
+      { name: 'latestDeviceData', datapoints: panelLatest?.datapoints || [] },
+      { name: 'dashboardSnapshot', datapoints: panelDashboard?.datapoints || [] },
+    ])
+    const panelSnapshot = {
+      deviceId: HALFMANN_PANEL_DEVICE_ID,
+      datapoints: panelMergedDatapoints,
+      _registerCount: panelMergedDatapoints.length,
+      _sourceSummary: buildSourceSummary(panelLatest, [], 'empty', 'History poll does not request RunReport', panelDashboard),
+    }
+
+    const unitSnapshots = await Promise.all(
+      HALFMANN_HISTORY_UNIT_DEVICE_IDS.map(async (deviceId) => {
+        const latestResult = await fetchLatestSnapshot(deviceId, key)
+        return {
+          deviceId,
+          datapoints: latestResult?.datapoints || [],
+          _registerCount: latestResult?.datapoints?.length || 0,
+          _sourceSummary: buildSourceSummary(latestResult, [], 'empty', 'History poll does not request RunReport', {
+            datapoints: [],
+            state: 'not-requested',
+            note: 'History poll stores unit latest telemetry only',
+            httpStatus: null,
+          }),
+        }
+      }),
+    )
+
+    if (panelSnapshot.datapoints.length) {
+      recordHalfmannRawSnapshot({
+        capturedAt,
+        panel: panelSnapshot,
+        units: unitSnapshots,
+      })
+      recordHalfmannPanelMatchSnapshot(panelSnapshot)
+    }
+  } catch (err) {
+    console.error('halfmann history capture failed:', err.message)
+  } finally {
+    halfmannHistoryCaptureInFlight = false
+  }
+}
+
 app.get('/api/mlink/device', async (req, res) => {
   const key = process.env.MLINK_API_KEY
   if (!key) return res.status(503).json({ error: 'MLINK_API_KEY not configured' })
@@ -415,26 +495,7 @@ app.get('/api/mlink/device/full', async (req, res) => {
     { name: 'dashboardSnapshot', datapoints: dashboardResult.datapoints || [] },
   ])
 
-  const sourceSummary = {
-    latestDeviceData: {
-      count: latestResult?.datapoints?.length || 0,
-      state: latestResult?.state || 'empty',
-      note: latestResult?.note || '',
-      httpStatus: latestResult?.httpStatus ?? null,
-    },
-    runReport: {
-      count: runReportDps.length,
-      state: runReportState,
-      note: runReportNote,
-      httpStatus: null,
-    },
-    dashboardSnapshot: {
-      count: dashboardResult.datapoints.length,
-      state: dashboardResult.state,
-      note: dashboardResult.note,
-      httpStatus: dashboardResult.httpStatus,
-    },
-  }
+  const sourceSummary = buildSourceSummary(latestResult, runReportDps, runReportState, runReportNote, dashboardResult)
 
   const limitations = []
   if (sourceSummary.dashboardSnapshot.state === 'disabled') {
@@ -598,4 +659,10 @@ app.get('/api/optimization-history', async (req, res) => {
 app.use(express.static(join(__dirname, '../dist')))
 app.use((_req, res) => res.sendFile(join(__dirname, '../dist/index.html')))
 
-app.listen(PORT, () => console.log(`halfmann-live running on port ${PORT}`))
+ensureHalfmannHistoryBootstrapped()
+
+app.listen(PORT, () => {
+  console.log(`halfmann-live running on port ${PORT}`)
+  captureHalfmannRuntimeHistory()
+  setInterval(captureHalfmannRuntimeHistory, 2000)
+})
