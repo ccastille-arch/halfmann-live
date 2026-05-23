@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
+import { PANEL_ADDRESSES, UNIT_ADDRESSES, getNumericByAddress, hasAnyAddress } from '../engine/halfmannRegisters'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 export const REFRESH_INTERVAL_S = 3
@@ -147,18 +148,18 @@ function getNumeric(dataMap, labels) {
   return parseNumeric(resolveDatapoint(dataMap, labels)?.value)
 }
 
-function getWellTarget(dataMap, wellNumber) {
-  return getNumeric(dataMap, [
+function getWellTarget(data, dataMap, wellNumber) {
+  return getNumericByAddress(data, [PANEL_ADDRESSES.wellSetpoint[wellNumber - 1]]) ?? getNumeric(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
   ]) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[wellNumber - 1] ?? null
 }
 
-function getUnitDesiredFlow(panelMap, unitMap, unitKey, unitLabel) {
+function getUnitDesiredFlow(panelData, panelMap, unitData, unitMap, unitKey, unitLabel) {
   const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
   const unitNum = unitLabel.match(/\d{4}/)?.[0]
-  return getNumeric(panelMap, [
+  return getNumericByAddress(panelData, [PANEL_ADDRESSES.unitDesiredFlowSetpoints[compNum - 1]]) ?? getNumeric(panelMap, [
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desired Flow SP For PID Murphy`] : []),
     ...(compNum ? [
@@ -171,7 +172,7 @@ function getUnitDesiredFlow(panelMap, unitMap, unitKey, unitLabel) {
       `Compressor #${compNum} Flow Setpoint`,
       `Compressor ${compNum} Flow Setpoint`,
     ] : []),
-  ]) ?? getNumeric(unitMap, [
+  ]) ?? getNumericByAddress(unitData, UNIT_ADDRESSES.loadedAutoSp) ?? getNumeric(unitMap, [
     'Flow Rate PID Auto Sp',
     'Speed Auto SP Flow',
     'Speed Auto Sp Flow',
@@ -188,8 +189,8 @@ function getUnitDesiredFlow(panelMap, unitMap, unitKey, unitLabel) {
   ])
 }
 
-function getUnitActualFlow(unitMap) {
-  return getNumeric(unitMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
+function getUnitActualFlow(unitData, unitMap) {
+  return getNumericByAddress(unitData, UNIT_ADDRESSES.actualFlow) ?? getNumeric(unitMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
 }
 
 function isWellMeetingTarget(actual, desired, tolerancePct) {
@@ -215,11 +216,14 @@ function isUsableDeviceSnapshot(deviceKey, data) {
   const count = data?._registerCount ?? data?.datapoints?.length ?? 0
   if (!count) return false
 
-  const dataMap = parseLiveDatapoints(data)
   if (deviceKey === 'panel') {
-    return hasAnyDatapoint(dataMap, LIVE_WELL_FLOW_KEYS)
+    return hasAnyAddress(data, PANEL_ADDRESSES.wellFlow)
   }
 
+  const dataMap = parseLiveDatapoints(data)
+  if (hasAnyAddress(data, [...UNIT_ADDRESSES.engineSpeed, ...UNIT_ADDRESSES.actualFlow, ...UNIT_ADDRESSES.suctionPressure, ...UNIT_ADDRESSES.dischargePressure])) {
+    return true
+  }
   return hasAnyDatapoint(dataMap, [
     ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed', 'Engine Speed From EICS'],
     ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Compressor Flow Rate PID PV'],
@@ -409,20 +413,25 @@ export function HalfmannDataProvider({ children }) {
   useEffect(() => {
     const panel = parseLiveDatapoints(panelData)
     const unitMaps = HALFMANN_UNITS.map((unit) => parseLiveDatapoints(unitDataRaw[unit.key]))
-    const totalActual = LIVE_WELL_FLOW_KEYS.reduce((sum, keys) => sum + (getNumeric(panel, keys) ?? 0), 0)
+    const totalActual = PANEL_ADDRESSES.wellFlow.reduce((sum, address, index) =>
+      sum + (getNumericByAddress(panelData, [address]) ?? getNumeric(panel, LIVE_WELL_FLOW_KEYS[index]) ?? 0), 0)
     const persistMs = Math.max(0, Number(siteSettings.meetingFlowPersistSeconds) || 0) * 1000
     const nowMs = Date.now()
 
     const rawWellStates = {}
     for (let index = 0; index < LIVE_WELL_FLOW_KEYS.length; index += 1) {
       const wellNumber = index + 1
-      const actual = getNumeric(panel, LIVE_WELL_FLOW_KEYS[index])
-      const desired = getWellTarget(panel, wellNumber)
+      const actual = getNumericByAddress(panelData, [PANEL_ADDRESSES.wellFlow[index]]) ?? getNumeric(panel, LIVE_WELL_FLOW_KEYS[index])
+      const desired = getWellTarget(panelData, panel, wellNumber)
       rawWellStates[wellNumber] = isWellMeetingTarget(actual, desired, Number(siteSettings.wellTargetPct) || 5)
     }
 
-    const rawUnitDesired = HALFMANN_UNITS.map((unit, index) => getUnitDesiredFlow(panel, unitMaps[index], unit.key, unit.label))
-    const rawUnitActual = deriveMissingCompressorFlowValues(unitMaps.map((unitMap) => getUnitActualFlow(unitMap)), totalActual)
+    const rawUnitDesired = HALFMANN_UNITS.map((unit, index) =>
+      getUnitDesiredFlow(panelData, panel, unitDataRaw[unit.key], unitMaps[index], unit.key, unit.label))
+    const rawUnitActual = deriveMissingCompressorFlowValues(
+      HALFMANN_UNITS.map((unit, index) => getUnitActualFlow(unitDataRaw[unit.key], unitMaps[index])),
+      totalActual,
+    )
     const rawCompressorStates = {}
     HALFMANN_UNITS.forEach((unit, index) => {
       if (unit.standby) return

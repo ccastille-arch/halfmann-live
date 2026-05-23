@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
+import { PANEL_ADDRESSES, UNIT_ADDRESSES, getNumericByAddress as sharedGetNumericByAddress, resolveDatapointByAddress as sharedResolveDatapointByAddress } from '../engine/halfmannRegisters'
 import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
@@ -30,6 +31,12 @@ const WELL_FLOW_KEYS = [
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
   ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
+
+const WELL_FLOW_ADDRESSES = PANEL_ADDRESSES.wellFlow
+const WELL_SETPOINT_ADDRESSES = PANEL_ADDRESSES.wellSetpoint
+const WELL_CALCULATED_DESIRED_ADDRESSES = PANEL_ADDRESSES.wellCalculatedDesiredFlow
+const WELL_STATIC_ADDRESSES = PANEL_ADDRESSES.wellStaticPressure
+const UNIT_DESIRED_FLOW_ADDRESSES = PANEL_ADDRESSES.unitDesiredFlowSetpoints
 
 const WELL_SETPOINT_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Wellhead #${n} Setpoint From Customer PLC`,
@@ -83,26 +90,20 @@ function parseNumeric(value) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
-function normalizeRegisterAddress(value) {
-  return String(value ?? '').trim().toLowerCase()
-}
-
 function getNumeric(dataMap, labels) {
   return parseNumeric(resolveDatapoint(dataMap, labels)?.value)
 }
 
 function resolveDatapointByAddress(data, addresses) {
-  if (!data?.datapoints?.length) return null
-  const normalizedAddresses = addresses.map(normalizeRegisterAddress)
-  return data.datapoints.find((datapoint) => normalizedAddresses.includes(normalizeRegisterAddress(datapoint.addressStr || datapoint.address))) ?? null
+  return sharedResolveDatapointByAddress(data, addresses)
 }
 
 function getNumericByAddress(data, addresses) {
-  return parseNumeric(resolveDatapointByAddress(data, addresses)?.value)
+  return sharedGetNumericByAddress(data, addresses)
 }
 
-function getPanelCompressorsMeetingFlow(dataMap) {
-  const raw = resolveDatapoint(dataMap, [
+function getPanelCompressorsMeetingFlow(data, dataMap) {
+  const raw = resolveDatapointByAddress(data, [PANEL_ADDRESSES.compressorsMeetingFlowDemand, PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow])?.value ?? resolveDatapoint(dataMap, [
     'Compressors Meeting Flow Demand',
     'Compressor Meeting Flow Demand',
     'Meeting Flow Demand',
@@ -433,11 +434,11 @@ export default function HalfmannDiagnosticsView() {
 
     const wells = WELL_FLOW_KEYS.map((flowKeys, index) => {
       const wellNumber = index + 1
-      const desiredDatapoint = resolveDatapoint(panel, WELL_SETPOINT_KEYS[index])
+      const desiredDatapoint = resolveDatapointByAddress(panelData, [WELL_SETPOINT_ADDRESSES[index]]) ?? resolveDatapoint(panel, WELL_SETPOINT_KEYS[index])
       const desired = parseNumeric(desiredDatapoint?.value) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? null
-      const calculatedDesired = getNumeric(panel, WELL_CALCULATED_DESIRED_KEYS[index])
-      const actual = getNumeric(panel, flowKeys)
-      const staticPressure = getNumeric(panel, WELL_STATIC_KEYS[index])
+      const calculatedDesired = getNumericByAddress(panelData, [WELL_CALCULATED_DESIRED_ADDRESSES[index]]) ?? getNumeric(panel, WELL_CALCULATED_DESIRED_KEYS[index])
+      const actual = getNumericByAddress(panelData, [WELL_FLOW_ADDRESSES[index]]) ?? getNumeric(panel, flowKeys)
+      const staticPressure = getNumericByAddress(panelData, [WELL_STATIC_ADDRESSES[index]]) ?? getNumeric(panel, WELL_STATIC_KEYS[index])
       const shortfall = actual != null && desired != null ? Math.max(0, desired - actual) : null
       return {
         wellNumber,
@@ -452,14 +453,14 @@ export default function HalfmannDiagnosticsView() {
     })
 
     const totalActual = wells.reduce((sum, well) => sum + (well.actual ?? 0), 0)
-    const totalDesiredSite = getNumeric(panel, ['Total Desired Site Flow'])
+    const totalDesiredSite = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]) ?? getNumeric(panel, ['Total Desired Site Flow'])
     const totalDesiredFromWells = wells.reduce((sum, well) => sum + (well.desired ?? 0), 0)
     const totalDesired = totalDesiredSite ?? (totalDesiredFromWells > 0 ? totalDesiredFromWells : null)
 
     const rawUnitDesiredFlows = HALFMANN_UNITS.map((unit, index) => {
       const compressorNumber = UNIT_TO_COMP_NUM[unit.key]
       const unitNumber = unit.label.match(/\d{4}/)?.[0]
-      return getNumeric(panel, [
+      return getNumericByAddress(panelData, [UNIT_DESIRED_FLOW_ADDRESSES[compressorNumber - 1]]) ?? getNumeric(panel, [
         ...(compressorNumber && unitNumber ? [`Compressor #${compressorNumber} Unit ${unitNumber} Desire Flow SP For PID Murphy`] : []),
         ...(compressorNumber ? [`Compressor #${compressorNumber} Desire Flow SP For PID Murphy`, `Compressor ${compressorNumber} Desire Flow SP For PID Murphy`] : []),
       ]) ?? getNumeric(unitMaps[index], [
@@ -472,11 +473,13 @@ export default function HalfmannDiagnosticsView() {
       ])
     })
 
-    const rawUnitActualFlows = unitMaps.map((dataMap) => getNumeric(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']))
+    const rawUnitActualFlows = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.actualFlow) ?? getNumeric(unitMaps[index], ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']))
     const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, totalActual, HALFMANN_UNITS)
-    const unitSuction = unitMaps.map((dataMap) => getNumeric(dataMap, ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
+    const unitSuction = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.suctionPressure) ?? getNumeric(unitMaps[index], ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
     const unitSuctionTarget = HALFMANN_UNITS.map((unit, index) => (
-      getNumericByAddress(unitDataRaw[unit.key], ['401018']) ?? getNumeric(unitMaps[index], [
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp) ?? getNumeric(unitMaps[index], [
         'Loaded Auto Sp',
         'Loaded Auto SP',
         'Loaded Auto Sp:',
@@ -489,8 +492,10 @@ export default function HalfmannDiagnosticsView() {
         'Auto Load SP',
       ])
     ))
-    const unitDischarge = unitMaps.map((dataMap) => getNumeric(dataMap, ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
-    const unitRpm = unitMaps.map((dataMap) => getNumeric(dataMap, ['RPM', 'Driver Speed', 'Engine Speed', 'ENGINE RPM', 'Engine Speed From EICS']))
+    const unitDischarge = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.dischargePressure) ?? getNumeric(unitMaps[index], ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
+    const unitRpm = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.engineSpeed) ?? getNumeric(unitMaps[index], ['RPM', 'Driver Speed', 'Engine Speed', 'ENGINE RPM', 'Engine Speed From EICS']))
     const runningUnits = HALFMANN_UNITS.filter((unit, index) => !unit.standby && unitRpm[index] != null && unitRpm[index] > 100)
     const runningPrimaryCount = runningUnits.length
     const derivedDesiredPerRunningUnit = totalDesired != null && runningPrimaryCount > 0 ? totalDesired / runningPrimaryCount : null
@@ -500,16 +505,16 @@ export default function HalfmannDiagnosticsView() {
     const unitDesiredFlows = HALFMANN_UNITS.map((unit, index) =>
       rawUnitDesiredFlows[index] ?? (unitDesiredIsDerived[index] ? derivedDesiredPerRunningUnit : null)
     )
-    const recommendedCompressors = getNumeric(panel, ['Recommended Number Of Compressors'])
-    const recycleValvePosition = getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
+    const recommendedCompressors = getNumericByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getNumeric(panel, ['Recommended Number Of Compressors'])
+    const recycleValvePosition = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition) ?? getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
     const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null
-    const wellheadControlOverride = getNumericByAddress(panelData, ['460018']) ?? getNumeric(panel, ['Wellhead Control in Override'])
-    const wellheadControlOverrideCompSpeedSp = getNumericByAddress(panelData, ['460020']) ?? getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
+    const wellheadControlOverride = getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]) ?? getNumeric(panel, ['Wellhead Control in Override'])
+    const wellheadControlOverrideCompSpeedSp = getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideCompSpeedSp]) ?? getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
     const dischargeTrigger = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
     const speedDischargePressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Discharge Press PID Auto Sp']), null)
-    const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panel)
+    const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panelData, panel)
     const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
     const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
 
@@ -709,7 +714,7 @@ export default function HalfmannDiagnosticsView() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {HALFMANN_UNITS.map((unit, index) => {
-                  const directFlowMissing = unit.key === 'unit2129' && getNumeric(parseLiveDatapoints(unitDataRaw[unit.key]), ['Flow Rate', 'Flow Rate PID PV']) == null
+                  const directFlowMissing = unit.key === 'unit2129' && getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.actualFlow) == null
                   return (
                     <UnitRow
                       key={unit.key}

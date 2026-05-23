@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
+import { PANEL_ADDRESSES, UNIT_ADDRESSES, getNumericByAddress as sharedGetNumericByAddress, resolveDatapointByAddress as sharedResolveDatapointByAddress } from '../engine/halfmannRegisters'
 import { useHalfmannData } from '../context/HalfmannDataContext'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
@@ -32,6 +33,9 @@ const WELL_FLOW_KEYS = [
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
   ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
+const WELL_FLOW_ADDRESSES = PANEL_ADDRESSES.wellFlow
+const WELL_SETPOINT_ADDRESSES = PANEL_ADDRESSES.wellSetpoint
+const WELL_CALCULATED_DESIRED_ADDRESSES = PANEL_ADDRESSES.wellCalculatedDesiredFlow
 const WELL_SETPOINT_KEYS = [1,2,3,4,5].map(n => [
   `Wellhead #${n} Calculated Desired Flow`,
   `Wellhead #${n} Setpoint From Customer PLC`,
@@ -47,12 +51,15 @@ const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Well ${n} Yesterdays Total Flow`,
 ])
 const WELL_YESTERDAY_ADDRESSES = ['460222', '460236', '460250', '460264', '460278']
+const WELL_CHOKE_ADDRESSES = PANEL_ADDRESSES.wellChokePosition
 const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [
   `Well ${n} Choke Position`, `Well #${n} Choke Position`,
   `Well #${n} Analog Output ${n}`,   // Altronic DE4000 alias seen in MLink portal
   `Well ${n} Analog Output`,
 ])
+const WELL_CASING_ADDRESSES = PANEL_ADDRESSES.wellCasingPressure
 const WELL_CASING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Casing Pressure`, `Well #${n} Casing Pressure`])
+const WELL_TUBING_ADDRESSES = PANEL_ADDRESSES.wellTubingPressure
 const WELL_TUBING_KEYS = [1,2,3,4,5].map(n => [`Well ${n} Tubing Pressure`, `Well #${n} Tubing Pressure`])
 
 // ASC units: 17 live MLink keys
@@ -144,7 +151,6 @@ function cleanUnit(u) {
   return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
 }
 function parseLiveNumeric(v) { const n = Number(v); return Number.isFinite(n) ? n : null }
-function normalizeRegisterAddress(v) { return String(v ?? '').trim().toLowerCase() }
 function resolveDP(dataMap, labels) {
   for (const label of labels) {
     const dp = findRegisterDatapoint(dataMap, { label, decimals: 3 })
@@ -153,14 +159,10 @@ function resolveDP(dataMap, labels) {
   return null
 }
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
-function resolveDPByAddress(data, addresses) {
-  if (!data?.datapoints?.length) return null
-  const normalizedAddresses = addresses.map(normalizeRegisterAddress)
-  return data.datapoints.find(dp => normalizedAddresses.includes(normalizeRegisterAddress(dp.addressStr || dp.address))) ?? null
-}
-function getNByAddress(data, addresses) { return parseLiveNumeric(resolveDPByAddress(data, addresses)?.value) }
-function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
-  const liveValue = getN(dataMap, [
+function resolveDPByAddress(data, addresses) { return sharedResolveDatapointByAddress(data, addresses) }
+function getNByAddress(data, addresses) { return sharedGetNumericByAddress(data, addresses) }
+function getWellSetpointInfo(data, dataMap, wellNumber, fallbackValue = null) {
+  const liveValue = getNByAddress(data, [WELL_SETPOINT_ADDRESSES[wellNumber - 1]]) ?? getN(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
@@ -169,16 +171,16 @@ function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
   if (fallbackValue != null && Number.isFinite(fallbackValue)) return { value: fallbackValue, source: 'fallback' }
   return { value: null, source: null }
 }
-function getWellCalculatedDesired(dataMap, wellNumber) {
-  return getN(dataMap, [
+function getWellCalculatedDesired(data, dataMap, wellNumber) {
+  return getNByAddress(data, [WELL_CALCULATED_DESIRED_ADDRESSES[wellNumber - 1]]) ?? getN(dataMap, [
     `Wellhead #${wellNumber} Calculated Desired Flow`,
     `Well ${wellNumber} Calculated Desired Flow`,
   ])
 }
-function getUnitDesiredFlow(dataMapPanel, dataMapUnit, unitKey, unitLabel) {
+function getUnitDesiredFlow(panelData, dataMapPanel, unitData, dataMapUnit, unitKey, unitLabel) {
   const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
   const unitNum = unitLabel.match(/\d{4}/)?.[0]
-  return getN(dataMapPanel, [
+  return getNByAddress(panelData, [PANEL_ADDRESSES.unitDesiredFlowSetpoints[compNum - 1]]) ?? getN(dataMapPanel, [
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desired Flow SP For PID Murphy`] : []),
     ...(compNum ? [
@@ -191,7 +193,7 @@ function getUnitDesiredFlow(dataMapPanel, dataMapUnit, unitKey, unitLabel) {
       `Compressor #${compNum} Flow Setpoint`,
       `Compressor ${compNum} Flow Setpoint`,
     ] : []),
-  ]) ?? getN(dataMapUnit, [
+  ]) ?? getNByAddress(unitData, UNIT_ADDRESSES.loadedAutoSp) ?? getN(dataMapUnit, [
     'Flow Rate PID Auto Sp',
     'Speed Auto SP Flow',
     'Speed Auto Sp Flow',
@@ -207,8 +209,8 @@ function getUnitDesiredFlow(dataMapPanel, dataMapUnit, unitKey, unitLabel) {
     'Target Flow',
   ])
 }
-function getUnitActualFlow(dataMap) {
-  return getN(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
+function getUnitActualFlow(data, dataMap) {
+  return getNByAddress(data, UNIT_ADDRESSES.actualFlow) ?? getN(dataMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
 }
 function getTimestamp(data) { return data?.timestamps?.[0] ? new Date(data.timestamps[0] * 1000) : null }
 function fmt(v, d = 3) { return v != null && Number.isFinite(v) ? v.toFixed(d) : null }
@@ -581,24 +583,24 @@ export default function HalfmannTelemetryView() {
   const { wellTargetPct = 5, recycleOpenPct = 5 } = siteSettings
 
   const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => {
-    const desiredInfo = getWellSetpointInfo(panel, i + 1, HALFMANN_WELL_SETPOINT_FALLBACKS[i])
+    const desiredInfo = getWellSetpointInfo(panelData, panel, i + 1, HALFMANN_WELL_SETPOINT_FALLBACKS[i])
     const stableAtTarget = meetingState.wells[String(i + 1)]
     return {
       n: i + 1,
-      actual: getN(panel, flowKeys),
+      actual: getNByAddress(panelData, [WELL_FLOW_ADDRESSES[i]]) ?? getN(panel, flowKeys),
       desired: desiredInfo.value,
       desiredSource: desiredInfo.source,
       liveDesired: desiredInfo.source === 'live' ? desiredInfo.value : null,
-      calculatedDesired: getWellCalculatedDesired(panel, i + 1),
-      choke: getN(panel, WELL_CHOKE_KEYS[i]),
-      casing: getN(panel, WELL_CASING_KEYS[i]),
-      tubing: getN(panel, WELL_TUBING_KEYS[i]),
+      calculatedDesired: getWellCalculatedDesired(panelData, panel, i + 1),
+      choke: getNByAddress(panelData, [WELL_CHOKE_ADDRESSES[i]]) ?? getN(panel, WELL_CHOKE_KEYS[i]),
+      casing: getNByAddress(panelData, [WELL_CASING_ADDRESSES[i]]) ?? getN(panel, WELL_CASING_KEYS[i]),
+      tubing: getNByAddress(panelData, [WELL_TUBING_ADDRESSES[i]]) ?? getN(panel, WELL_TUBING_KEYS[i]),
       yesterday: getNByAddress(panelData, [WELL_YESTERDAY_ADDRESSES[i]]) ?? getN(panel, WELL_YESTERDAY_KEYS[i]),
       stableAtTarget,
     }
   })
 
-  const totalDesiredSite = getN(panel, ['Total Desired Site Flow'])
+  const totalDesiredSite = getNByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]) ?? getN(panel, ['Total Desired Site Flow'])
   const sumSetpoints = wellData.reduce((s, w) => s + (w.desired ?? 0), 0)
   const hasAnySetpoints = wellData.some(w => w.desired != null)
   const liveSetpointCount = wellData.filter(w => w.desiredSource === 'live').length
@@ -623,14 +625,14 @@ export default function HalfmannTelemetryView() {
   const highCasing = casingList.length ? casingList.reduce((a, b) => b.v > a.v ? b : a) : null
   const highTubing = tubingList.length ? tubingList.reduce((a, b) => b.v > a.v ? b : a) : null
 
-  const recycleVal  = getN(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position'])
+  const recycleVal  = getNByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition) ?? getN(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
   const recycleOpen = recycleVal != null ? recycleVal > recycleOpenPct : null
   const suctionHeaderPres = getN(panel, ['Suction Header Pressure'])
   const suctionValvePos   = getN(panel, ['Suction/Sales Valve Position', 'Suction Valve Position', 'Sales Valve Position'])
   const dischargeSP = unitMaps.reduce((f, dm) => f ?? getN(dm, ['Speed Auto Discharge SP', 'Altronic Discharge SP', 'Discharge Pressure SP']), null)
 
-  const rawUnitFlows = unitMaps.map(dm => getUnitActualFlow(dm))
-  const unitDesired = HALFMANN_UNITS.map((u, i) => getUnitDesiredFlow(panel, unitMaps[i], u.key, u.label))
+  const rawUnitFlows = HALFMANN_UNITS.map((u, i) => getUnitActualFlow(unitDataRaw[u.key], unitMaps[i]))
+  const unitDesired = HALFMANN_UNITS.map((u, i) => getUnitDesiredFlow(panelData, panel, unitDataRaw[u.key], unitMaps[i], u.key, u.label))
 
   const unitFlows = deriveMissingCompressorFlowValues(rawUnitFlows, totalActual, HALFMANN_UNITS)
 
@@ -758,14 +760,17 @@ export default function HalfmannTelemetryView() {
                 value={dischargeSP != null ? fmt(dischargeSP, 0) : null} unit="PSI"
                 sub={dischargeSP == null ? NOT_PUBLISHED_COPY : undefined} />
               <Gauge label="Recommended Compressors"
-                value={getN(panel, ['Recommended Number Of Compressors']) != null ? fmt(getN(panel, ['Recommended Number Of Compressors']), 0) : null}
+                value={(getNByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getN(panel, ['Recommended Number Of Compressors'])) != null ? fmt(getNByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getN(panel, ['Recommended Number Of Compressors']), 0) : null}
                 status={(() => {
-                  const rec = getN(panel, ['Recommended Number Of Compressors'])
-                  const running = unitMaps.filter((dm, i) => { const r = getN(dm, ['RPM','Driver Speed']); return r != null && r > 100 }).length
+                  const rec = getNByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getN(panel, ['Recommended Number Of Compressors'])
+                  const running = HALFMANN_UNITS.filter((u, i) => {
+                    const r = getNByAddress(unitDataRaw[u.key], UNIT_ADDRESSES.engineSpeed) ?? getN(unitMaps[i], ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed From EICS'])
+                    return r != null && r > 100
+                  }).length
                   if (rec == null) return 'unknown'
                   return running >= rec ? 'good' : running === rec - 1 ? 'warn' : 'bad'
                 })()}
-                sub={getN(panel, ['Recommended Number Of Compressors']) == null ? NOT_PUBLISHED_COPY : 'Panel system recommendation'} />
+                sub={(getNByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getN(panel, ['Recommended Number Of Compressors'])) == null ? NOT_PUBLISHED_COPY : 'Panel system recommendation'} />
             </GaugeGrid>
           </Section>
 
@@ -876,7 +881,7 @@ export default function HalfmannTelemetryView() {
             {HALFMANN_UNITS.map((u, i) => {
               const dm = unitMaps[i]
               const groups = u.type === 'asc' ? ASC_GROUPS : C4_GROUPS
-              const rpm = getN(dm, ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed From EICS'])
+              const rpm = getNByAddress(unitDataRaw[u.key], UNIT_ADDRESSES.engineSpeed) ?? getN(dm, ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed From EICS'])
               const isRunning = rpm != null && rpm > 100
               const hasData = unitDataRaw[u.key] != null
               return (
