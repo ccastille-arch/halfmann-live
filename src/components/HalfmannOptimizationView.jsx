@@ -575,6 +575,29 @@ function buildPrimaryRecommendation(model) {
     }
   }
 
+  if (model.pressureLimited && model.compressorSlowdownProtectionLikely) {
+    return {
+      title: 'Increase discharge settle-out timer',
+      headline: 'The pad looks pressure-limited, not compressor-limited, so avoid adding more compressor load.',
+      operationalRisk: 'High',
+      riskTone: 'red',
+      tone: 'red',
+      expectedBenefit: 'Prevents the optimization layer from treating protective slowdown like a machine failure.',
+      reasoningSummary: 'Compressor-side trouble is showing up while wells are still below target, but the hierarchy says pressure protection should be interpreted before calling the compressor fleet weak. That means slower, smaller pressure-side correction is safer than loading harder.',
+      dataPointsUsed: [
+        `Override latch ${model.overrideActive ? 'YES' : 'NO'}`,
+        `Compressor slowdown likely ${model.compressorSlowdownProtectionLikely ? 'YES' : 'NO'}`,
+        `Recycle active ${model.recycleOpen ? 'YES' : 'NO'}`,
+        `Under target wells ${model.underTargetCount}`,
+      ],
+      whatNotToDo: 'Do not recommend additional compressor loading while the pad is behaving like a pressure-limited system.',
+      whatWeSee: 'Compressors appear to be backing away from demand while the wells still want gas, but the pattern looks like protective behavior rather than a simple compressor miss.',
+      whyItMatters: 'Pressure rises faster than it recovers, so aggressive flow increases can create delayed instability even if the immediate live flow looks recoverable.',
+      whatToDo: 'Favor slower discharge-side tuning and more settle-out time before pushing harder on compressor loading.',
+      whatRaisesConfidence,
+    }
+  }
+
   if (model.recycleOpen && model.underTargetCount === 0) {
     return {
       title: 'Reduce recycle',
@@ -625,7 +648,7 @@ function buildPrimaryRecommendation(model) {
   if (model.compressorConstraintActive || model.underDispatchCompressors.length > 0) {
     const highUtilization = (model.avgRunningCompressorCapacityPct ?? 0) >= 90 || (model.compressorHeadroomPct ?? 100) <= 10
     return {
-      title: highUtilization ? 'Add/load compressor' : 'Review compressor dispatch balance',
+      title: highUtilization && !model.pressureLimited ? 'Add/load compressor' : 'Review compressor dispatch balance',
       headline: highUtilization
         ? 'The compressor side is close enough to its working limit that a standby or added load is the safer next move.'
         : 'The wells are not the main limiter right now; dispatch balance on the compressor side needs review first.',
@@ -643,9 +666,11 @@ function buildPrimaryRecommendation(model) {
       whatNotToDo: 'Do not start sacrificing well-side stability if the compressors are the obvious bottleneck.',
       whatWeSee: 'The derived layer sees compressor-side trouble or persistent under-delivery versus demand.',
       whyItMatters: 'Trying to optimize wells while the compressor side is short usually creates confusion instead of recovery.',
-      whatToDo: highUtilization
+      whatToDo: highUtilization && !model.pressureLimited
         ? 'Prepare to add or load standby compression conservatively if the shortfall persists through the next stable observation window.'
-        : 'Rebalance compressor load first and confirm which unit is not carrying its command before touching well-side tuning.',
+        : model.pressureLimited
+          ? 'Treat this as a pressure-limited dispatch problem first and review discharge-side behavior before loading harder.'
+          : 'Rebalance compressor load first and confirm which unit is not carrying its command before touching well-side tuning.',
       whatRaisesConfidence,
     }
   }
@@ -1168,6 +1193,13 @@ export default function HalfmannOptimizationView() {
     const dischargeHeaderPressure = average(compressors.filter((compressor) => compressor.running && compressor.discharge != null).map((compressor) => compressor.discharge))
     const recentChokeEvents = eventMemory.filter((event) => event.type === 'choke-adjustment').length
     const chokeHuntingRisk = (averageChokeCommandError ?? 0) >= 8 || recentChokeEvents >= 3
+    const compressorSlowdownProtectionLikely =
+      !overrideActive &&
+      !recycleOpen &&
+      normalizedUnderTargetCount > 0 &&
+      (panelSeeingCompressorTrouble === true || siteCompressorLimited === true) &&
+      compressors.some((compressor) => compressor.running && compressor.underDispatch)
+    const pressureLimited = normalizedUnderTargetCount > 0 && (overrideActive || recycleOpen || compressorSlowdownProtectionLikely)
 
     const rawDataConfidence = panelDataConfidence ?? clamp(
       100
@@ -1332,6 +1364,8 @@ export default function HalfmannOptimizationView() {
       primaryRecommendation,
       chokeHuntingRisk,
       recentChokeEvents,
+      compressorSlowdownProtectionLikely,
+      pressureLimited,
     }
   }, [panelData, unitDataRaw, lastRefresh, liveError, commsStatus, eventMemory])
 
@@ -1500,8 +1534,34 @@ export default function HalfmannOptimizationView() {
             <MetricCard label="Suction Header Pressure" value={`${formatNumber(model.suctionHeaderPressure, 1)} PSI`} note={`Sales valve ${formatNumber(model.suctionSalesValvePosition, 1)}% | command ${formatNumber(model.suctionSalesValveCommand, 1)}%`} tone={model.suctionHeaderPressure == null ? 'blue' : 'green'} />
             <MetricCard label="Stability Score" value={formatPercent(model.stabilityScore, 0)} note={model.flowTroubleshooter || 'Trusted pressure / flow derived stability layer'} tone={confidenceTone(model.stabilityScore)} />
           </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, marginBottom: 16 }}>
+            <MetricCard
+              label="Protection Layer 1"
+              value="Well Panel / Altronic"
+              note={model.overrideActive ? 'Active first-layer discharge override response.' : 'Standing by. No active first-layer override.'}
+              tone={model.overrideActive ? 'red' : 'green'}
+            />
+            <MetricCard
+              label="Protection Layer 2"
+              value="Compressor Slowdown"
+              note={model.compressorSlowdownProtectionLikely
+                ? 'Likely protective slowdown pattern. Do not default this to compressor failure.'
+                : 'No strong slowdown-protection pattern is currently indicated.'}
+              tone={model.compressorSlowdownProtectionLikely ? 'orange' : 'green'}
+            />
+            <MetricCard
+              label="Protection Layer 3"
+              value="Recycle Protection"
+              note={model.recycleOpen
+                ? 'Recycle is active. Treat this as optimization inefficiency or imbalance.'
+                : 'Recycle is not currently intervening.'}
+              tone={model.recycleOpen ? 'orange' : 'green'}
+            />
+          </div>
           <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.8, whiteSpace: 'pre-line' }}>
-            {model.recycleOpen && model.underTargetCount > 0
+            {model.pressureLimited && model.compressorSlowdownProtectionLikely
+              ? 'Compressors appear to be slowing while wells are still below target. The engine treats this as pressure-limited behavior, not a default compressor failure, and avoids recommending added compressor loading.'
+              : model.recycleOpen && model.underTargetCount > 0
               ? 'Recycle is open while some wells still need gas. That points away from a simple well-side shortage and toward dispatch, pressure, or delivery-path review.'
               : model.recycleOpen && model.underTargetCount === 0
                 ? 'Recycle is open while the wells are broadly aligned. That is a strong sign the pad may be carrying excess compressor flow.'
