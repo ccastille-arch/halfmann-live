@@ -118,16 +118,36 @@ const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
 
 function getDatapointKey(dp) {
-  return dp?.alias || dp?.desc || dp?.dataSourceName || dp?.Name || dp?.name || null
+  return dp?.alias || dp?.desc || dp?.d || dp?.dataSourceName || dp?.Name || dp?.name || null
 }
 
 function getDatapointValue(dp) {
-  return dp?.value ?? (Array.isArray(dp?.values) ? dp.values[0] : undefined)
+  return dp?.value ?? dp?.v ?? (Array.isArray(dp?.values) ? dp.values[0] : undefined)
+}
+
+function normalizeDashboardDatapoint(dp) {
+  return {
+    ...dp,
+    portIdx: dp?.portIdx ?? dp?.p ?? null,
+    timestampIdx: dp?.timestampIdx ?? dp?.t ?? null,
+    desc: dp?.desc ?? dp?.d ?? '',
+    alias: dp?.alias ?? null,
+    address: dp?.address ?? dp?.a ?? null,
+    addressStr: dp?.addressStr ?? dp?.as ?? String(dp?.a ?? ''),
+    value: getDatapointValue(dp),
+    units: dp?.units ?? dp?.unit ?? dp?.u ?? '',
+    writable: dp?.writable ?? false,
+  }
 }
 
 function extractDatapoints(payload) {
   if (!payload) return []
   if (Array.isArray(payload?.datapoints)) return payload.datapoints
+  if (Array.isArray(payload?.dg)) {
+    return payload.dg.flatMap(group =>
+      Array.isArray(group?.p) ? group.p.map(normalizeDashboardDatapoint) : []
+    )
+  }
   if (Array.isArray(payload?.data?.datapoints)) return payload.data.datapoints
   if (Array.isArray(payload?.data)) return payload.data.flatMap(extractDatapoints)
   if (Array.isArray(payload)) return payload.flatMap(extractDatapoints)
