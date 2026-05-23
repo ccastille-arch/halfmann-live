@@ -1,9 +1,23 @@
-import { PANEL_ADDRESSES, UNIT_ADDRESSES, normalizeRegisterAddress } from '../src/engine/halfmannRegisters.js'
-
 const DEFAULT_SOURCE_KEY = 'service-compression-fleet'
 const DEFAULT_ACCESS_BASE = 'https://mlink-ingest-production.up.railway.app'
 const HALF_MANN_DEFAULT_DEVICE_IDS = ['2507-501508', '2507-500709', '2504-504108', '2507-500076', '2504-504102', '2507-501442']
 const WELL_NAMES = ['214', '444', '334', '213', '333']
+const PANEL_ADDRESSES = {
+  totalDesiredSiteFlow: '420003',
+  wellCalculatedDesiredFlow: ['460050', '460052', '460054', '460056', '460058'],
+  wellFlow: ['460212', '460226', '460240', '460254', '460268'],
+  wellSetpoint: ['460220', '460234', '460248', '460262', '460276'],
+  wellChokePosition: ['400017', '400035', '400053', '400071', '400089'],
+  wellCasingPressure: ['400231', '400235', '400239', '400243', '400247'],
+  wellTubingPressure: ['400233', '400237', '400241', '400245', '400249'],
+}
+const UNIT_ADDRESSES = {
+  actualFlow: ['400656'],
+  suctionPressure: ['400505'],
+  dischargePressure: ['400510'],
+  loadedAutoSp: ['401018'],
+  engineSpeed: ['0x01000000', '16777216'],
+}
 const WELL_GAS_PRIORITY_ADDRESSES = ['461002', '461004', '461006', '461008', '461010']
 const WELL_OIL_PRIORITY_ADDRESSES = ['461036', '461038', '461040', '461042', '461044']
 const WELL_MAX_FLOW_ADDRESSES = ['461134', '461136', '461138', '461140', '461142']
@@ -14,6 +28,10 @@ const UNIT_DEVICE_ORDER = ['2507-500076', '2507-500709', '2504-504108', '2504-50
 const STATUS_NO_DATA = new Set(['No Data'])
 const STATUS_RUNNING = new Set(['Running'])
 const STATUS_STOPPED = new Set(['Stopped', 'Faulted', 'WarmupCooldown', 'Unknown'])
+
+function normalizeRegisterAddress(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
