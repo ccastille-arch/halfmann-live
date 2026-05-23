@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
+import { generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -456,6 +457,82 @@ app.get('/api/mlink/device/keys', async (req, res) => {
     res.json({ deviceId, count: keys.length, keys })
   } catch (err) {
     res.status(502).json({ error: 'MLINK unreachable', details: err.message })
+  }
+})
+
+function parseCsvList(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value.flatMap(parseCsvList).filter(Boolean)
+  return String(value)
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+function parseOptionalDate(value) {
+  if (!value) return undefined
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed
+}
+
+function getPerformanceReportConfig() {
+  return {
+    accessBase: process.env.MLINK_CONSUMER_API_BASE || process.env.MLINK_ACCESS_BASE || 'https://mlink-ingest-production.up.railway.app',
+    apiToken: process.env.MLINK_API_TOKEN,
+    sourceKey: process.env.MLINK_ACCESS_SOURCE_KEY || 'service-compression-fleet',
+  }
+}
+
+app.get('/api/performance-report/meta', async (req, res) => {
+  try {
+    const report = await getPerformanceReportMeta({
+      ...getPerformanceReportConfig(),
+      groupKey: typeof req.query.groupKey === 'string' ? req.query.groupKey : undefined,
+    })
+    res.json(report)
+  } catch (err) {
+    res.status(err.status || 502).json({
+      error: err.message || 'Failed to load performance report metadata',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.get('/api/performance-report', async (req, res) => {
+  try {
+    const report = await generatePerformanceReport({
+      ...getPerformanceReportConfig(),
+      deviceIds: parseCsvList(req.query.deviceIds),
+      groupKey: typeof req.query.groupKey === 'string' ? req.query.groupKey : undefined,
+      startAt: parseOptionalDate(req.query.startAt),
+      endAt: parseOptionalDate(req.query.endAt),
+      preset: typeof req.query.preset === 'string' ? req.query.preset : 'current-month',
+    })
+    res.json(report)
+  } catch (err) {
+    res.status(err.status || 502).json({
+      error: err.message || 'Failed to generate performance report',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.get('/api/welllogic-performance-report', async (req, res) => {
+  try {
+    const report = await generatePerformanceReport({
+      ...getPerformanceReportConfig(),
+      deviceIds: parseCsvList(req.query.deviceIds),
+      groupKey: typeof req.query.groupKey === 'string' ? req.query.groupKey : undefined,
+      startAt: parseOptionalDate(req.query.startAt),
+      endAt: parseOptionalDate(req.query.endAt),
+      preset: typeof req.query.preset === 'string' ? req.query.preset : 'current-month',
+    })
+    res.json(report)
+  } catch (err) {
+    res.status(err.status || 502).json({
+      error: err.message || 'Failed to generate WellLogic performance report',
+      details: err.payload || null,
+    })
   }
 })
 

@@ -3,10 +3,13 @@ import HalfmannLiveView from './components/HalfmannLiveView'
 import HalfmannTelemetryView from './components/HalfmannTelemetryView'
 import HalfmannDiagnosticsView from './components/HalfmannDiagnosticsView'
 import HalfmannOptimizationView from './components/HalfmannOptimizationView'
+import HalfmannPerformanceReportView from './components/HalfmannPerformanceReportView'
 import { HalfmannDataProvider, useHalfmannData } from './context/HalfmannDataContext'
 import { PANEL_ADDRESSES, getNumericByAddress } from './engine/halfmannRegisters'
 
 function getPage() {
+  const path = window.location.pathname.toLowerCase()
+  if (path.includes('performance-report') || path.includes('welllogic-performance-report')) return 'performance-report'
   if (window.location.hash.includes('optimization')) return 'optimization'
   if (window.location.hash.includes('diagnostics')) return 'diagnostics'
   if (window.location.hash.includes('telemetry')) return 'telemetry'
@@ -63,14 +66,23 @@ function AppShell() {
   useEffect(() => {
     const handler = () => setPage(getPage())
     window.addEventListener('hashchange', handler)
-    return () => window.removeEventListener('hashchange', handler)
+    window.addEventListener('popstate', handler)
+    return () => {
+      window.removeEventListener('hashchange', handler)
+      window.removeEventListener('popstate', handler)
+    }
   }, [])
 
   function goTo(p) {
-    if (p === 'telemetry') window.location.hash = '#/telemetry'
-    else if (p === 'diagnostics') window.location.hash = '#/diagnostics'
-    else if (p === 'optimization') window.location.hash = '#/optimization'
-    else window.location.hash = '#/'
+    if (p === 'performance-report') {
+      window.history.pushState({}, '', '/performance-report')
+    } else {
+      if (window.location.pathname !== '/') window.history.pushState({}, '', '/')
+      if (p === 'telemetry') window.location.hash = '#/telemetry'
+      else if (p === 'diagnostics') window.location.hash = '#/diagnostics'
+      else if (p === 'optimization') window.location.hash = '#/optimization'
+      else window.location.hash = '#/'
+    }
     setPage(p)
   }
 
@@ -109,6 +121,9 @@ function AppShell() {
         <NavButton active={page === 'optimization'} alert={false} onClick={() => goTo('optimization')}>
           Optimization
         </NavButton>
+        <NavButton active={page === 'performance-report'} alert={false} onClick={() => goTo('performance-report')}>
+          Performance Report
+        </NavButton>
         <NavButton active={page === 'telemetry'} alert={false} onClick={() => goTo('telemetry')}>
           All Parameters
         </NavButton>
@@ -123,7 +138,9 @@ function AppShell() {
             ? <HalfmannTelemetryView />
             : page === 'diagnostics'
               ? <HalfmannDiagnosticsView />
-              : <HalfmannOptimizationView />}
+              : page === 'performance-report'
+                ? <HalfmannPerformanceReportView />
+                : <HalfmannOptimizationView />}
       </div>
     </div>
   )
