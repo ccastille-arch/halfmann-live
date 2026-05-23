@@ -309,13 +309,13 @@ function getSourceState(data, sourceName) {
 
 function DataPoint({ label, value, unit, color, compact = false }) {
   return (
-    <div className="bg-[#1c2333] rounded border border-[#1e2638] p-2">
-      <div className="text-[10px] text-[#94a3b8] uppercase tracking-wider leading-tight">{label}</div>
+    <div className={`bg-[#1c2333] rounded border border-[#1e2638] ${compact ? 'p-1.5' : 'p-2'}`}>
+      <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-[#94a3b8] uppercase tracking-wider leading-tight`}>{label}</div>
       <div className="flex items-baseline gap-1 mt-0.5">
-        <span className={compact ? 'text-[16px] font-bold' : 'text-[14px] font-bold'} style={{ color: color || '#e8efff', fontFamily: "'Arial Black'" }}>
+        <span className={compact ? 'text-[15px] font-bold' : 'text-[14px] font-bold'} style={{ color: color || '#e8efff', fontFamily: "'Arial Black'" }}>
           {value || '--'}
         </span>
-        <span className="text-[10px] text-[#7a8fb0]">{cleanUnit(unit)}</span>
+        <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-[#7a8fb0]`}>{cleanUnit(unit)}</span>
       </div>
     </div>
   )
@@ -370,7 +370,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
   const desiredFlowValue = formatFlowValue(desiredFlow?.value)
   const actualFlowValue = formatFlowValue(actualFlow?.value)
   return (
-    <div className="bg-[#161b27] rounded-xl border border-[#1e2638] p-5">
+    <div className="bg-[#161b27] rounded-xl border border-[#1e2638] p-3 xl:p-2.5">
       <div className="flex items-center gap-2 mb-3">
         <div className={`w-3 h-3 rounded-full ${isRunning ? 'bg-[#22c55e] shadow-lg shadow-[#22c55e]/50' : 'bg-[#E8200C]'}`} />
         <h3 className="text-[13px] text-white font-bold" style={{ fontFamily: "'Arial Black'" }}>{label}</h3>
@@ -380,13 +380,13 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
       </div>
       <div className="mb-3">
         {standby ? (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-1.5">
             <DataPoint label="Desired RPM" value={desiredRpmStr} unit="RPM" color="#4fc3f7" compact />
             <DataPoint label="Actual RPM" value={actualRpmStr} unit="RPM"
               color={actualRpmNum != null && Number.isFinite(actualRpmNum) && actualRpmNum > 100 ? '#22c55e' : '#647a9a'} compact />
           </div>
         ) : desiredFlow != null ? (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-1.5">
             <DataPoint label="Desired Flow" value={desiredFlowValue} unit={cleanUnit(desiredFlow?.units) || 'MMSCFD'} color="#4fc3f7" compact />
             <DataPoint label="Actual Flow" value={actualFlowValue} unit={cleanUnit(actualFlow?.units) || 'MMSCFD'} color={getCompressorColor('Flow Rate', actualFlow?.value)} compact />
           </div>
@@ -398,7 +398,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         )}
       </div>
       {visibleRegisters.length > 0 && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-1.5">
           {visibleRegisters.map(meta => (
             <DataPoint
               key={meta.id}
@@ -411,7 +411,7 @@ function CompressorCard({ label, data, time, desiredFlow, actualFlow, registers,
         </div>
       )}
       {extraDps.length > 0 && (
-        <div className={`grid grid-cols-2 gap-2 ${visibleRegisters.length > 0 ? 'mt-2' : ''}`}>
+        <div className={`grid grid-cols-2 gap-1.5 ${visibleRegisters.length > 0 ? 'mt-1.5' : ''}`}>
           {extraDps.map((dp, i) => {
             const lbl = dp.alias || dp.desc || 'Unknown'
             const val = dp.value ?? (Array.isArray(dp.values) ? dp.values[0] : undefined)
@@ -1048,7 +1048,7 @@ export default function HalfmannLiveView() {
               </div>
 
               {/* Compressor units */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-6">
                 {HALFMANN_UNITS.map((u, i) => (
                   <CompressorCard
                     key={u.key}
