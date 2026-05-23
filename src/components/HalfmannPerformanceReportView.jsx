@@ -470,6 +470,7 @@ export default function HalfmannPerformanceReportView() {
 
   const controls = meta?.controls || { units: [], groups: [] }
   const isBusy = loadingMeta || loadingReport
+  const fixedSiteLabel = controls.siteName || 'Halfmann 1214'
 
   return (
     <div style={{
@@ -491,11 +492,10 @@ export default function HalfmannPerformanceReportView() {
         >
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Group Selector</label>
-              <select value={groupKey} onChange={(event) => setGroupKey(event.target.value)} style={selectStyle}>
-                <option value="">All Available Groups</option>
-                {controls.groups.map((group) => <option key={group.groupKey || group.label} value={group.groupKey || ''}>{group.label}</option>)}
-              </select>
+              <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Report Scope</label>
+              <div style={{ ...selectStyle, display: 'flex', alignItems: 'center', minHeight: 46 }}>
+                {fixedSiteLabel} well panel site only
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Date Range Preset</label>
@@ -514,26 +514,23 @@ export default function HalfmannPerformanceReportView() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Multi-Unit Selector</div>
+            <div style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Included Halfmann Devices</div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {controls.units.map((unit) => {
-                const active = selectedDeviceIds.includes(unit.deviceId)
-                return (
-                  <button
-                    key={unit.deviceId}
-                    onClick={() => setSelectedDeviceIds((current) => active ? current.filter((entry) => entry !== unit.deviceId) : [...current, unit.deviceId])}
-                    style={{
-                      ...chipStyle,
-                      borderColor: active ? '#49d0e2' : 'rgba(255,255,255,0.12)',
-                      background: active ? 'rgba(73,208,226,0.14)' : 'rgba(255,255,255,0.04)',
-                      color: active ? '#dffcff' : '#a9bdd9',
-                    }}
-                  >
-                    <strong>{unit.unitName}</strong>
-                    <span style={{ fontSize: 11, opacity: 0.75 }}>{unit.deviceId}</span>
-                  </button>
-                )
-              })}
+              {controls.units.map((unit) => (
+                <div
+                  key={unit.deviceId}
+                  style={{
+                    ...chipStyle,
+                    borderColor: '#49d0e2',
+                    background: 'rgba(73,208,226,0.14)',
+                    color: '#dffcff',
+                    cursor: 'default',
+                  }}
+                >
+                  <strong>{unit.unitName}</strong>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>{unit.deviceId}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -546,7 +543,7 @@ export default function HalfmannPerformanceReportView() {
 
           {error ? <div style={{ color: '#fda4af', fontSize: 14 }}>{error}</div> : null}
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            This page is a customer-ready reporting and proof layer. It uses the retained M-Link consumer API as the historical source of truth and explicitly marks any metric that is evidence-limited rather than inventing unsupported monthly hours.
+            This page is a customer-ready reporting and proof layer for the Halfmann 1214 well panel site only. It uses the retained M-Link consumer API as the historical source of truth and explicitly marks any metric that is evidence-limited rather than inventing unsupported monthly hours.
           </div>
         </SectionCard>
 

@@ -92,6 +92,13 @@ function dedupe(values) {
   return [...new Set(values.filter(Boolean))]
 }
 
+function restrictToHalfmann(deviceIds) {
+  if (!deviceIds?.length) return [...HALF_MANN_DEFAULT_DEVICE_IDS]
+  const allowed = new Set(HALF_MANN_DEFAULT_DEVICE_IDS)
+  const filtered = deviceIds.filter((deviceId) => allowed.has(deviceId))
+  return filtered.length ? filtered : [...HALF_MANN_DEFAULT_DEVICE_IDS]
+}
+
 function parseDeviceIds(value) {
   if (!value) return []
   if (Array.isArray(value)) return dedupe(value.flatMap((entry) => String(entry).split(',').map((part) => part.trim())))
@@ -602,19 +609,8 @@ function buildSiteSummary({ panelSnapshot, wells, compressorMetrics, compressorE
 }
 
 function buildControlMeta(units, defaultDeviceIds) {
-  const groups = []
-  const seen = new Set()
-  for (const unit of units) {
-    const key = unit.groupKey || unit.groupPath || 'ungrouped'
-    if (seen.has(key)) continue
-    seen.add(key)
-    groups.push({
-      groupKey: unit.groupKey || null,
-      groupPath: unit.groupPath || unit.groupName || 'Ungrouped',
-      label: unit.groupPath || unit.groupName || 'Ungrouped',
-    })
-  }
   return {
+    siteName: 'Halfmann 1214',
     units: units.map((unit) => ({
       deviceId: unit.deviceId,
       unitName: unit.unitName,
@@ -622,13 +618,19 @@ function buildControlMeta(units, defaultDeviceIds) {
       groupPath: unit.groupPath || null,
       selectedByDefault: defaultDeviceIds.includes(unit.deviceId),
     })),
-    groups,
+    groups: [
+      {
+        groupKey: 'halfmann-1214',
+        groupPath: 'Halfmann 1214',
+        label: 'Halfmann 1214',
+      },
+    ],
     defaultDeviceIds,
   }
 }
 
 function detectDefaultDeviceIds(units, requestedDeviceIds) {
-  if (requestedDeviceIds.length) return requestedDeviceIds
+  if (requestedDeviceIds.length) return restrictToHalfmann(requestedDeviceIds)
   const catalogIds = new Set(units.map((unit) => unit.deviceId))
   const defaults = HALF_MANN_DEFAULT_DEVICE_IDS.filter((deviceId) => catalogIds.has(deviceId))
   return defaults.length ? defaults : units.slice(0, Math.min(units.length, 6)).map((unit) => unit.deviceId)
@@ -671,7 +673,9 @@ export async function getPerformanceReportMeta({
     throw error
   }
 
-  const units = await getCatalog(accessBase, token, sourceKey, groupKey)
+  const units = (await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
+    HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
+  )
   const defaultDeviceIds = detectDefaultDeviceIds(units, [])
 
   return {
@@ -702,7 +706,9 @@ export async function generatePerformanceReport({
   const rangeStart = startAt instanceof Date ? startAt : parseDateValue(startAt) || new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
   const rangeEnd = endAt instanceof Date ? endAt : parseDateValue(endAt) || new Date()
   const requestedDays = Math.max(1, hoursBetween(rangeStart, rangeEnd) / 24)
-  const units = await getCatalog(accessBase, token, sourceKey, groupKey)
+  const units = (await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
+    HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
+  )
   const selectedDeviceIds = detectDefaultDeviceIds(units, parseDeviceIds(deviceIds))
   const queryResult = await queryBundles({
     baseUrl: accessBase,

@@ -5,6 +5,7 @@ import { dirname, join } from 'path'
 import { randomBytes } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
+import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -531,6 +532,25 @@ app.get('/api/welllogic-performance-report', async (req, res) => {
   } catch (err) {
     res.status(err.status || 502).json({
       error: err.message || 'Failed to generate WellLogic performance report',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.get('/api/optimization-history', async (req, res) => {
+  try {
+    const history = await getOptimizationHistory({
+      accessBase: process.env.MLINK_CONSUMER_API_BASE || process.env.MLINK_ACCESS_BASE || 'https://mlink-ingest-production.up.railway.app',
+      apiToken: process.env.MLINK_API_TOKEN,
+      sourceKey: process.env.MLINK_ACCESS_SOURCE_KEY || 'service-compression-fleet',
+      deviceIds: parseCsvList(req.query.deviceIds),
+      lookbackDays: Number(req.query.lookbackDays) > 0 ? Number(req.query.lookbackDays) : 14,
+      reportLimit: Number(req.query.reportLimit) > 0 ? Number(req.query.reportLimit) : 7,
+    })
+    res.json(history)
+  } catch (err) {
+    res.status(err.status || 502).json({
+      error: err.message || 'Failed to load optimization history',
       details: err.payload || null,
     })
   }
