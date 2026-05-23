@@ -1,6 +1,14 @@
 const DEFAULT_SOURCE_KEY = 'service-compression-fleet'
 const DEFAULT_ACCESS_BASE = 'https://mlink-ingest-production.up.railway.app'
-const HALF_MANN_DEFAULT_DEVICE_IDS = ['2507-501508', '2507-500709', '2504-504108', '2507-500076', '2504-504102', '2507-501442']
+const HALF_MANN_DEVICE_MANIFEST = [
+  { deviceId: '2507-501508', unitName: 'Halfmann Well Panel', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2507-501442', unitName: 'Unit 1396 (Standby)', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2504-504108', unitName: 'Unit 2127', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2507-500076', unitName: 'Unit 2128', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2504-504102', unitName: 'Unit 2129', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+  { deviceId: '2507-500709', unitName: 'Unit 2130', groupKey: 'halfmann-1214', groupPath: 'Halfmann 1214' },
+]
+const HALF_MANN_DEFAULT_DEVICE_IDS = HALF_MANN_DEVICE_MANIFEST.map((unit) => unit.deviceId)
 const WELL_NAMES = ['214', '444', '334', '213', '333']
 const PANEL_ADDRESSES = {
   totalDesiredSiteFlow: '420003',
@@ -97,6 +105,20 @@ function restrictToHalfmann(deviceIds) {
   const allowed = new Set(HALF_MANN_DEFAULT_DEVICE_IDS)
   const filtered = deviceIds.filter((deviceId) => allowed.has(deviceId))
   return filtered.length ? filtered : [...HALF_MANN_DEFAULT_DEVICE_IDS]
+}
+
+function buildHalfmannUnits(units = []) {
+  const byId = new Map(units.map((unit) => [unit.deviceId, unit]))
+  return HALF_MANN_DEVICE_MANIFEST.map((manifestUnit) => {
+    const catalogUnit = byId.get(manifestUnit.deviceId) || {}
+    return {
+      ...catalogUnit,
+      ...manifestUnit,
+      unitName: catalogUnit.unitName || manifestUnit.unitName,
+      groupKey: catalogUnit.groupKey || manifestUnit.groupKey,
+      groupPath: catalogUnit.groupPath || manifestUnit.groupPath,
+    }
+  })
 }
 
 function parseDeviceIds(value) {
@@ -609,9 +631,10 @@ function buildSiteSummary({ panelSnapshot, wells, compressorMetrics, compressorE
 }
 
 function buildControlMeta(units, defaultDeviceIds) {
+  const halfmannUnits = buildHalfmannUnits(units)
   return {
     siteName: 'Halfmann 1214',
-    units: units.map((unit) => ({
+    units: halfmannUnits.map((unit) => ({
       deviceId: unit.deviceId,
       unitName: unit.unitName,
       groupKey: unit.groupKey || null,
@@ -631,9 +654,7 @@ function buildControlMeta(units, defaultDeviceIds) {
 
 function detectDefaultDeviceIds(units, requestedDeviceIds) {
   if (requestedDeviceIds.length) return restrictToHalfmann(requestedDeviceIds)
-  const catalogIds = new Set(units.map((unit) => unit.deviceId))
-  const defaults = HALF_MANN_DEFAULT_DEVICE_IDS.filter((deviceId) => catalogIds.has(deviceId))
-  return defaults.length ? defaults : units.slice(0, Math.min(units.length, 6)).map((unit) => unit.deviceId)
+  return [...HALF_MANN_DEFAULT_DEVICE_IDS]
 }
 
 async function queryBundles({ baseUrl, token, sourceKey, deviceIds, startAt, endAt, requestedDays }) {
@@ -673,9 +694,9 @@ export async function getPerformanceReportMeta({
     throw error
   }
 
-  const units = (await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
+  const units = buildHalfmannUnits((await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
     HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
-  )
+  ))
   const defaultDeviceIds = detectDefaultDeviceIds(units, [])
 
   return {
@@ -706,9 +727,9 @@ export async function generatePerformanceReport({
   const rangeStart = startAt instanceof Date ? startAt : parseDateValue(startAt) || new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
   const rangeEnd = endAt instanceof Date ? endAt : parseDateValue(endAt) || new Date()
   const requestedDays = Math.max(1, hoursBetween(rangeStart, rangeEnd) / 24)
-  const units = (await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
+  const units = buildHalfmannUnits((await getCatalog(accessBase, token, sourceKey, groupKey)).filter((unit) =>
     HALF_MANN_DEFAULT_DEVICE_IDS.includes(unit.deviceId),
-  )
+  ))
   const selectedDeviceIds = detectDefaultDeviceIds(units, parseDeviceIds(deviceIds))
   const queryResult = await queryBundles({
     baseUrl: accessBase,
