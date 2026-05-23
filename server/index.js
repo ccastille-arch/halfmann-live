@@ -115,9 +115,24 @@ function normalizeAuthHeaderValue(value) {
 const MLINK_DASHBOARD_BASE = normalizeEnvValue(process.env.MLINK_DASHBOARD_BASE) || 'https://www.fwmurphy-iot.com'
 const MLINK_DASHBOARD_COOKIE = normalizeCookieValue(process.env.MLINK_DASHBOARD_COOKIE)
 const MLINK_DASHBOARD_AUTH_HEADER = normalizeAuthHeaderValue(process.env.MLINK_DASHBOARD_AUTH_HEADER)
+const HALFMANN_PANEL_DEVICE_ID = '2507-501508'
 const LATEST_SNAPSHOT_CACHE = new Map()
 const RUN_REPORT_CACHE = new Map()
 const RUN_REPORT_TTL_MS = 14 * 60 * 1000
+
+function loadHalfmannPanelFallbackSnapshot() {
+  try {
+    const fallbackPath = join(__dirname, 'halfmannPanelFallbackSnapshot.json')
+    const parsed = JSON.parse(readFileSync(fallbackPath, 'utf8'))
+    const datapoints = extractDatapoints(parsed)
+    if (!datapoints.length) return null
+    return { data: parsed, datapoints }
+  } catch {
+    return null
+  }
+}
+
+const HALFMANN_PANEL_FALLBACK_SNAPSHOT = loadHalfmannPanelFallbackSnapshot()
 
 function getDatapointKey(dp) {
   return dp?.alias || dp?.desc || dp?.d || dp?.dataSourceName || dp?.Name || dp?.name || null
@@ -221,8 +236,20 @@ async function fetchLatestSnapshot(deviceId, key) {
 }
 
 async function fetchDashboardSnapshot(deviceId) {
-  if (!MLINK_DASHBOARD_COOKIE && !MLINK_DASHBOARD_AUTH_HEADER) {
+  const usePanelFallback = (note, httpStatus) => {
+    if (deviceId !== HALFMANN_PANEL_DEVICE_ID || !HALFMANN_PANEL_FALLBACK_SNAPSHOT) return null
     return {
+      ok: true,
+      httpStatus,
+      state: 'fallback-cache',
+      note: `Using last known rich Halfmann panel snapshot because authenticated dashboard access is unavailable. ${note}`.trim(),
+      data: HALFMANN_PANEL_FALLBACK_SNAPSHOT.data,
+      datapoints: HALFMANN_PANEL_FALLBACK_SNAPSHOT.datapoints,
+    }
+  }
+
+  if (!MLINK_DASHBOARD_COOKIE && !MLINK_DASHBOARD_AUTH_HEADER) {
+    return usePanelFallback('Dashboard auth is not configured on the server.', null) || {
       ok: false,
       httpStatus: null,
       state: 'disabled',
@@ -243,7 +270,7 @@ async function fetchDashboardSnapshot(deviceId) {
     )
     const looksLikeLoginPage = typeof result.data === 'string' && /logging in|sign in|login/i.test(result.data)
     if (looksLikeLoginPage) {
-      return {
+      return usePanelFallback('Dashboard endpoint returned a login page.', result.status) || {
         ok: false,
         httpStatus: result.status,
         state: 'auth-required',
@@ -254,6 +281,16 @@ async function fetchDashboardSnapshot(deviceId) {
     }
 
     const datapoints = extractDatapoints(result.data)
+    if (!result.ok && result.status === 401) {
+      return usePanelFallback(typeof result.data === 'string' ? result.data.slice(0, 200) : 'Dashboard snapshot request failed with 401.', result.status) || {
+        ok: false,
+        httpStatus: result.status,
+        state: 'error',
+        note: typeof result.data === 'string' ? result.data.slice(0, 500) : 'Dashboard snapshot request failed',
+        data: null,
+        datapoints: [],
+      }
+    }
     return {
       ok: result.ok,
       httpStatus: result.status,
@@ -265,7 +302,7 @@ async function fetchDashboardSnapshot(deviceId) {
       datapoints,
     }
   } catch (err) {
-    return {
+    return usePanelFallback(err.message, null) || {
       ok: false,
       httpStatus: null,
       state: 'unreachable',
@@ -404,6 +441,8 @@ app.get('/api/mlink/device/full', async (req, res) => {
     limitations.push('Dashboard-only MLink endpoints are not configured on this server.')
   } else if (sourceSummary.dashboardSnapshot.state === 'auth-required') {
     limitations.push('Configured dashboard auth was rejected and returned a login page.')
+  } else if (sourceSummary.dashboardSnapshot.state === 'fallback-cache') {
+    limitations.push('Authenticated dashboard snapshot is unavailable, so the Halfmann panel is using the last known rich snapshot as a continuity fallback.')
   }
   if (sourceSummary.latestDeviceData.count > 0 && sourceSummary.dashboardSnapshot.count === 0) {
     limitations.push('Merged live data is currently limited to what Murphy publishes through LatestDeviceData and RunReport.')
