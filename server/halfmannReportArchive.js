@@ -225,6 +225,7 @@ export function archivePerformanceReport(report, { kind = 'generated' } = {}) {
 
 export function listArchivedPerformanceReports(limit = 60) {
   ensureReportsDir()
+  const historyFloorMs = new Date(HALFMANN_HISTORY_FLOOR_ISO).getTime()
   const metas = []
   const monthDirs = readdirSync(REPORTS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -237,6 +238,13 @@ export function listArchivedPerformanceReports(limit = 60) {
       const fullPath = join(fullMonthDir, fileName)
       try {
         const parsed = JSON.parse(readFileSync(fullPath, 'utf8'))
+        const startMs = new Date(parsed?.reportWindow?.startAt || '').getTime()
+        const endMs = new Date(parsed?.reportWindow?.endAt || '').getTime()
+        if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+          if (endMs < startMs) continue
+          if (endMs < historyFloorMs) continue
+          if (startMs < historyFloorMs) continue
+        }
         metas.push(parsed)
       } catch {}
     }

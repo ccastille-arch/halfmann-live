@@ -499,7 +499,7 @@ export function buildScheduledArchiveRanges(now = new Date()) {
     { kind: 'daily', preset: 'last-24-hours', startAt: dailyStart, endAt: dailyEnd },
     { kind: 'weekly', preset: 'last-7-days', startAt: weeklyStart, endAt: weeklyEnd },
     { kind: 'monthly', preset: 'previous-month', startAt: monthlyStart, endAt: monthlyEnd },
-  ]
+  ].filter((range) => range.endAt >= range.startAt)
 }
 
 export async function ensureScheduledPerformanceArchives(now = new Date()) {
