@@ -101,6 +101,17 @@ function getNumericByAddress(data, addresses) {
   return sharedGetNumericByAddress(data, addresses)
 }
 
+function normalizeAddress(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function hasCurrentAddress(data, addresses) {
+  const currentAddresses = Array.isArray(data?._currentDatapointAddresses) ? data._currentDatapointAddresses : []
+  if (!currentAddresses.length) return false
+  const normalized = addresses.map(normalizeAddress)
+  return currentAddresses.some((address) => normalized.includes(normalizeAddress(address)))
+}
+
 function parsePanelBooleanValue(raw) {
   if (raw == null) return null
   const normalized = String(raw).trim().toLowerCase()
@@ -257,6 +268,9 @@ function WellRow({ well }) {
 
 function UnitRow({ unit, actualFlow, desiredFlow, suctionActual, suctionTarget, rpm, discharge, derivedFlow }) {
   const running = rpm != null && rpm > 100
+  const suctionLine = suctionTarget != null
+    ? `Suction ${formatValue(suctionActual, 1)} actual / ${formatValue(suctionTarget, 1)} target PSI`
+    : `Suction ${formatValue(suctionActual, 1)} actual | shared target not published on current feed`
   return (
     <div style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 14, padding: '12px 14px', display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 14, alignItems: 'center' }}>
       <div style={{ fontSize: 13, color: '#fff', fontWeight: 800 }}>{unit.label}{unit.standby ? ' (Standby)' : ''}</div>
@@ -264,7 +278,7 @@ function UnitRow({ unit, actualFlow, desiredFlow, suctionActual, suctionTarget, 
         Flow {formatValue(actualFlow)} actual / {formatValue(desiredFlow)} desired MMSCFD
         {derivedFlow ? ' | actual derived from site balance' : ''}
         <br />
-        Suction {formatValue(suctionActual, 1)} actual / {formatValue(suctionTarget, 1)} Loaded Auto Sp PSI
+        {suctionLine}
         <br />
         RPM {formatValue(rpm, 0)} | discharge {formatValue(discharge, 0)} PSI
       </div>
@@ -486,18 +500,20 @@ export default function HalfmannDiagnosticsView() {
     const unitSuction = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.suctionPressure) ?? getNumeric(unitMaps[index], ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
     const unitSuctionTarget = HALFMANN_UNITS.map((unit, index) => (
-      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp) ?? getNumeric(unitMaps[index], [
-        'Loaded Auto Sp',
-        'Loaded Auto SP',
-        'Loaded Auto Sp:',
-        'Loaded Auto SP:',
-        'Loaded AutoSp',
-        'Loaded AutoSP',
-        'Auto Loaded Sp',
-        'Auto Loaded SP',
-        'Auto Load Sp',
-        'Auto Load SP',
-      ])
+      hasCurrentAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp)
+        ? (getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp) ?? getNumeric(unitMaps[index], [
+            'Loaded Auto Sp',
+            'Loaded Auto SP',
+            'Loaded Auto Sp:',
+            'Loaded Auto SP:',
+            'Loaded AutoSp',
+            'Loaded AutoSP',
+            'Auto Loaded Sp',
+            'Auto Loaded SP',
+            'Auto Load Sp',
+            'Auto Load SP',
+          ]))
+        : null
     ))
     const unitDischarge = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.dischargePressure) ?? getNumeric(unitMaps[index], ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
@@ -548,13 +564,38 @@ export default function HalfmannDiagnosticsView() {
     const suctionMatchAvg = suctionMatchValues.length
       ? suctionMatchValues.reduce((sum, value) => sum + value, 0) / suctionMatchValues.length
       : null
-    const suctionComparisonLines = HALFMANN_UNITS
+    const currentSuctionSpread = unitSuction
+      .filter((value, index) => !HALFMANN_UNITS[index].standby && value != null)
+    const suctionSpread = currentSuctionSpread.length >= 2
+      ? Math.max(...currentSuctionSpread) - Math.min(...currentSuctionSpread)
+      : null
+    const suctionBandScore = suctionSpread == null
+      ? null
+      : Math.max(0, 100 - Math.max(0, suctionSpread - 3) * 4)
+    const suctionFallbackScore = suctionMatchAvg ?? (
+      commandMatchAvg != null && suctionBandScore != null
+        ? Math.max(0, Math.min(100, (commandMatchAvg * 0.6) + (suctionBandScore * 0.4)))
+        : commandMatchAvg ?? suctionBandScore
+    )
+    const suctionComparisonLines = suctionMatchAvg != null ? HALFMANN_UNITS
       .filter((unit) => !unit.standby)
       .map((unit) => {
         const index = HALFMANN_UNITS.findIndex((entry) => entry.key === unit.key)
         return `${unit.label}: ${formatValue(unitSuction[index], 1)} actual / ${formatValue(unitSuctionTarget[index], 1)} target PSI`
       })
       .join('\n')
+      : ''
+    const suctionFallbackLines = suctionMatchAvg == null ? HALFMANN_UNITS
+      .filter((unit) => !unit.standby)
+      .map((unit) => {
+        const index = HALFMANN_UNITS.findIndex((entry) => entry.key === unit.key)
+        const desired = unitDesiredFlows[index]
+        const actual = unitActualFlows[index]
+        const flowMatch = actual != null && desired != null && desired > 0 ? (actual / desired) * 100 : null
+        return `${unit.label}: ${formatValue(unitSuction[index], 1)} suction | ${flowMatch != null ? `${formatPct(flowMatch)} flow match` : 'flow match unavailable'}`
+      })
+      .join('\n')
+      : ''
 
     return {
       timestamp: getTimestamp(panelData),
@@ -588,7 +629,9 @@ export default function HalfmannDiagnosticsView() {
       highestDischarge,
       commandMatchAvg,
       suctionMatchAvg,
+      suctionFallbackScore,
       suctionComparisonLines,
+      suctionFallbackLines,
       panelCompressorsMeetingFlow,
       panelCompressorSignalMismatch,
     }
@@ -696,9 +739,13 @@ export default function HalfmannDiagnosticsView() {
             />
             <SummaryCard
               label="Suction Controller Score"
-              value={derived.suctionMatchAvg != null ? `${formatPct(derived.suctionMatchAvg, 0)}` : '--'}
-              sub={derived.suctionComparisonLines || (derived.speedSuctionPressAutoSp != null ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI` : 'Loaded Auto Sp not visible')}
-              tone={derived.suctionMatchAvg != null && derived.suctionMatchAvg >= 95 ? 'good' : derived.suctionMatchAvg != null ? 'warn' : 'neutral'}
+              value={derived.suctionFallbackScore != null ? `${formatPct(derived.suctionFallbackScore, 0)}` : '--'}
+              sub={derived.suctionComparisonLines
+                || derived.suctionFallbackLines
+                || (derived.speedSuctionPressAutoSp != null
+                  ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI`
+                  : 'No shared suction target or fallback evidence visible')}
+              tone={derived.suctionFallbackScore != null && derived.suctionFallbackScore >= 95 ? 'good' : derived.suctionFallbackScore != null ? 'warn' : 'neutral'}
             />
             <SummaryCard
               label="Compressors Meeting Flow"

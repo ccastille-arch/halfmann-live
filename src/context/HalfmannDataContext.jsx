@@ -105,9 +105,22 @@ function datapointIdentity(dp) {
   return dp?.alias || dp?.desc || dp?.dataSourceName || dp?.Name || dp?.name || null
 }
 
+function datapointAddress(dp) {
+  return String(dp?.addressStr || dp?.address || '').trim().toLowerCase()
+}
+
 function mergeSnapshotData(previousData, nextData) {
   if (!nextData) return previousData ?? null
-  if (!previousData?.datapoints?.length || !nextData?.datapoints?.length) return nextData
+  if (!previousData?.datapoints?.length || !nextData?.datapoints?.length) {
+    return {
+      ...nextData,
+      _currentDatapointAddresses: [...new Set(
+        (nextData?.datapoints || [])
+          .map(datapointAddress)
+          .filter(Boolean),
+      )],
+    }
+  }
 
   const mergedByKey = new Map()
   for (const dp of previousData.datapoints || []) {
@@ -121,12 +134,19 @@ function mergeSnapshotData(previousData, nextData) {
     mergedByKey.set(key, dp)
   }
 
+  const currentAddresses = [...new Set(
+    (nextData.datapoints || [])
+      .map(datapointAddress)
+      .filter(Boolean),
+  )]
+
   return {
     ...previousData,
     ...nextData,
     datapoints: [...mergedByKey.values()],
     _registerCount: mergedByKey.size,
     _heldSupplementCount: Math.max(0, mergedByKey.size - (nextData?.datapoints?.length || 0)),
+    _currentDatapointAddresses: currentAddresses,
   }
 }
 
