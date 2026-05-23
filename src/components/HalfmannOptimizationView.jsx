@@ -381,7 +381,7 @@ export default function HalfmannOptimizationView() {
       }
     } else if (allWellsMeeting && !recycleActive && !dischargeOverrideActive && minorCompressorVariance) {
       primaryRecommendation = {
-        title: 'HOLD — system is stable. No panel setting change justified right now.',
+        title: 'HOLD - system is stable. No panel setting change justified right now.',
         action: 'Nothing at this time.',
         amount: 'No change.',
         confidence: 96,
@@ -401,14 +401,14 @@ export default function HalfmannOptimizationView() {
       primaryRecommendation = {
         title: restrictedCount > 0 ? 'Review restricted well response' : 'Adjust well-side behavior conservatively',
         action: restrictedCount > 0 ? 'Investigate the saturated well before increasing bumps.' : 'Use a small well-side timer or amount adjustment only if under-target behavior persists.',
-        amount: restrictedCount > 0 ? 'No automatic change yet' : 'One small step or 5–10%',
+        amount: restrictedCount > 0 ? 'No automatic change yet' : 'One small step or 5-10%',
         confidence: restrictedCount > 0 ? 76 : 71,
         why: restrictedCount > 0 ? 'A well is short while choke is near open, which looks more like deliverability restriction than compressor shortage.' : 'Wells are the unstable side while compressors are carrying load cleanly.',
         whenNotToChange: 'Do not increase well-side aggressiveness if recycle or discharge protection starts to activate.',
       }
     } else if (compressorScore < 90 && wellScore >= 90) {
       primaryRecommendation = {
-        title: minorCompressorVariance ? 'HOLD — pad is stable; monitor compressor variance only.' : 'Review compressor-side stability first',
+        title: minorCompressorVariance ? 'HOLD - pad is stable; monitor compressor variance only.' : 'Review compressor-side stability first',
         action: minorCompressorVariance ? 'Nothing at this time.' : 'Monitor compressor mismatch or local compressor tuning before touching well allocation.',
         amount: minorCompressorVariance ? 'No change.' : maxCompressorMismatch > INVESTIGATE_BAND ? 'Investigate >12% mismatch' : 'Monitor only',
         confidence: minorCompressorVariance ? 91 : mismatchPersistent ? 79 : 67,
@@ -419,7 +419,7 @@ export default function HalfmannOptimizationView() {
       }
     } else {
       primaryRecommendation = {
-        title: consequenceExists ? 'Stabilize compressor / discharge side before allocation changes' : 'HOLD — pad is stable; monitor compressor variance only.',
+        title: consequenceExists ? 'Stabilize compressor / discharge side before allocation changes' : 'HOLD - pad is stable; monitor compressor variance only.',
         action: consequenceExists ? 'Treat compressor and pressure stability as the first target.' : 'Nothing at this time.',
         amount: consequenceExists ? 'No aggressive change now' : 'No change.',
         confidence: consequenceExists ? 74 : 88,
@@ -435,7 +435,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Low Flow Override Timer',
         action: lowFlowEventEvidenceSupported ? 'Increase' : historyFlags.lowFlow ? 'Monitor' : 'Hold',
-        amount: lowFlowEventEvidenceSupported ? '30–60 sec' : '—',
+        amount: lowFlowEventEvidenceSupported ? '30-60 sec' : '-',
         confidence: lowFlowEventEvidenceSupported ? 76 : historyFlags.lowFlow ? 72 : 93,
         reason: lowFlowEventEvidenceSupported
           ? 'Low-flow events are repeating before recovery and they are tied to real consequence.'
@@ -453,7 +453,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Low Flow Override Amount',
         action: recycleActive || dischargeOverrideActive ? 'Decrease' : 'Hold',
-        amount: recycleActive || dischargeOverrideActive ? '5–10%' : '—',
+        amount: recycleActive || dischargeOverrideActive ? '5-10%' : '-',
         confidence: recycleActive || dischargeOverrideActive ? 80 : 94,
         reason: recycleActive || dischargeOverrideActive
           ? 'Flow corrections are happening into pressure/recycle instability.'
@@ -469,7 +469,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Low Flow Override Max Change',
         action: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 'Decrease' : 'Hold',
-        amount: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5–10%' : '—',
+        amount: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5-10%' : '-',
         confidence: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 74 : 92,
         reason: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive)
           ? 'Low-flow corrections appear too aggressive for the current pressure response.'
@@ -485,7 +485,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Discharge Settle-Out Timer',
         action: dischargeEventEvidenceSupported ? 'Increase' : 'Hold',
-        amount: dischargeEventEvidenceSupported ? '60–120 sec' : '—',
+        amount: dischargeEventEvidenceSupported ? '60-120 sec' : '-',
         confidence: dischargeEventEvidenceSupported ? 78 : noRetainedDischargePattern ? 90 : 86,
         reason: dischargeEventEvidenceSupported
           ? 'Discharge events are clustering before pressure has settled.'
@@ -504,7 +504,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Discharge Override Amount',
         action: dischargeOverrideActive && underTargetCount > 0 ? 'Decrease' : 'Hold',
-        amount: dischargeOverrideActive && underTargetCount > 0 ? '5–10%' : '—',
+        amount: dischargeOverrideActive && underTargetCount > 0 ? '5-10%' : '-',
         confidence: dischargeOverrideActive && underTargetCount > 0 ? 73 : 92,
         reason: dischargeOverrideActive && underTargetCount > 0
           ? 'Pressure protection is active and wells are going short, which suggests the reduction may be a little too strong.'
@@ -521,7 +521,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Discharge Override Timer',
         action: dischargeEventEvidenceSupported && dischargeOverrideActive ? 'Monitor' : 'Hold',
-        amount: '—',
+        amount: '-',
         confidence: dischargeEventEvidenceSupported ? 70 : 91,
         reason: dischargeEventEvidenceSupported && dischargeOverrideActive
           ? 'Monitor timer behavior only if high discharge remains sustained before correction.'
@@ -538,7 +538,7 @@ export default function HalfmannOptimizationView() {
       makeSetting({
         setting: 'Well Sacrifice Amount',
         action: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Investigate' : 'Hold',
-        amount: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Manual validation first' : '—',
+        amount: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Manual validation first' : '-',
         confidence: historyFlags.sacrifice ? 70 : 92,
         reason: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists
           ? 'Sacrifice behavior is present, but priority-well protection needs validation before changing the amount.'
@@ -553,15 +553,15 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Compressor Flow PV Offset',
-        action: maxCompressorMismatch <= REVIEW_BAND ? 'Monitor' : mismatchPersistent && consequenceExists ? 'Investigate' : 'Monitor',
-        amount: '—',
+        action: maxCompressorMismatch <= REVIEW_BAND ? 'Monitor Only' : mismatchPersistent && consequenceExists ? 'Investigate' : 'Monitor Only',
+        amount: '-',
         confidence: mismatchPersistent && consequenceExists ? 79 : 84,
         reason: maxCompressorMismatch <= MONITOR_BAND
-          ? 'Unit mismatch is inside the ±3% monitor band.'
+          ? 'Unit mismatch is inside the +/-3% normal deadband.'
           : maxCompressorMismatch <= REVIEW_BAND
-            ? 'Mismatch is present but still inside the monitor-only band unless it persists.'
+            ? 'Mismatch is present but still inside the monitor-only band unless it persists and causes a site consequence.'
             : maxCompressorMismatch <= INVESTIGATE_BAND
-              ? 'Mismatch has reached the review band and should be watched if persistent.'
+              ? 'Mismatch has reached the review band and should only be reviewed if it stays persistent and starts affecting pad performance.'
               : 'Mismatch exceeds the investigate band and is large enough to justify compressor-side review.',
         whatToWatch: 'Watch persistence, not just magnitude, before changing offsets.',
         liveEvidence: maxCompressorMismatch > 0,
@@ -758,7 +758,7 @@ export default function HalfmannOptimizationView() {
                   <EvidenceRow label="Dispatch mismatch events" value={String(history?.optimizationHistoryContext?.compressorDispatchMismatchEvents ?? '--')} />
                   <EvidenceRow label="Constraint events" value={String(history?.optimizationHistoryContext?.compressorConstraintEvents ?? '--')} />
                   <EvidenceRow label="Sacrifice mode events" value={String(history?.optimizationHistoryContext?.sacrificeModeEvents ?? '--')} />
-                  <EvidenceRow label="Pressure recovery pattern" value={history?.optimizationHistoryContext?.pressureRecoveryPattern || (historyLoading ? 'Loading…' : historyError ? historyError : 'Insufficient retained history')} />
+                  <EvidenceRow label="Pressure recovery pattern" value={history?.optimizationHistoryContext?.pressureRecoveryPattern || (historyLoading ? 'Loading...' : historyError ? historyError : 'Insufficient retained history')} />
                 </div>
               </div>
             </details>
