@@ -48,6 +48,8 @@ const LIVE_WELL_YESTERDAY_KEYS = [
   ["Wellhead #5 Yesterday's Total Flow", 'Wellhead #5 Yesterdays Total Flow', "Well 5 Yesterday's Total Flow", 'Well 5 Yesterdays Total Flow'],
 ]
 
+const LIVE_WELL_YESTERDAY_ADDRESSES = ['460222', '460236', '460250', '460264', '460278']
+
 async function readErrorPayload(res) {
   const contentType = res.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -87,6 +89,10 @@ function parseLiveNumeric(value) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function normalizeRegisterAddress(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 function resolvePreferredDatapoint(dataMap, labels) {
   for (const label of labels) {
     const datapoint = findRegisterDatapoint(dataMap, { label, decimals: 3 })
@@ -95,8 +101,18 @@ function resolvePreferredDatapoint(dataMap, labels) {
   return null
 }
 
+function resolveDatapointByAddress(data, addresses) {
+  if (!data?.datapoints?.length) return null
+  const normalizedAddresses = addresses.map(normalizeRegisterAddress)
+  return data.datapoints.find((datapoint) => normalizedAddresses.includes(normalizeRegisterAddress(datapoint.addressStr || datapoint.address))) ?? null
+}
+
 function getNumeric(dataMap, labels) {
   return parseLiveNumeric(resolvePreferredDatapoint(dataMap, labels)?.value)
+}
+
+function getNumericByAddress(data, addresses) {
+  return parseLiveNumeric(resolveDatapointByAddress(data, addresses)?.value)
 }
 
 function getPanelCompressorsMeetingFlow(dataMap) {
@@ -506,7 +522,7 @@ export default function HalfmannLiveView() {
     const desiredInfo = getWellSetpointInfo(panel, wellNumber, HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget)
     const calculatedDesired = getWellCalculatedDesiredFlow(panel, wellNumber)
     const desired = desiredInfo.value
-    const yesterday = parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
+    const yesterday = getNumericByAddress(panelData, [LIVE_WELL_YESTERDAY_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
     const staticPres = getNumeric(panel, [
       `Wellhead #${wellNumber} Injection Static Pressure From Customer PLC`,
       `Well ${wellNumber} Static Pressure`, `Well #${wellNumber} Static Pressure`,

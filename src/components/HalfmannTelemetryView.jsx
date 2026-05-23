@@ -46,6 +46,7 @@ const WELL_YESTERDAY_KEYS = [1,2,3,4,5].map(n => [
   `Well ${n} Yesterday's Total Flow`,
   `Well ${n} Yesterdays Total Flow`,
 ])
+const WELL_YESTERDAY_ADDRESSES = ['460222', '460236', '460250', '460264', '460278']
 const WELL_CHOKE_KEYS  = [1,2,3,4,5].map(n => [
   `Well ${n} Choke Position`, `Well #${n} Choke Position`,
   `Well #${n} Analog Output ${n}`,   // Altronic DE4000 alias seen in MLink portal
@@ -143,6 +144,7 @@ function cleanUnit(u) {
   return u.replace(/Â°/g, '°').replace(/Ã‚/g, '').trim()
 }
 function parseLiveNumeric(v) { const n = Number(v); return Number.isFinite(n) ? n : null }
+function normalizeRegisterAddress(v) { return String(v ?? '').trim().toLowerCase() }
 function resolveDP(dataMap, labels) {
   for (const label of labels) {
     const dp = findRegisterDatapoint(dataMap, { label, decimals: 3 })
@@ -151,6 +153,12 @@ function resolveDP(dataMap, labels) {
   return null
 }
 function getN(dataMap, labels) { return parseLiveNumeric(resolveDP(dataMap, labels)?.value) }
+function resolveDPByAddress(data, addresses) {
+  if (!data?.datapoints?.length) return null
+  const normalizedAddresses = addresses.map(normalizeRegisterAddress)
+  return data.datapoints.find(dp => normalizedAddresses.includes(normalizeRegisterAddress(dp.addressStr || dp.address))) ?? null
+}
+function getNByAddress(data, addresses) { return parseLiveNumeric(resolveDPByAddress(data, addresses)?.value) }
 function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
   const liveValue = getN(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
@@ -585,7 +593,7 @@ export default function HalfmannTelemetryView() {
       choke: getN(panel, WELL_CHOKE_KEYS[i]),
       casing: getN(panel, WELL_CASING_KEYS[i]),
       tubing: getN(panel, WELL_TUBING_KEYS[i]),
-      yesterday: getN(panel, WELL_YESTERDAY_KEYS[i]),
+      yesterday: getNByAddress(panelData, [WELL_YESTERDAY_ADDRESSES[i]]) ?? getN(panel, WELL_YESTERDAY_KEYS[i]),
       stableAtTarget,
     }
   })
