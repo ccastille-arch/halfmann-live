@@ -83,7 +83,8 @@ function AppShell() {
       panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === String(PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow))?.value,
     )
     const feedIssue = Boolean(liveError) || Boolean(commsStatus?.isHolding)
-    return wellShortActive || compressorShortActive || overrideActive || recycleActive || anyCompressorNotMeeting === true || feedIssue
+    const compressorFlowDiagnostic = wellShortActive && (compressorShortActive || anyCompressorNotMeeting === true)
+    return wellShortActive || compressorFlowDiagnostic || overrideActive || recycleActive || feedIssue
   }, [panelData, meetingState, liveError, commsStatus])
 
   return (

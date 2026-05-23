@@ -705,10 +705,12 @@ export default function HalfmannDiagnosticsView() {
               value={derived.panelCompressorsMeetingFlow == null ? '--' : derived.panelCompressorsMeetingFlow ? 'YES' : 'NO'}
               sub={derived.panelCompressorsMeetingFlow == null
                 ? 'Compressors Meeting Flow Demand not visible'
+                : derived.wellsShort.length === 0 && derived.panelCompressorsMeetingFlow === false
+                  ? 'Panel says NO, but no wells are short, so this is monitor-only for now'
                 : derived.panelCompressorSignalMismatch
                   ? 'Direct compressor bits say YES, but one panel summary bit says NO'
                   : 'Direct panel signal from M-Link'}
-              tone={derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : 'bad'}
+              tone={derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : derived.wellsShort.length > 0 ? 'bad' : 'neutral'}
             />
           </div>
 
