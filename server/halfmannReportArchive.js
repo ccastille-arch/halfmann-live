@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { getHalfmannHistoryPaths } from './halfmannHistoryStore.js'
 
 export const REPORT_TIMEZONE = process.env.HALFMANN_REPORT_TIMEZONE || 'America/Chicago'
+export const HALFMANN_HISTORY_FLOOR_ISO = process.env.HALFMANN_HISTORY_FLOOR_ISO || '2026-05-22T05:00:00.000Z'
 const REPORT_SITE_NAME = 'Halfmann 1214'
 const REPORTS_DIR = join(getHalfmannHistoryPaths().historyDir, 'reports')
 
@@ -104,6 +105,24 @@ export function getCalendarContext(now = new Date(), timeZone = REPORT_TIMEZONE)
     monthStartIso: monthStart.toISOString(),
     monthToDateLabel: `${parts.year}-${String(parts.month).padStart(2, '0')} month-to-date`,
   }
+}
+
+export function getHalfmannHistoryFloor(timeZone = REPORT_TIMEZONE) {
+  const floor = new Date(HALFMANN_HISTORY_FLOOR_ISO)
+  return {
+    iso: floor.toISOString(),
+    timezone: timeZone,
+    dateKey: formatDateKey(floor, timeZone),
+    monthKey: buildMonthKey(floor, timeZone),
+    localLabel: `${formatDateKey(floor, timeZone)} 00:00 ${timeZone}`,
+  }
+}
+
+export function clampHalfmannHistoryStart(date, timeZone = REPORT_TIMEZONE) {
+  const candidate = date instanceof Date ? new Date(date) : new Date(date)
+  const floor = new Date(HALFMANN_HISTORY_FLOOR_ISO)
+  if (Number.isNaN(candidate.getTime())) return new Date(floor)
+  return candidate < floor ? new Date(floor) : candidate
 }
 
 function buildWorkbook(report) {

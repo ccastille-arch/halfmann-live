@@ -352,7 +352,7 @@ export default function HalfmannPerformanceReportView() {
           </div>
 
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            Month-to-date KPI cards always reset on the first day of the month at midnight based on the report calendar. Every generated report is archived into the Halfmann Railway volume and stays downloadable from this page.
+            Halfmann reporting is currently hard-clamped to {report?.historyFloor?.localLabel || meta?.historyFloor?.localLabel || 'the new panel logic go-live timestamp'}, so no performance or optimization scoring uses older pre-install data. Month-to-date KPI cards reset on the first day of the month at midnight after that go-live floor, and every generated report is archived into the Halfmann Railway volume for download.
           </div>
 
           {error ? <div style={{ color: '#fda4af', fontSize: 14 }}>{error}</div> : null}
@@ -369,7 +369,7 @@ export default function HalfmannPerformanceReportView() {
 
         <Section title="Selected Report Window" eyebrow={`${report?.reportWindow?.preset || preset} | ${formatDateTime(report?.reportWindow?.startAt)} to ${formatDateTime(report?.reportWindow?.endAt)}`}>
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            This section follows the selected date range. Month-to-date KPI cards above stay pinned to the live calendar month regardless of the selected historical window.
+            This section follows the selected date range, but it will never score anything earlier than {report?.historyFloor?.localLabel || meta?.historyFloor?.localLabel || 'the Halfmann logic go-live floor'}. Month-to-date KPI cards above stay pinned to the live calendar month after that floor.
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>

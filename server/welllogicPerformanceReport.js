@@ -1,8 +1,10 @@
 import { getHalfmannHistoryPaths, loadHalfmannPanelMatchHistory } from './halfmannHistoryStore.js'
 import {
   archivePerformanceReport,
+  clampHalfmannHistoryStart,
   getArchivedPerformanceReportStorageMeta,
   getCalendarContext,
+  getHalfmannHistoryFloor,
   listArchivedPerformanceReports,
   zonedDateTimeToUtc,
 } from './halfmannReportArchive.js'
@@ -46,9 +48,11 @@ function toIso(value) {
 
 function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new Date() }) {
   if (startAt && endAt) {
+    const clampedStart = clampHalfmannHistoryStart(startAt)
+    const normalizedEnd = new Date(endAt)
     return {
-      startAt: new Date(startAt),
-      endAt: new Date(endAt),
+      startAt: clampedStart,
+      endAt: normalizedEnd < clampedStart ? new Date(clampedStart) : normalizedEnd,
       preset,
     }
   }
@@ -60,8 +64,9 @@ function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new 
   const currentMonth = Number(calendar.monthKey.slice(5, 7))
 
   if (preset === 'current-month') {
+    const clampedStart = clampHalfmannHistoryStart(calendar.monthStartIso, timezone)
     return {
-      startAt: new Date(calendar.monthStartIso),
+      startAt: clampedStart,
       endAt: effectiveNow,
       preset,
     }
@@ -76,16 +81,18 @@ function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new 
       : { year: previousMonth.year, month: previousMonth.month + 1 }
     const start = zonedDateTimeToUtc({ ...previousMonth, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 }, timezone)
     const end = new Date(zonedDateTimeToUtc({ ...nextMonth, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 }, timezone).getTime() - 1)
-    return { startAt: start, endAt: end, preset }
+    const clampedStart = clampHalfmannHistoryStart(start, timezone)
+    return { startAt: clampedStart, endAt: end < clampedStart ? new Date(clampedStart) : end, preset }
   }
 
   const lookbackDays = preset === 'last-7-days' ? 7 : preset === 'last-14-days' ? 14 : 30
   const start = new Date(effectiveNow)
   start.setUTCDate(start.getUTCDate() - lookbackDays)
   start.setUTCHours(0, 0, 0, 0)
+  const clampedStart = clampHalfmannHistoryStart(start, timezone)
   return {
-    startAt: start,
-    endAt: effectiveNow,
+    startAt: clampedStart,
+    endAt: effectiveNow < clampedStart ? new Date(clampedStart) : effectiveNow,
     preset,
   }
 }
@@ -301,6 +308,7 @@ function buildReportSnapshot(range) {
       source: 'volume-history-plus-seeded-csv',
     },
     calendar: getCalendarContext(new Date()),
+    historyFloor: getHalfmannHistoryFloor(),
   }
 }
 
@@ -323,6 +331,7 @@ export async function getPerformanceReportMeta() {
     fetchedAt: new Date().toISOString(),
     controls: buildControlMeta(),
     calendar: storageMeta.monthToDate,
+    historyFloor: getHalfmannHistoryFloor(),
     storage: {
       historyDir: historyPaths.historyDir,
       panelMatchHistoryPath: historyPaths.panelMatchHistoryPath,
@@ -351,6 +360,7 @@ export async function generatePerformanceReport({
     fetchedAt: new Date().toISOString(),
     controls: buildControlMeta(),
     calendar: monthToDateReport.calendar,
+    historyFloor: monthToDateReport.historyFloor,
     reportWindow: selectedReport.reportWindow,
     runtime: selectedReport.runtime,
     prioritization: selectedReport.prioritization,

@@ -1,4 +1,5 @@
 import { loadHalfmannPanelMatchHistory, loadHalfmannRawHistory } from './halfmannHistoryStore.js'
+import { clampHalfmannHistoryStart, getHalfmannHistoryFloor } from './halfmannReportArchive.js'
 
 const DEFAULT_SOURCE_KEY = 'service-compression-fleet'
 const DEFAULT_ACCESS_BASE = 'https://mlink-ingest-production.up.railway.app'
@@ -327,9 +328,12 @@ export async function getOptimizationHistory({
   reportLimit = 7,
 } = {}) {
   const selectedDeviceIds = parseCsvList(deviceIds)
-  const startAt = new Date(Date.now() - (lookbackDays * 24 * 60 * 60 * 1000))
-  const panelHistory = loadHalfmannPanelMatchHistory({ startAt, endAt: new Date(), includeFallback: false })
-  const rawHistory = loadHalfmannRawHistory({ startAt, endAt: new Date() })
+  const requestedStartAt = new Date(Date.now() - (lookbackDays * 24 * 60 * 60 * 1000))
+  const startAt = clampHalfmannHistoryStart(requestedStartAt)
+  const endAt = new Date()
+  const effectiveLookbackDays = Math.max(1, Math.ceil((endAt.getTime() - startAt.getTime()) / (24 * 60 * 60 * 1000)))
+  const panelHistory = loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback: false })
+  const rawHistory = loadHalfmannRawHistory({ startAt, endAt })
   const volumeContext = buildVolumeOptimizationHistoryContext(panelHistory, rawHistory)
 
   let units = []
@@ -371,8 +375,8 @@ export async function getOptimizationHistory({
           includeReports: true,
           includeMlContext: true,
           reportLimit,
-          lookbackDays,
-          endAt: toIsoOrNull(new Date()),
+          lookbackDays: effectiveLookbackDays,
+          endAt: toIsoOrNull(endAt),
         }),
       })
 
@@ -401,9 +405,14 @@ export async function getOptimizationHistory({
   return {
     fetchedAt: new Date().toISOString(),
     sourceKey,
-    lookbackDays,
+    lookbackDays: effectiveLookbackDays,
     reportLimit,
     deviceIds: selectedDeviceIds.length ? selectedDeviceIds : DEFAULT_DEVICE_IDS,
+    historyFloor: getHalfmannHistoryFloor(),
+    reportWindow: {
+      startAt: toIsoOrNull(startAt),
+      endAt: toIsoOrNull(endAt),
+    },
     optimizationHistoryContext,
     volumeHistory: {
       panelSamples: panelHistory.length,
