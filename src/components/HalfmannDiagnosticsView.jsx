@@ -55,7 +55,6 @@ const WELL_STATIC_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Well ${n} Static Pressure`,
 ])
 
-const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
 const UNIT_TO_COMP_NUM = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }
 
 async function readErrorPayload(res) {
@@ -435,7 +434,7 @@ export default function HalfmannDiagnosticsView() {
     const wells = WELL_FLOW_KEYS.map((flowKeys, index) => {
       const wellNumber = index + 1
       const desiredDatapoint = resolveDatapointByAddress(panelData, [WELL_SETPOINT_ADDRESSES[index]]) ?? resolveDatapoint(panel, WELL_SETPOINT_KEYS[index])
-      const desired = parseNumeric(desiredDatapoint?.value) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? null
+      const desired = parseNumeric(desiredDatapoint?.value) ?? null
       const calculatedDesired = getNumericByAddress(panelData, [WELL_CALCULATED_DESIRED_ADDRESSES[index]]) ?? getNumeric(panel, WELL_CALCULATED_DESIRED_KEYS[index])
       const actual = getNumericByAddress(panelData, [WELL_FLOW_ADDRESSES[index]]) ?? getNumeric(panel, flowKeys)
       const staticPressure = getNumericByAddress(panelData, [WELL_STATIC_ADDRESSES[index]]) ?? getNumeric(panel, WELL_STATIC_KEYS[index])
@@ -498,13 +497,8 @@ export default function HalfmannDiagnosticsView() {
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.engineSpeed) ?? getNumeric(unitMaps[index], ['RPM', 'Driver Speed', 'Engine Speed', 'ENGINE RPM', 'Engine Speed From EICS']))
     const runningUnits = HALFMANN_UNITS.filter((unit, index) => !unit.standby && unitRpm[index] != null && unitRpm[index] > 100)
     const runningPrimaryCount = runningUnits.length
-    const derivedDesiredPerRunningUnit = totalDesired != null && runningPrimaryCount > 0 ? totalDesired / runningPrimaryCount : null
-    const unitDesiredIsDerived = HALFMANN_UNITS.map((unit, index) =>
-      !unit.standby && rawUnitDesiredFlows[index] == null && unitRpm[index] != null && unitRpm[index] > 100 && derivedDesiredPerRunningUnit != null
-    )
-    const unitDesiredFlows = HALFMANN_UNITS.map((unit, index) =>
-      rawUnitDesiredFlows[index] ?? (unitDesiredIsDerived[index] ? derivedDesiredPerRunningUnit : null)
-    )
+    const unitDesiredIsDerived = HALFMANN_UNITS.map(() => false)
+    const unitDesiredFlows = rawUnitDesiredFlows
     const recommendedCompressors = getNumericByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getNumeric(panel, ['Recommended Number Of Compressors'])
     const recycleValvePosition = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition) ?? getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
     const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null

@@ -24,8 +24,6 @@ const HALFMANN_UNITS = [
   { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, type: 'c4' },
 ]
 
-const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
-
 const WELL_FLOW_KEYS = [
   ['Well 1 Injection Gas Flow Rate', 'Well #1 Flow Rate'],
   ['Well 2 Injection Gas Flow Rate', 'Well #2 Flow Rate'],
@@ -583,7 +581,7 @@ export default function HalfmannTelemetryView() {
   const { wellTargetPct = 5, recycleOpenPct = 5 } = siteSettings
 
   const wellData = WELL_FLOW_KEYS.map((flowKeys, i) => {
-    const desiredInfo = getWellSetpointInfo(panelData, panel, i + 1, HALFMANN_WELL_SETPOINT_FALLBACKS[i])
+    const desiredInfo = getWellSetpointInfo(panelData, panel, i + 1, null)
     const stableAtTarget = meetingState.wells[String(i + 1)]
     return {
       n: i + 1,
@@ -732,17 +730,17 @@ export default function HalfmannTelemetryView() {
             <GaugeGrid>
               <YesNoGauge label="All Wells Meeting Desired Rate?" good={allOnTarget}
                 detail={wellsWithTarget.length > 0
-                  ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}%${liveSetpointCount === 0 && fallbackSetpointCount > 0 ? ' using confirmed fallback targets' : ''}`
+                  ? `${wellsOnTarget} of ${wellsWithTarget.length} within ${wellTargetPct}% using live target tags`
                   : activeWells > 0 ? 'Well targets are not available yet' : 'Awaiting data'}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Wells Meeting Rate"
                 value={wellsWithTarget.length > 0 ? `${wellsOnTarget}/${wellsWithTarget.length}` : null}
                 status={wellsWithTarget.length > 0 ? (wellsOnTarget === wellsWithTarget.length ? 'good' : wellsOnTarget >= wellsWithTarget.length * 0.6 ? 'warn' : 'bad') : 'unknown'}
-                sub={wellsWithTarget.length === 0 && activeWells > 0 ? 'No target data yet' : liveSetpointCount === 0 && fallbackSetpointCount > 0 ? 'Using confirmed fallback targets' : undefined}
+                sub={wellsWithTarget.length === 0 && activeWells > 0 ? 'No target data yet' : liveSetpointCount > 0 ? 'Using live target tags' : undefined}
                 isAdmin={isAdmin} settingKey="wellTargetPct" onSettings={openSettings} />
               <Gauge label="Total Desired Flow"
                 value={totalDesired != null ? fmt(totalDesired) : null} unit="MMSCFD"
-                sub={hasAnySetpoints ? (liveSetpointCount > 0 ? 'Sum of well setpoints' : 'Sum of confirmed fallback targets') : totalDesiredSite != null ? 'Panel register' : NOT_PUBLISHED_COPY} />
+                sub={hasAnySetpoints ? 'Sum of live well setpoints' : totalDesiredSite != null ? 'Panel register' : NOT_PUBLISHED_COPY} />
               <Gauge label="Total Actual Flow"
                 value={fmt(totalActual)} unit="MMSCFD"
                 status={padMatchPct != null ? (padMatchPct >= 95 ? 'good' : padMatchPct >= 80 ? 'warn' : 'bad') : 'unknown'}

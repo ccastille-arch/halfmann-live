@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { findRegisterDatapoint, parseLiveDatapoints } from '../engine/liveRegisters'
 import { PANEL_ADDRESSES, UNIT_ADDRESSES, getNumericByAddress, resolveDatapointByAddress } from '../engine/halfmannRegisters'
-import { HALFMANN_UNITS, HALFMANN_WELL_SETPOINT_FALLBACKS, useHalfmannData } from '../context/HalfmannDataContext'
+import { HALFMANN_UNITS, useHalfmannData } from '../context/HalfmannDataContext'
 
 const TARGET_TOLERANCE_PCT = 5
 const WELL_FLOW_KEYS = [
@@ -52,7 +52,7 @@ function getWellSetpoint(panelData, panelMap, wellNumber) {
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
-  ]) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[wellNumber - 1] ?? null
+  ]) ?? null
 }
 
 function getWellCalculatedDesired(panelData, panelMap, wellNumber) {

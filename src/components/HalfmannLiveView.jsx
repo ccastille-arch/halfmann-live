@@ -31,8 +31,6 @@ const HALFMANN_UNITS = [
   { key: 'unit1396', label: 'Unit 1396 (Standby)', deviceId: HALFMANN_DEVICES.unit1396, standby: true },
 ]
 
-const HALFMANN_WELL_SETPOINT_FALLBACKS = [1.225, 1.1, 1.45, 1.0, 1.35]
-
 const LIVE_WELL_FLOW_KEYS = [
   ['Well 1 Injection Gas Flow Rate', 'Well #1 Flow Rate'],
   ['Well 2 Injection Gas Flow Rate', 'Well #2 Flow Rate'],
@@ -517,7 +515,7 @@ export default function HalfmannLiveView() {
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const actual = getNumericByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
-    const desiredInfo = getWellSetpointInfo(panelData, panel, wellNumber, HALFMANN_WELL_SETPOINT_FALLBACKS[index] ?? perWellTarget)
+    const desiredInfo = getWellSetpointInfo(panelData, panel, wellNumber, perWellTarget)
     const calculatedDesired = getWellCalculatedDesiredFlow(panelData, panel, wellNumber)
     const desired = desiredInfo.value
     const yesterday = getNumericByAddress(panelData, [LIVE_WELL_YESTERDAY_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
@@ -690,9 +688,7 @@ export default function HalfmannLiveView() {
                   good={allOnTarget}
                   value={siteWellScore != null ? `${siteWellScore.toFixed(0)}%` : undefined}
                   detail={wellsWithTarget.length > 0
-                    ? (fallbackSetpointCount > 0 && liveSetpointCount === 0
-                      ? 'Using confirmed fallback well targets until live setpoint tags appear'
-                      : `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}${fallbackSetpointCount > 0 ? ` and ${fallbackSetpointCount} fallback target${fallbackSetpointCount === 1 ? '' : 's'}` : ''}`)
+                    ? `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}`
                     : 'Waiting for flow data...'}
                 />
                 <StatusCard

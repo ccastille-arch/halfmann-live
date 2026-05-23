@@ -153,7 +153,7 @@ function getWellTarget(data, dataMap, wellNumber) {
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
-  ]) ?? HALFMANN_WELL_SETPOINT_FALLBACKS[wellNumber - 1] ?? null
+  ]) ?? null
 }
 
 function getUnitDesiredFlow(panelData, panelMap, unitData, unitMap, unitKey, unitLabel) {
