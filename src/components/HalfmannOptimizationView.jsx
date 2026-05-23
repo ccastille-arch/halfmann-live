@@ -433,35 +433,49 @@ function CompressorRow({ compressor }) {
 
 function SettingTable({ rows }) {
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {['Setting', 'Problem Detected', 'Direction', 'Size', 'Confidence', 'Reason', 'Risk', 'Validation'].map((label) => (
-              <th key={label} style={{ textAlign: 'left', fontSize: 10, color: '#7dd3fc', letterSpacing: '0.14em', textTransform: 'uppercase', padding: '0 12px 12px 0' }}>
-                {label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const colors = toneStyles(row.tone)
-            return (
-              <tr key={row.setting}>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: '#f8fafc', fontSize: 12, fontWeight: 700 }}>{row.setting}</td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: '#cbd5e1', fontSize: 12, lineHeight: 1.6 }}>{row.problem}</td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a' }}><Chip text={row.direction} tone={row.tone} /></td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: '#cbd5e1', fontSize: 12 }}>{row.size}</td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: colors.label, fontSize: 12, fontWeight: 800 }}>{formatPercent(row.confidence, 0)}</td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: '#cbd5e1', fontSize: 12, lineHeight: 1.6 }}>{row.reason}</td>
-                <td style={{ padding: '12px 12px 12px 0', borderTop: '1px solid #16304a', color: '#cbd5e1', fontSize: 12, lineHeight: 1.6 }}>{row.risk}</td>
-                <td style={{ padding: '12px 0 12px 0', borderTop: '1px solid #16304a', color: '#cbd5e1', fontSize: 12, lineHeight: 1.6 }}>{row.validation}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div style={{ display: 'grid', gap: 14 }}>
+      {rows.map((row) => {
+        const colors = toneStyles(row.tone)
+        return (
+          <div key={row.setting} style={{
+            border: `1px solid ${colors.border}`,
+            borderRadius: 18,
+            background: colors.bg,
+            padding: '16px 18px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 6 }}>{row.setting}</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <Chip text={row.readiness} tone={row.tone} />
+                  <Chip text={row.recommendation} tone={row.tone} />
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 4 }}>Confidence</div>
+                <div style={{ fontSize: 20, color: colors.label, fontWeight: 900 }}>{formatPercent(row.confidence, 0)}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+              {[
+                ['Current behavior', row.currentBehavior],
+                ['Suggested change', row.suggestedChange],
+                ['Why this direction', row.reason],
+                ['What would reverse it', row.reverseEvidence],
+                ['Safety limit / max allowed change', row.safetyLimit],
+                ['Risk', row.risk],
+                ['Validation', row.validation],
+              ].map(([label, value]) => (
+                <div key={`${row.setting}-${label}`} style={{ border: '1px solid #17314c', borderRadius: 14, background: 'rgba(8, 16, 28, 0.72)', padding: '12px 14px' }}>
+                  <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: '#dbeafe', lineHeight: 1.7 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -752,119 +766,252 @@ function buildSettingRows(model) {
   const stable = model.allWellsWithinBand && !model.recycleOpen && model.overrideActive !== true
   const hunting = model.chokeHuntingRisk
   const compressorLimited = model.compressorConstraintActive || model.underDispatchCompressors.length > 0
-  const pressureRisk = model.overrideActive === true || (model.recycleOpen && model.flowExcess > 0.03)
+  const pressureRisk = model.overrideActive === true || model.recycleOpen || model.compressorSlowdownProtectionLikely
+  const eventHistoryThin = model.eventMemory.length < 2
+  const wellRestrictionActive = model.restrictedWellCount > 0 || model.panelSeeingWellTrouble === true
+  const stableButExcess = stable && model.flowExcess > 0.03
+  const retriggerRisk = hunting || (model.flowTargetDriftPct ?? 0) > 2
+  const mk = (row) => ({ confidence: model.confidence.recommendation, tone: 'blue', ...row })
 
   return [
-    {
+    mk({
       setting: 'Low Flow Override Amount',
-      problem: model.flowExcess > 0.03 ? 'Pad is carrying more gas than the wells need.' : hunting ? 'Pad may be overreacting to transient well movement.' : 'No strong amplitude problem detected.',
-      direction: model.flowExcess > 0.03 || hunting ? 'decrease' : stable ? 'hold' : 'review manually',
-      size: model.flowExcess > 0.08 ? 'medium' : 'small',
-      confidence: model.confidence.recommendation,
-      reason: model.flowExcess > 0.03 ? 'Reduce overcorrection risk while keeping the wells inside the target band.' : hunting ? 'Smaller bumps are safer when response lag is already visible.' : 'Current live evidence does not justify changing bump size.',
-      risk: 'Too much reduction may leave a real short well slow to recover.',
-      validation: 'Confirm well shortfall persists across the 2 and 5 minute checkpoints before changing.',
-      tone: model.flowExcess > 0.03 || hunting ? 'orange' : stable ? 'green' : 'blue',
-    },
-    {
+      readiness: stableButExcess ? 'Actionable now' : retriggerRisk ? 'Monitor only' : 'Monitor only',
+      recommendation: stableButExcess ? 'Decrease' : stable ? 'Hold' : 'Needs manual validation',
+      currentBehavior: stableButExcess
+        ? 'Wells are broadly meeting rate and the pad is carrying slight excess flow.'
+        : retriggerRisk
+          ? 'The loop may be reacting a little faster than the process has time to settle.'
+          : 'No strong low-flow amplitude issue is visible in the current state.',
+      suggestedChange: stableButExcess
+        ? 'Reduce by 5-10% or one small configured step.'
+        : retriggerRisk
+          ? 'Hold for now. If low-flow retriggers stack, reduce by one small configured step.'
+          : 'No change.',
+      reason: stableButExcess
+        ? 'No wells are short, flow excess exists, and compressor dispatch is already close to target.'
+        : retriggerRisk
+          ? 'Smaller bumps are only justified if the panel is moving again before the field has physically responded.'
+          : 'The live evidence does not justify changing bump size yet.',
+      reverseEvidence: 'Reverse to Hold if one or more wells stay below target at the 2-minute and 5-minute checkpoints after any reduction.',
+      safetyLimit: 'No more than 10% or one small configured step per change.',
+      risk: 'Too much reduction can create a real shortfall on the next under-target event.',
+      validation: 'Watch 2-minute and 5-minute well flow response after the next low-flow event.',
+      confidence: stableButExcess ? model.confidence.recommendation : retriggerRisk ? model.confidence.stability : model.confidence.recommendation,
+      tone: stableButExcess ? 'orange' : stable ? 'green' : 'blue',
+    }),
+    mk({
       setting: 'Low Flow Override Time Between Changes',
-      problem: hunting ? 'Choke or well response looks fast/noisy relative to the correction cadence.' : 'No repeated low-flow oscillation is proven.',
-      direction: hunting ? 'increase' : stable ? 'hold' : 'review manually',
-      size: hunting ? 'small' : 'small',
-      confidence: hunting ? model.confidence.stability : model.confidence.recommendation,
-      reason: 'Longer spacing helps the panel see the real post-change response before moving again.',
-      risk: 'Too much delay may slow recovery of a genuinely underfed well.',
-      validation: 'Check whether the same well is repeatedly cycling below target without a durable pressure change.',
-      tone: hunting ? 'yellow' : stable ? 'green' : 'blue',
-    },
-    {
+      readiness: retriggerRisk ? 'Requires event history' : 'Monitor only',
+      recommendation: retriggerRisk ? 'Increase' : 'Hold',
+      currentBehavior: retriggerRisk
+        ? 'Repeated correction risk is present or target drift is still moving before the process fully settles.'
+        : 'No repeated low-flow retrigger pattern is proven.',
+      suggestedChange: retriggerRisk ? 'Increase by 30-60 seconds.' : 'No change unless repeated low-flow retriggers are detected.',
+      reason: 'The timer should only be increased when the panel is acting before the process has physically responded.',
+      reverseEvidence: 'Reverse to Hold if retriggers stop and wells recover cleanly without stacked low-flow events.',
+      safetyLimit: 'Limit to 60 seconds per adjustment unless event memory repeatedly proves more lag.',
+      risk: 'Too much delay can slow recovery of a genuinely underfed well.',
+      validation: 'Use at least one clean low-flow event with 2-minute and 5-minute recovery checkpoints.',
+      confidence: retriggerRisk ? model.confidence.stability : model.confidence.recommendation,
+      tone: retriggerRisk ? 'yellow' : 'green',
+    }),
+    mk({
+      setting: 'Low Flow Override Max Change',
+      readiness: retriggerRisk ? 'Requires event history' : 'Monitor only',
+      recommendation: retriggerRisk ? 'Decrease' : 'Hold',
+      currentBehavior: retriggerRisk
+        ? 'Correction amplitude may be stacking before lagged field response is visible.'
+        : 'No evidence yet that the panel is taking too large a low-flow step.',
+      suggestedChange: retriggerRisk ? 'Reduce maximum single-step change by 5-10% or one small configured step.' : 'No change.',
+      reason: 'Smaller capped moves protect against overshoot when the process response is slower than the controller loop.',
+      reverseEvidence: 'Reverse to Hold if wells remain short after smaller capped steps and pressure/recycle stay stable.',
+      safetyLimit: 'Do not cut more than 10% from the max step in one adjustment.',
+      risk: 'A cap that is too small can make the pad slow to recover from a real deficit.',
+      validation: 'Compare one event before and after the cap change using 2-minute, 5-minute, and 10-minute checkpoints.',
+      confidence: retriggerRisk ? model.confidence.stability : model.confidence.recommendation,
+      tone: retriggerRisk ? 'yellow' : 'green',
+    }),
+    mk({
       setting: 'Discharge Override Amount',
-      problem: pressureRisk ? 'Discharge-side protection is participating in current behavior.' : 'No active discharge override problem is visible.',
-      direction: model.overrideActive === true && model.flowExcess > 0.03 ? 'decrease' : stable ? 'hold' : 'review manually',
-      size: model.overrideActive === true ? 'small' : 'small',
+      readiness: pressureRisk ? 'Requires event history' : 'Monitor only',
+      recommendation: model.overrideActive === true && model.flowExcess > 0.03 ? 'Decrease' : model.overrideActive === true ? 'Hold' : 'Hold',
+      currentBehavior: model.overrideActive === true
+        ? 'First-layer discharge protection is active on the panel.'
+        : 'No active discharge override issue is visible in the current state.',
+      suggestedChange: model.overrideActive === true && model.flowExcess > 0.03
+        ? 'If pressure remains high while wells are already meeting rate, reduce by 5-10%. If pressure falls too far and wells go short, move the other direction by 5-10%.'
+        : 'Hold unless discharge override activates and pressure does not recover.',
+      reason: 'The override amount should only move after the event proves whether pressure is being corrected too hard or not hard enough.',
+      reverseEvidence: 'Reverse toward Increase if discharge stays above target too long. Reverse to Hold if one clean override event recovers pressure without pushing wells short.',
+      safetyLimit: 'Limit to one 5-10% move per review cycle and do not weaken pressure protection below a conservative operating floor.',
+      risk: 'Too much reduction can weaken pressure protection. Too much increase can push wells short.',
+      validation: 'Review a clean override event with 2-minute, 5-minute, 10-minute, and 20-minute pressure response checkpoints first.',
       confidence: pressureRisk ? model.confidence.safety : model.confidence.recommendation,
-      reason: 'If the override is too aggressive, it can fight otherwise stable flow demand.',
-      risk: 'Too much reduction can weaken pressure protection.',
-      validation: 'Review at least one clean override event with 2/5/10/20 minute pressure checkpoints first.',
-      tone: pressureRisk ? 'orange' : stable ? 'green' : 'blue',
-    },
-    {
+      tone: pressureRisk ? 'orange' : 'green',
+    }),
+    mk({
       setting: 'Discharge Override Timer',
-      problem: model.overrideActive === true ? 'Pressure protection is active and should not be allowed to chatter.' : 'No timer issue is proven right now.',
-      direction: model.overrideActive === true ? 'increase' : stable ? 'hold' : 'review manually',
-      size: model.overrideActive === true ? 'small' : 'small',
+      readiness: model.overrideActive === true ? 'Requires event history' : 'Monitor only',
+      recommendation: model.overrideActive === true ? 'Increase' : 'Hold',
+      currentBehavior: model.overrideActive === true
+        ? 'Pressure protection is active and should not be allowed to chatter.'
+        : 'No timer issue is proven right now.',
+      suggestedChange: model.overrideActive === true
+        ? 'Increase by 30-60 seconds if override triggers before the pressure trend proves sustained high pressure. Decrease by 15-30 seconds only if pressure remains high too long before correction.'
+        : 'No change.',
+      reason: 'The timer should separate real pressure events from transient spikes and avoid fast oscillation.',
+      reverseEvidence: 'Reverse back toward Hold if pressure recovery is timely and override events stop clustering.',
+      safetyLimit: 'Increase in 30-60 second steps. Decrease in smaller 15-30 second steps only after repeated evidence.',
+      risk: 'A timer that is too long can delay real correction. A timer that is too short can make the panel chatter.',
+      validation: 'Compare pre-event and 2-minute / 5-minute pressure recovery before adjusting.',
       confidence: model.overrideActive === true ? model.confidence.safety : model.confidence.recommendation,
-      reason: 'More time between pressure corrections reduces oscillation risk when discharge control is already engaged.',
-      risk: 'A timer that is too long may allow slower correction of a real pressure event.',
-      validation: 'Compare pre-event and 2/5 minute discharge recovery before adjusting.',
-      tone: model.overrideActive === true ? 'orange' : stable ? 'green' : 'blue',
-    },
-    {
+      tone: model.overrideActive === true ? 'orange' : 'green',
+    }),
+    mk({
+      setting: 'Discharge Override Max Change',
+      readiness: model.overrideActive === true ? 'Requires event history' : 'Monitor only',
+      recommendation: model.overrideActive === true && model.flowExcess > 0.03 ? 'Decrease' : 'Hold',
+      currentBehavior: model.overrideActive === true
+        ? 'Discharge protection is active, so one large correction could overshoot while pressure lags down more slowly than it rises.'
+        : 'No evidence yet that the discharge max step is too large.',
+      suggestedChange: model.overrideActive === true && model.flowExcess > 0.03 ? 'Reduce the max single-step discharge correction by 5-10%.' : 'No change.',
+      reason: 'Capping the step is safer than chasing pressure with large abrupt reductions when pressure inertia is high.',
+      reverseEvidence: 'Reverse to Hold if discharge remains high without recovery after smaller steps, or if wells stay short after the reduced cap.',
+      safetyLimit: 'No more than 10% per edit.',
+      risk: 'If the cap is cut too far, real pressure events may recover too slowly.',
+      validation: 'Use override event history, not a single live glance.',
+      confidence: model.overrideActive === true ? model.confidence.safety : model.confidence.recommendation,
+      tone: model.overrideActive === true ? 'yellow' : 'green',
+    }),
+    mk({
       setting: 'Discharge Settle-Out Timer',
-      problem: model.overrideActive === true ? 'The pad may need more recovery time before re-evaluating discharge pressure.' : 'No settle-out problem is proven.',
-      direction: model.overrideActive === true ? 'increase' : stable ? 'hold' : 'review manually',
-      size: 'small',
-      confidence: model.overrideActive === true ? model.confidence.safety : model.confidence.recommendation,
-      reason: 'Helps the controller judge the real pressure response after a reduction before taking the next action.',
+      readiness: model.overrideActive === true || model.recycleOpen ? 'Requires event history' : 'Monitor only',
+      recommendation: model.overrideActive === true || model.recycleOpen ? 'Increase' : 'Hold',
+      currentBehavior: model.overrideActive === true || model.recycleOpen
+        ? 'Repeated discharge-side evaluation too soon could create back-to-back corrections.'
+        : 'No settle-out problem is proven.',
+      suggestedChange: model.overrideActive === true || model.recycleOpen ? 'Increase by 60-120 seconds.' : 'No change.',
+      reason: 'Discharge pressure recovery is slower than pressure rise, so repeated corrections can create oscillation.',
+      reverseEvidence: 'Reverse to Hold if override events stop clustering and pressure settles cleanly before the next correction window.',
+      safetyLimit: 'Increase in 60-120 second steps only.',
       risk: 'Long settle-out can delay the next legitimate correction.',
-      validation: 'Use event-memory pressure response checkpoints, not a single live glance.',
-      tone: model.overrideActive === true ? 'yellow' : stable ? 'green' : 'blue',
-    },
-    {
-      setting: 'Well Sacrifice Amount / Time Between Changes',
-      problem: model.panelSeeingWellTrouble === true ? 'The pad sees well-side trouble or possible restriction behavior.' : 'No sacrifice behavior is clearly justified.',
-      direction: model.panelSeeingWellTrouble === true ? 'review manually' : 'hold',
-      size: 'small',
-      confidence: model.panelSeeingWellTrouble === true ? model.confidence.recommendation : model.confidence.recommendation,
-      reason: 'Sacrifice behavior should follow clear well-side evidence, not just a transient shortfall.',
+      validation: 'Use event-memory pressure response checkpoints, not a single snapshot.',
+      confidence: model.overrideActive === true || model.recycleOpen ? model.confidence.safety : model.confidence.recommendation,
+      tone: model.overrideActive === true || model.recycleOpen ? 'yellow' : 'green',
+    }),
+    mk({
+      setting: 'Well Sacrifice Amount',
+      readiness: wellRestrictionActive ? 'Requires event history' : compressorLimited && !pressureRisk ? 'Needs manual validation' : 'Monitor only',
+      recommendation: wellRestrictionActive ? 'Decrease' : compressorLimited && !pressureRisk ? 'Increase' : 'Hold',
+      currentBehavior: wellRestrictionActive
+        ? 'One or more wells look restricted or broad sacrifice behavior may be spreading instability.'
+        : compressorLimited && !pressureRisk
+          ? 'Compressor capacity appears tight without a pressure or recycle intervention dominating.'
+          : 'No sacrifice-amplitude problem is clearly justified.',
+      suggestedChange: wellRestrictionActive
+        ? 'Reduce by 5-10% or one small configured flow step.'
+        : compressorLimited && !pressureRisk
+          ? 'Increase by one small configured flow step only after validation.'
+          : 'No change.',
+      reason: wellRestrictionActive
+        ? 'Sacrificing too hard can push one well too far below target and make the whole pad less stable.'
+        : compressorLimited && !pressureRisk
+          ? 'A small increase is only justified when compressor capacity is truly maxed and no pressure or recycle issue is present.'
+          : 'The live evidence does not justify a sacrifice amount change.',
+      reverseEvidence: 'Reverse to Hold if the affected well recovers without broad pad instability, or if added sacrifice causes recycle/pressure trouble.',
+      safetyLimit: 'No more than 10% or one configured flow step per edit.',
       risk: 'Changing sacrifice logic too casually can move instability from one well to the whole pad.',
-      validation: 'Confirm calculated desired, choke position, and restriction evidence on the affected well first.',
-      tone: model.panelSeeingWellTrouble === true ? 'yellow' : 'green',
-    },
-    {
-      setting: 'Compressor Loaded Gate / Min Loaded State / Max Loaded State',
-      problem: compressorLimited ? 'Compressors appear to be the limiting side of the system.' : 'No compressor gating issue is proven.',
-      direction: compressorLimited ? 'review manually' : 'hold',
-      size: compressorLimited ? 'medium' : 'small',
+      validation: 'Confirm calculated desired, choke response, and restriction evidence on the affected well first.',
+      confidence: wellRestrictionActive || compressorLimited ? model.confidence.recommendation : model.confidence.recommendation,
+      tone: wellRestrictionActive ? 'orange' : compressorLimited ? 'yellow' : 'green',
+    }),
+    mk({
+      setting: 'Well Sacrifice Time Between Changes',
+      readiness: wellRestrictionActive || retriggerRisk ? 'Requires event history' : 'Monitor only',
+      recommendation: wellRestrictionActive || retriggerRisk ? 'Increase' : 'Hold',
+      currentBehavior: wellRestrictionActive || retriggerRisk
+        ? 'Sacrifice events may be stacking before flow response is visible.'
+        : 'No repeated sacrifice timing problem is proven.',
+      suggestedChange: wellRestrictionActive || retriggerRisk ? 'Increase by 30-60 seconds.' : 'No change.',
+      reason: 'Longer spacing helps the panel wait for true well response before taking another sacrifice action.',
+      reverseEvidence: 'Reverse to Hold if wells recover cleanly without stacked sacrifice events.',
+      safetyLimit: 'Increase by no more than 60 seconds at a time.',
+      risk: 'Too much delay can slow recovery when a real sacrifice move is needed.',
+      validation: 'Use event memory and one-well response history before editing.',
+      confidence: wellRestrictionActive || retriggerRisk ? model.confidence.stability : model.confidence.recommendation,
+      tone: wellRestrictionActive || retriggerRisk ? 'yellow' : 'green',
+    }),
+    mk({
+      setting: 'Compressor Loaded Gate / Minimum Loaded State / Maximum Loaded State',
+      readiness: compressorLimited ? 'Needs manual validation' : 'Monitor only',
+      recommendation: compressorLimited ? 'Increase' : 'Hold',
+      currentBehavior: compressorLimited
+        ? 'Compressors may be counted as available before they are carrying load cleanly.'
+        : 'No compressor gating issue is proven.',
+      suggestedChange: compressorLimited ? 'Increase gate delay by 30-60 seconds. Decrease only if a proven stable compressor is being ignored too long.' : 'No change.',
+      reason: 'Dispatch logic should wait until a unit is truly loaded and stable before treating it as usable capacity.',
+      reverseEvidence: 'Reverse to Hold if per-unit command versus actual flow aligns cleanly and standby/active sequencing becomes stable.',
+      safetyLimit: 'Change delay in 30-60 second steps only. Do not widen min/max loaded state in one large jump.',
+      risk: 'Changing loading logic too early can destabilize a pad that is otherwise balanced.',
+      validation: 'Review per-unit command versus actual flow and event memory around compressor starts and stops.',
       confidence: compressorLimited ? model.confidence.recommendation : model.confidence.recommendation,
-      reason: 'Dispatch logic changes belong after verifying which machines are short and whether standby capacity is really needed.',
-      risk: 'Changing compressor loading logic too early can destabilize a pad that is otherwise balanced.',
-      validation: 'Review per-unit command versus actual flow and event memory around compressor starts/stops.',
       tone: compressorLimited ? 'orange' : 'green',
-    },
-    {
+    }),
+    mk({
       setting: 'Compressor Max Flow Rate',
-      problem: compressorLimited ? 'Headroom or dispatch margin is being consumed.' : 'No max-flow problem is proven right now.',
-      direction: compressorLimited ? 'review manually' : 'hold',
-      size: 'small',
+      readiness: compressorLimited ? 'Requires event history' : 'Monitor only',
+      recommendation: eventHistoryThin ? 'Lock out / do not change' : compressorLimited ? 'Needs manual validation' : 'Hold',
+      currentBehavior: compressorLimited
+        ? 'Headroom or dispatch margin is being consumed.'
+        : 'No max-flow problem is proven from the current state.',
+      suggestedChange: eventHistoryThin
+        ? 'Do not adjust from one snapshot.'
+        : compressorLimited
+          ? 'Increase by 2-5% only if verified compressor capacity repeatedly exceeds the model without pressure or recycle instability. Decrease by 2-5% only if a unit repeatedly cannot meet modeled max flow under normal suction/discharge conditions.'
+          : 'No change.',
+      reason: 'Max-flow edits need repeated compressor-side evidence, not a single live view.',
+      reverseEvidence: 'Reverse to Hold if repeated evidence disappears, or if a higher max creates pressure / recycle instability.',
+      safetyLimit: 'Cap edits at 2-5% per review cycle.',
+      risk: 'Pushing max flow too high can create pressure and recycle instability; pushing it too low can strand usable capacity.',
+      validation: 'Check unit temperature, suction, discharge, utilization, and persistent under-delivery before editing limits.',
       confidence: compressorLimited ? model.confidence.recommendation : model.confidence.recommendation,
-      reason: 'Max-flow edits need defensible compressor-side evidence, not just one live snapshot.',
-      risk: 'Pushing max flow too high can create pressure and recycle instability.',
-      validation: 'Check unit temperature, suction, discharge, and persistent under-delivery before editing limits.',
-      tone: compressorLimited ? 'orange' : 'green',
-    },
-    {
+      tone: eventHistoryThin ? 'blue' : compressorLimited ? 'orange' : 'green',
+    }),
+    mk({
       setting: 'Choke PID Min Output',
-      problem: model.restrictedWellCount > 0 ? 'One or more wells look response-limited.' : hunting ? 'Choke behavior looks twitchy.' : 'No choke baseline problem is proven.',
-      direction: model.restrictedWellCount > 0 || hunting ? 'review manually' : 'hold',
-      size: 'small',
-      confidence: model.restrictedWellCount > 0 || hunting ? model.confidence.recommendation : model.confidence.recommendation,
-      reason: 'This should only move when a well is clearly not responding to the current correction range.',
+      readiness: wellRestrictionActive || hunting ? 'Needs manual validation' : 'Monitor only',
+      recommendation: wellRestrictionActive ? 'Increase' : hunting ? 'Hold' : 'Hold',
+      currentBehavior: wellRestrictionActive
+        ? 'At least one well looks response-limited and may not be reacting to low command cleanly.'
+        : hunting
+          ? 'Choke behavior looks twitchy, so a broad PID minimum change would be risky.'
+          : 'No choke baseline problem is proven.',
+      suggestedChange: wellRestrictionActive ? 'Increase minimum output by 2-5% on the affected well only after validation. Do not apply globally.' : 'No change.',
+      reason: 'This should only move when one well is clearly not responding to the current correction range.',
+      reverseEvidence: 'Reverse to Hold if the affected well responds without needing a higher minimum output, or if a higher output worsens hunting.',
+      safetyLimit: '2-5% on one well only. No global edit from a mixed pad snapshot.',
       risk: 'Improper minimum output changes can mask restriction or create hunting.',
       validation: 'Validate on one well with clean pre/post response, not on the full pad at once.',
-      tone: model.restrictedWellCount > 0 || hunting ? 'yellow' : 'green',
-    },
-    {
+      confidence: wellRestrictionActive || hunting ? model.confidence.recommendation : model.confidence.recommendation,
+      tone: wellRestrictionActive ? 'yellow' : hunting ? 'blue' : 'green',
+    }),
+    mk({
       setting: 'Suction Valve PID / Recycle Valve PID',
-      problem: model.recycleOpen ? 'Recycle or suction-side behavior is currently participating in pad balance.' : 'No PID instability is clearly visible.',
-      direction: model.recycleOpen ? 'review manually' : 'hold',
-      size: 'small',
-      confidence: model.recycleOpen ? model.confidence.stability : model.confidence.recommendation,
-      reason: 'Valve PID tuning should follow confirmed recycle/suction instability, not a single flow miss.',
+      readiness: model.recycleOpen ? 'Requires event history' : 'Monitor only',
+      recommendation: model.recycleOpen ? 'Needs manual validation' : 'Hold',
+      currentBehavior: model.recycleOpen
+        ? 'Recycle or suction-side behavior is participating in current pad balance.'
+        : 'No PID instability is clearly visible.',
+      suggestedChange: model.recycleOpen ? 'Hold unless recycle or suction oscillation is proven. If oscillation is confirmed, make only small tuning steps after event history review.' : 'No change.',
+      reason: 'Valve PID tuning should follow confirmed recycle or suction instability, not a single flow miss.',
+      reverseEvidence: 'Reverse to Hold if recycle events stop or if pressure response proves stable after non-PID changes.',
+      safetyLimit: 'Small tuning steps only after event history confirms oscillation. Do not stack PID changes with other major tuning edits.',
       risk: 'PID changes can create broad system oscillation if applied without trend validation.',
       validation: 'Use recycle events and pressure response checkpoints first.',
+      confidence: model.recycleOpen ? model.confidence.stability : model.confidence.recommendation,
       tone: model.recycleOpen ? 'yellow' : 'green',
-    },
+    }),
   ]
 }
 
@@ -1356,6 +1503,7 @@ export default function HalfmannOptimizationView() {
       dischargeHeaderPressure,
       wells,
       compressors,
+      eventMemory,
       runningCompressors: compressors.filter((compressor) => compressor.running && !compressor.standby),
       underDispatchCompressors: compressors.filter((compressor) => compressor.underDispatch),
       overDispatchCompressors: compressors.filter((compressor) => compressor.overDispatch),

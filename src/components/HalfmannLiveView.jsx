@@ -38,6 +38,7 @@ const LIVE_WELL_FLOW_KEYS = [
   ['Well 4 Injection Gas Flow Rate', 'Well #4 Flow Rate'],
   ['Well 5 Injection Gas Flow Rate', 'Well # 5 Flow Rate', 'Well #5 Flow Rate'],
 ]
+const LIVE_WELL_DISPLAY_NAMES = ['214', '444', '334', '213', '333']
 const LIVE_WELL_FLOW_ADDRESSES = PANEL_ADDRESSES.wellFlow
 const LIVE_WELL_SETPOINT_ADDRESSES = PANEL_ADDRESSES.wellSetpoint
 const LIVE_WELL_CALCULATED_DESIRED_ADDRESSES = PANEL_ADDRESSES.wellCalculatedDesiredFlow
@@ -45,6 +46,7 @@ const LIVE_WELL_STATIC_ADDRESSES = PANEL_ADDRESSES.wellStaticPressure
 const LIVE_WELL_DIFF_ADDRESSES = PANEL_ADDRESSES.wellDifferentialPressure
 const LIVE_WELL_CASING_ADDRESSES = PANEL_ADDRESSES.wellCasingPressure
 const LIVE_WELL_TUBING_ADDRESSES = PANEL_ADDRESSES.wellTubingPressure
+const LIVE_WELL_OIL_PRIORITY_ADDRESSES = ['461036', '461038', '461040', '461042', '461044']
 
 const LIVE_WELL_YESTERDAY_KEYS = [
   ["Wellhead #1 Yesterday's Total Flow", 'Wellhead #1 Yesterdays Total Flow', "Well 1 Yesterday's Total Flow", 'Well 1 Yesterdays Total Flow'],
@@ -542,6 +544,7 @@ export default function HalfmannLiveView() {
 
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
+    const wellLabel = LIVE_WELL_DISPLAY_NAMES[index] ?? String(wellNumber)
     const actual = getNumericByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
     const desiredInfo = getWellSetpointInfo(panelData, panel, wellNumber, perWellTarget)
     const calculatedDesired = getWellCalculatedDesiredFlow(panelData, panel, wellNumber)
@@ -563,8 +566,10 @@ export default function HalfmannLiveView() {
       `Well ${wellNumber} Tubing Pressure`, `Well #${wellNumber} Tubing Pressure`,
       `Wellhead #${wellNumber} Tubing Pressure`,
     ])
+    const oilPriority = getNumericByAddress(panelData, [LIVE_WELL_OIL_PRIORITY_ADDRESSES[index]])
     return {
       wellNumber,
+      wellLabel,
       actual,
       desired,
       desiredSource: desiredInfo.source,
@@ -574,6 +579,7 @@ export default function HalfmannLiveView() {
       diffPres,
       casingPres,
       tubingPres,
+      oilPriority,
       gap: actual != null && desired != null ? actual - desired : null,
       matchPct: computeMatchPct(actual, desired),
       atTarget: meetingState.wells[String(wellNumber)] ?? isWithinTarget(actual, desired),
@@ -781,7 +787,7 @@ export default function HalfmannLiveView() {
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
                         <div className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: '#49D0E2' }}>
-                          Well {well.wellNumber}
+                          Well {well.wellLabel}
                         </div>
                         <div className="mb-1">
                           <div className="text-[24px] font-black leading-none"
@@ -825,6 +831,13 @@ export default function HalfmannLiveView() {
                             {well.yesterday != null ? well.yesterday.toFixed(3) : '--'}
                           </div>
                           {well.yesterday != null && <div className="text-[8px] text-[#555]">MMSCFD</div>}
+                        </div>
+                        <div>
+                          <div className="text-[7px] text-[#555] uppercase tracking-wider">Oil Priority</div>
+                          <div className="text-[14px] font-black leading-none text-white" style={{ fontFamily: "'Arial Black'" }}>
+                            {well.oilPriority != null ? well.oilPriority.toFixed(0) : '--'}
+                          </div>
+                          {well.oilPriority != null && <div className="text-[8px] text-[#555]">Rank</div>}
                         </div>
                       </div>
                     )
@@ -904,7 +917,7 @@ export default function HalfmannLiveView() {
                     <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                       {liveWellPerformance.map((well, i) => (
                         <div key={i} className="rounded-lg border border-[#1e1e30] bg-[#0a0a14] p-2">
-                          <div className="text-[8px] text-[#49D0E2] font-bold uppercase tracking-wider mb-1.5">Well {well.wellNumber}</div>
+                          <div className="text-[8px] text-[#49D0E2] font-bold uppercase tracking-wider mb-1.5">Well {well.wellLabel}</div>
                           <div className="space-y-1.5">
                             <div>
                               <div className="text-[7px] text-[#555] uppercase tracking-wider">Static</div>
@@ -975,7 +988,7 @@ export default function HalfmannLiveView() {
                         style={{ borderColor, background: bgColor }}>
                         {/* Header */}
                         <div className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: '#49D0E2' }}>
-                          Well {well.wellNumber}
+                          Well {well.wellLabel}
                         </div>
 
                         {/* Actual flow — large */}
