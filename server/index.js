@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
 import { ensureHalfmannHistoryBootstrapped, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
+import { listArchivedPerformanceReports, resolveArchivedPerformanceReportPath } from './halfmannReportArchive.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -356,6 +357,7 @@ function buildSourceSummary(latestResult, runReportDps, runReportState, runRepor
 }
 
 let halfmannHistoryCaptureInFlight = false
+let halfmannMonthlyReportMaterializeInFlight = false
 
 async function captureHalfmannRuntimeHistory() {
   if (halfmannHistoryCaptureInFlight) return
@@ -407,6 +409,18 @@ async function captureHalfmannRuntimeHistory() {
     console.error('halfmann history capture failed:', err.message)
   } finally {
     halfmannHistoryCaptureInFlight = false
+  }
+}
+
+async function materializeMonthToDatePerformanceReport() {
+  if (halfmannMonthlyReportMaterializeInFlight) return
+  halfmannMonthlyReportMaterializeInFlight = true
+  try {
+    await generatePerformanceReport({ preset: 'current-month' })
+  } catch (err) {
+    console.error('halfmann month-to-date report materialize failed:', err.message)
+  } finally {
+    halfmannMonthlyReportMaterializeInFlight = false
   }
 }
 
@@ -618,6 +632,35 @@ app.get('/api/performance-report', async (req, res) => {
   }
 })
 
+app.get('/api/performance-report/archives', async (_req, res) => {
+  try {
+    res.json({
+      fetchedAt: new Date().toISOString(),
+      reports: listArchivedPerformanceReports(),
+    })
+  } catch (err) {
+    res.status(err.status || 500).json({
+      error: err.message || 'Failed to list stored reports',
+    })
+  }
+})
+
+app.get('/api/performance-report/download', async (req, res) => {
+  try {
+    const path = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!path) return res.status(400).json({ error: 'path required' })
+    const filename = typeof req.query.filename === 'string' && req.query.filename.trim()
+      ? req.query.filename.trim()
+      : path.split('/').pop() || 'stored-report'
+    const fullPath = resolveArchivedPerformanceReportPath(path)
+    res.download(fullPath, filename)
+  } catch (err) {
+    res.status(err.status || 500).json({
+      error: err.message || 'Failed to download stored report',
+    })
+  }
+})
+
 app.get('/api/welllogic-performance-report', async (req, res) => {
   try {
     const report = await generatePerformanceReport({
@@ -665,4 +708,6 @@ app.listen(PORT, () => {
   console.log(`halfmann-live running on port ${PORT}`)
   captureHalfmannRuntimeHistory()
   setInterval(captureHalfmannRuntimeHistory, 2000)
+  materializeMonthToDatePerformanceReport()
+  setInterval(materializeMonthToDatePerformanceReport, 15 * 60 * 1000)
 })

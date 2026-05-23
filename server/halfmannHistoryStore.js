@@ -173,6 +173,10 @@ export function recordHalfmannPanelMatchSnapshot(panelSnapshot) {
     compressorLimited: getSnapshotBoolean(panelSnapshot, '420024'),
     flowTargetBeingReduced: getSnapshotBoolean(panelSnapshot, '420034'),
     anyWellBelowSetpoint: getSnapshotBoolean(panelSnapshot, '420021'),
+    compressorsMeetingFlowDemand: getSnapshotBoolean(panelSnapshot, '420018'),
+    anyCompressorNotMeetingDesiredFlow: getSnapshotBoolean(panelSnapshot, '420023'),
+    recycleValvePosition: getSnapshotNumber(panelSnapshot, '400189') ?? getSnapshotNumber(panelSnapshot, '460618'),
+    dischargeOverrideLatch: getSnapshotNumber(panelSnapshot, '460018'),
     totalDesiredSiteFlow: getSnapshotNumber(panelSnapshot, '420003'),
     totalAscCompressorFlow: getSnapshotNumber(panelSnapshot, '420012'),
     totalSiteFlow: getSnapshotNumber(panelSnapshot, '420005'),
@@ -194,6 +198,22 @@ export function loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback 
       return true
     })
     .sort((left, right) => String(left.ts).localeCompare(String(right.ts)))
+}
+
+export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
+  ensureHalfmannHistoryBootstrapped()
+  const startMs = startAt ? new Date(startAt).getTime() : null
+  const endMs = endAt ? new Date(endAt).getTime() : null
+
+  return readJsonLines(RAW_HISTORY_PATH)
+    .filter((record) => {
+      const ts = new Date(record.capturedAt || record.ts).getTime()
+      if (!Number.isFinite(ts)) return false
+      if (startMs != null && ts < startMs) return false
+      if (endMs != null && ts > endMs) return false
+      return true
+    })
+    .sort((left, right) => String(left.capturedAt || left.ts).localeCompare(String(right.capturedAt || right.ts)))
 }
 
 export function getHalfmannHistoryPaths() {

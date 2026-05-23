@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const PRESETS = [
@@ -28,12 +27,6 @@ function formatPercent(value, decimals = 1) {
 
 function formatHours(value, decimals = 1) {
   return formatNumber(value, decimals, ' hrs')
-}
-
-function formatDate(value) {
-  if (!value) return '--'
-  const date = value instanceof Date ? value : new Date(value)
-  return Number.isNaN(date.getTime()) ? '--' : date.toLocaleDateString()
 }
 
 function formatDateTime(value) {
@@ -132,68 +125,33 @@ function Section({ title, eyebrow, children, actions = null }) {
   )
 }
 
-function InlineButton({ children, onClick, currentTone = 'blue' }) {
+function InlineButton({ children, onClick, currentTone = 'blue', href }) {
   const style = toneStyles(currentTone)
+  const commonStyle = {
+    borderRadius: 14,
+    border: `1px solid ${style.border}`,
+    background: style.bg,
+    color: style.label,
+    fontWeight: 800,
+    fontSize: 12,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    padding: '10px 14px',
+    cursor: 'pointer',
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+  }
+
+  if (href) {
+    return <a href={href} style={commonStyle}>{children}</a>
+  }
+
   return (
-    <button
-      onClick={onClick}
-      style={{
-        borderRadius: 14,
-        border: `1px solid ${style.border}`,
-        background: style.bg,
-        color: style.label,
-        fontWeight: 800,
-        fontSize: 12,
-        letterSpacing: '0.08em',
-        textTransform: 'uppercase',
-        padding: '10px 14px',
-        cursor: 'pointer',
-      }}
-    >
+    <button onClick={onClick} style={commonStyle}>
       {children}
     </button>
   )
-}
-
-function exportWorkbook(report) {
-  const workbook = XLSX.utils.book_new()
-  const runtimeRows = [
-    ['Well', 'Priority Rank', 'Average Match %', 'Runtime Meeting %', 'Meeting Hours', 'Below Target Hours', 'Valid Hours', 'Samples'],
-    ...((report.runtime?.wells || []).map((well) => [
-      well.wellName,
-      well.priorityRank,
-      well.averageMatchPct,
-      well.runtimeMeetingPct,
-      well.meetingHours,
-      well.belowHours,
-      well.validHours,
-      well.sampleCount,
-    ])),
-  ]
-  const priorityRows = [
-    ['Well', 'Priority Rank', 'Protected % During Constraint', 'Short Hours During Constraint', 'Constraint Valid Hours'],
-    ...((report.prioritization?.wells || []).map((well) => [
-      well.wellName,
-      well.priorityRank,
-      well.protectedPctDuringConstraint,
-      well.shortHoursDuringConstraint,
-      well.constrainedValidHours,
-    ])),
-  ]
-  const summaryRows = [
-    ['Metric', 'Value'],
-    ['Overall Runtime Meeting %', report.siteSummary?.overallRuntimeMeetingPct],
-    ['Overall Average Match %', report.siteSummary?.overallAverageMatchPct],
-    ['Prioritization Reliability %', report.siteSummary?.prioritizationReliabilityPct],
-    ['Constrained Runtime Hours', report.siteSummary?.constrainedRuntimeHours],
-    ['Auto-Perfect Priority Hours', report.siteSummary?.autoPerfectPriorityHours],
-    ['Samples', report.dataQuality?.sampleCount],
-  ]
-
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary')
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(runtimeRows), 'Well Runtime')
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(priorityRows), 'Priority Reliability')
-  XLSX.writeFile(workbook, `Halfmann_Runtime_Report_${formatDate(report.reportWindow?.startAt).replaceAll('/', '-')}_to_${formatDate(report.reportWindow?.endAt).replaceAll('/', '-')}.xlsx`)
 }
 
 const selectStyle = {
@@ -211,6 +169,30 @@ const tableStyle = {
   width: '100%',
   borderCollapse: 'collapse',
   minWidth: 760,
+}
+
+const headerCellStyle = {
+  textAlign: 'left',
+  padding: '12px 14px',
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  color: '#8ca0be',
+  borderBottom: '1px solid rgba(255,255,255,0.08)',
+}
+
+const cellStyle = {
+  padding: '14px',
+  fontSize: 14,
+  color: '#dbeafe',
+  borderBottom: '1px solid rgba(255,255,255,0.05)',
+}
+
+const cellStyleStrong = {
+  ...cellStyle,
+  fontWeight: 800,
+  color: '#f4f8ff',
 }
 
 export default function HalfmannPerformanceReportView() {
@@ -242,7 +224,7 @@ export default function HalfmannPerformanceReportView() {
         if (!cancelled) setLoadingMeta(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [refreshNonce])
 
   useEffect(() => {
     let cancelled = false
@@ -278,32 +260,37 @@ export default function HalfmannPerformanceReportView() {
   const isBusy = loadingMeta || loadingReport
   const controls = meta?.controls || { siteName: 'Halfmann 1214', units: [] }
 
-  const topCards = useMemo(() => ([
-    {
-      label: 'Overall Well Runtime',
-      value: formatPercent(report?.siteSummary?.overallRuntimeMeetingPct),
-      sublabel: `Percent of valid retained time at or above ${report?.runtime?.tolerancePct || 98}% desired injection match.`,
-      currentTone: tone(report?.siteSummary?.overallRuntimeMeetingPct),
-    },
-    {
-      label: 'Average Match',
-      value: formatPercent(report?.siteSummary?.overallAverageMatchPct),
-      sublabel: 'Weighted average match to desired injection rate across all five wells.',
-      currentTone: tone(report?.siteSummary?.overallAverageMatchPct),
-    },
-    {
-      label: 'Prioritization Reliability',
-      value: formatPercent(report?.siteSummary?.prioritizationReliabilityPct),
-      sublabel: 'Auto-scores 100% whenever compression is not constrained and no sacrifice is needed.',
-      currentTone: tone(report?.siteSummary?.prioritizationReliabilityPct),
-    },
-    {
-      label: 'Constrained Runtime',
-      value: formatHours(report?.siteSummary?.constrainedRuntimeHours),
-      sublabel: 'Only this time window is allowed to influence priority-protection scoring.',
-      currentTone: report?.siteSummary?.constrainedRuntimeHours > 0 ? 'orange' : 'green',
-    },
-  ]), [report])
+  const monthToDateCards = useMemo(() => {
+    const mtd = report?.monthToDate
+    return [
+      {
+        label: 'MTD Overall Well Runtime',
+        value: formatPercent(mtd?.kpis?.overallWellRuntimePct),
+        sublabel: `Month-to-date well runtime at or above ${report?.runtime?.tolerancePct || 98}% desired injection match.`,
+        currentTone: tone(mtd?.kpis?.overallWellRuntimePct),
+      },
+      {
+        label: 'MTD Average Match',
+        value: formatPercent(mtd?.kpis?.averageMatchPct),
+        sublabel: 'Month-to-date weighted average match to desired injection rate.',
+        currentTone: tone(mtd?.kpis?.averageMatchPct),
+      },
+      {
+        label: 'MTD Prioritization Reliability',
+        value: formatPercent(mtd?.kpis?.prioritizationReliabilityPct),
+        sublabel: 'Auto-scores 100% whenever no prioritization was required.',
+        currentTone: tone(mtd?.kpis?.prioritizationReliabilityPct),
+      },
+      {
+        label: 'MTD Constrained Runtime',
+        value: formatHours(mtd?.kpis?.constrainedRuntimeHours),
+        sublabel: 'Only real constrained runtime is allowed to affect priority scoring.',
+        currentTone: mtd?.kpis?.constrainedRuntimeHours > 0 ? 'orange' : 'green',
+      },
+    ]
+  }, [report])
+
+  const storedReports = report?.archives?.storedReports || meta?.archivedReports || []
 
   return (
     <div style={{
@@ -319,7 +306,8 @@ export default function HalfmannPerformanceReportView() {
           actions={(
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <InlineButton onClick={() => setRefreshNonce((value) => value + 1)}>Refresh</InlineButton>
-              <InlineButton onClick={() => report && exportWorkbook(report)} currentTone="green">Export Workbook</InlineButton>
+              <InlineButton href={report?.archives?.selectedReport?.xlsxDownloadUrl} currentTone="green">Download Current Workbook</InlineButton>
+              <InlineButton href={report?.archives?.selectedReport?.jsonDownloadUrl} currentTone="blue">Download Current JSON</InlineButton>
               <InlineButton onClick={() => window.print()} currentTone="yellow">Print</InlineButton>
             </div>
           )}
@@ -327,7 +315,7 @@ export default function HalfmannPerformanceReportView() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Site Scope</label>
-              <div style={{ ...selectStyle, display: 'flex', alignItems: 'center' }}>{controls.siteName} only</div>
+              <div style={{ ...selectStyle, display: 'flex', alignItems: 'center' }}>{controls.siteName} well panel only</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ fontSize: 12, color: '#8ca0be', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Date Range Preset</label>
@@ -364,18 +352,53 @@ export default function HalfmannPerformanceReportView() {
           </div>
 
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            This page only tracks Halfmann. Monthly well runtime is based on retained live injection match percentage history. Prioritization reliability only scores time periods where compression is actually constrained or sacrifice behavior is active. When there is no need to prioritize, the score is forced to 100% by design.
+            Month-to-date KPI cards always reset on the first day of the month at midnight based on the report calendar. Every generated report is archived into the Halfmann Railway volume and stays downloadable from this page.
           </div>
 
           {error ? <div style={{ color: '#fda4af', fontSize: 14 }}>{error}</div> : null}
           <div style={{ fontSize: 12, color: '#8ca0be' }}>
-            {isBusy ? 'Building report…' : `Last refresh ${formatDateTime(report?.fetchedAt)} | Samples ${report?.dataQuality?.sampleCount ?? '--'} | History source ${report?.dataQuality?.source || '--'}`}
+            {isBusy ? 'Building report…' : `Last refresh ${formatDateTime(report?.fetchedAt)} | Samples ${report?.dataQuality?.sampleCount ?? '--'} | Stored reports ${storedReports.length} | Timezone ${report?.calendar?.timezone || meta?.calendar?.timezone || '--'}`}
           </div>
         </Section>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-          {topCards.map((card) => <KpiCard key={card.label} {...card} />)}
-        </div>
+        <Section title="Month-to-Date KPI Scoreboard" eyebrow={report?.calendar?.monthToDateLabel || meta?.calendar?.monthToDateLabel || 'Month-to-Date'}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            {monthToDateCards.map((card) => <KpiCard key={card.label} {...card} />)}
+          </div>
+        </Section>
+
+        <Section title="Selected Report Window" eyebrow={`${report?.reportWindow?.preset || preset} | ${formatDateTime(report?.reportWindow?.startAt)} to ${formatDateTime(report?.reportWindow?.endAt)}`}>
+          <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
+            This section follows the selected date range. Month-to-date KPI cards above stay pinned to the live calendar month regardless of the selected historical window.
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <KpiCard
+              label="Window Well Runtime"
+              value={formatPercent(report?.kpis?.overallWellRuntimePct)}
+              sublabel="Selected-window runtime at or above desired injection match tolerance."
+              currentTone={tone(report?.kpis?.overallWellRuntimePct)}
+            />
+            <KpiCard
+              label="Window Average Match"
+              value={formatPercent(report?.kpis?.averageMatchPct)}
+              sublabel="Selected-window weighted average match to desired injection rate."
+              currentTone={tone(report?.kpis?.averageMatchPct)}
+            />
+            <KpiCard
+              label="Window Priority Reliability"
+              value={formatPercent(report?.kpis?.prioritizationReliabilityPct)}
+              sublabel="Only scored when actual prioritization was needed."
+              currentTone={tone(report?.kpis?.prioritizationReliabilityPct)}
+            />
+            <KpiCard
+              label="Window Constrained Runtime"
+              value={formatHours(report?.kpis?.constrainedRuntimeHours)}
+              sublabel="Real compressor-constrained or sacrifice runtime only."
+              currentTone={report?.kpis?.constrainedRuntimeHours > 0 ? 'orange' : 'green'}
+            />
+          </div>
+        </Section>
 
         <Section title="Monthly Well Runtime %" eyebrow="Percent Meeting Desired Injection Rate">
           <div style={{ overflowX: 'auto' }}>
@@ -416,13 +439,13 @@ export default function HalfmannPerformanceReportView() {
             <KpiCard
               label="Constraint Runtime"
               value={formatHours(report?.prioritization?.constrainedRuntimeHours)}
-              sublabel="Time where compressor supply was not fully covering demand or sacrifice logic was active."
+              sublabel="Time where compressor supply did not fully cover demand or sacrifice logic was active."
               currentTone={report?.prioritization?.constrainedRuntimeHours > 0 ? 'orange' : 'green'}
             />
             <KpiCard
               label="Auto-Perfect Hours"
               value={formatHours(report?.prioritization?.autoPerfectRuntimeHours)}
-              sublabel="Time where no prioritization was needed, so the score is automatically 100%."
+              sublabel="Time where no prioritization was needed, so the score was locked at 100%."
               currentTone="green"
             />
           </div>
@@ -449,36 +472,36 @@ export default function HalfmannPerformanceReportView() {
               </tbody>
             </table>
           </div>
+        </Section>
 
+        <Section title="Stored Reports" eyebrow="Archived In Railway Volume">
           <div style={{ fontSize: 13, color: '#8ca0be', lineHeight: 1.7 }}>
-            Scoring logic: if there is enough compressor supply and no sacrifice behavior, priority reliability is forced to 100% for that time slice. The score only moves when there is an actual compressor constraint, compressor down condition, or panel target-reduction behavior that creates a real need to prioritize between wells.
+            Current-month reports are automatically regenerated and stored in the Halfmann volume. Any report window opened on this page is also stored and can be downloaded again later.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  {['Generated', 'Label', 'Window', 'JSON', 'Workbook'].map((header) => (
+                    <th key={header} style={headerCellStyle}>{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {storedReports.map((item) => (
+                  <tr key={item.id}>
+                    <td style={cellStyle}>{formatDateTime(item.generatedAt)}</td>
+                    <td style={cellStyleStrong}>{item.label}</td>
+                    <td style={cellStyle}>{`${item.reportWindow?.startAt || '--'} → ${item.reportWindow?.endAt || '--'}`}</td>
+                    <td style={cellStyle}><a href={item.jsonDownloadUrl} style={{ color: '#7dd3fc' }}>Download JSON</a></td>
+                    <td style={cellStyle}><a href={item.xlsxDownloadUrl} style={{ color: '#4ade80' }}>Download XLSX</a></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Section>
       </div>
     </div>
   )
-}
-
-const headerCellStyle = {
-  textAlign: 'left',
-  padding: '12px 14px',
-  fontSize: 11,
-  fontWeight: 800,
-  letterSpacing: '0.14em',
-  textTransform: 'uppercase',
-  color: '#8ca0be',
-  borderBottom: '1px solid rgba(255,255,255,0.08)',
-}
-
-const cellStyle = {
-  padding: '14px',
-  fontSize: 14,
-  color: '#dbeafe',
-  borderBottom: '1px solid rgba(255,255,255,0.05)',
-}
-
-const cellStyleStrong = {
-  ...cellStyle,
-  fontWeight: 800,
-  color: '#f4f8ff',
 }

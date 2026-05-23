@@ -532,7 +532,7 @@ export default function HalfmannOptimizationView() {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <Badge tone={liveError ? 'red' : 'green'}>{liveError ? 'Live feed degraded' : 'Live feed healthy'}</Badge>
               <Badge tone={historyError ? 'orange' : historyLoading ? 'yellow' : 'blue'}>
-                {historyError ? 'History limited' : historyLoading ? 'Loading history' : 'History checked'}
+                {historyError ? 'History limited' : historyLoading ? 'Loading history' : history?.optimizationHistoryContext?.historySource === 'volume-plus-consumer' ? 'Volume + history checked' : history?.optimizationHistoryContext?.historySource === 'volume-history' ? 'Volume history checked' : 'History checked'}
               </Badge>
             </div>
           }
@@ -665,7 +665,7 @@ export default function HalfmannOptimizationView() {
         </SectionCard>
 
         <div style={{ fontSize: 12, color: '#7c8da8', letterSpacing: '0.04em', padding: '0 4px 10px' }}>
-          Last live refresh: {lastRefresh ? new Date(lastRefresh).toLocaleString() : '--'} | History source: {historyLoading ? 'loading' : historyError ? 'limited' : 'checked'} {commsStatus?.message ? `| ${commsStatus.message}` : ''}
+          Last live refresh: {lastRefresh ? new Date(lastRefresh).toLocaleString() : '--'} | History source: {historyLoading ? 'loading' : historyError ? 'limited' : history?.optimizationHistoryContext?.historySource || 'checked'} {commsStatus?.message ? `| ${commsStatus.message}` : ''}
         </div>
       </div>
     </div>

@@ -1,4 +1,11 @@
 import { getHalfmannHistoryPaths, loadHalfmannPanelMatchHistory } from './halfmannHistoryStore.js'
+import {
+  archivePerformanceReport,
+  getArchivedPerformanceReportStorageMeta,
+  getCalendarContext,
+  listArchivedPerformanceReports,
+  zonedDateTimeToUtc,
+} from './halfmannReportArchive.js'
 
 const HALF_MANN_DEVICE_MANIFEST = [
   { deviceId: '2507-501508', unitName: 'Halfmann Well Panel' },
@@ -37,31 +44,50 @@ function toIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-function resolveDateRange({ preset = 'current-month', startAt, endAt }) {
-  if (startAt && endAt) return { startAt: new Date(startAt), endAt: new Date(endAt) }
+function resolveDateRange({ preset = 'current-month', startAt, endAt, now = new Date() }) {
+  if (startAt && endAt) {
+    return {
+      startAt: new Date(startAt),
+      endAt: new Date(endAt),
+      preset,
+    }
+  }
 
-  const now = new Date()
-  const start = new Date(now)
-  const end = new Date(now)
+  const calendar = getCalendarContext(now)
+  const effectiveNow = new Date(calendar.nowIso)
+  const timezone = calendar.timezone
+  const currentYear = Number(calendar.monthKey.slice(0, 4))
+  const currentMonth = Number(calendar.monthKey.slice(5, 7))
+
+  if (preset === 'current-month') {
+    return {
+      startAt: new Date(calendar.monthStartIso),
+      endAt: effectiveNow,
+      preset,
+    }
+  }
 
   if (preset === 'previous-month') {
-    start.setUTCDate(1)
-    start.setUTCMonth(start.getUTCMonth() - 1)
-    start.setUTCHours(0, 0, 0, 0)
-    end.setUTCDate(0)
-    end.setUTCHours(23, 59, 59, 999)
-    return { startAt: start, endAt: end }
+    const previousMonth = currentMonth === 1
+      ? { year: currentYear - 1, month: 12 }
+      : { year: currentYear, month: currentMonth - 1 }
+    const nextMonth = previousMonth.month === 12
+      ? { year: previousMonth.year + 1, month: 1 }
+      : { year: previousMonth.year, month: previousMonth.month + 1 }
+    const start = zonedDateTimeToUtc({ ...previousMonth, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 }, timezone)
+    const end = new Date(zonedDateTimeToUtc({ ...nextMonth, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 }, timezone).getTime() - 1)
+    return { startAt: start, endAt: end, preset }
   }
 
-  if (preset === 'last-7-days') start.setUTCDate(start.getUTCDate() - 7)
-  else if (preset === 'last-14-days') start.setUTCDate(start.getUTCDate() - 14)
-  else if (preset === 'last-30-days') start.setUTCDate(start.getUTCDate() - 30)
-  else {
-    start.setUTCDate(1)
-  }
+  const lookbackDays = preset === 'last-7-days' ? 7 : preset === 'last-14-days' ? 14 : 30
+  const start = new Date(effectiveNow)
+  start.setUTCDate(start.getUTCDate() - lookbackDays)
   start.setUTCHours(0, 0, 0, 0)
-  end.setUTCHours(23, 59, 59, 999)
-  return { startAt: start, endAt: end }
+  return {
+    startAt: start,
+    endAt: effectiveNow,
+    preset,
+  }
 }
 
 function buildControlMeta() {
@@ -183,7 +209,7 @@ function summarizePrioritization(records, reportEndAt) {
       const match = record.matches?.[well.key]
       if (match == null || !Number.isFinite(match)) continue
       const weight = 6 - well.priority
-      weightedSamples.push({ match, weight, priority: well.priority, key: well.key })
+      weightedSamples.push({ match, weight, priority: well.priority })
 
       const wellBucket = perWell[well.key]
       wellBucket.constrainedValidHours += durationHours
@@ -233,25 +259,7 @@ function summarizePrioritization(records, reportEndAt) {
   }
 }
 
-export async function getPerformanceReportMeta() {
-  const historyPaths = getHalfmannHistoryPaths()
-  return {
-    fetchedAt: new Date().toISOString(),
-    controls: buildControlMeta(),
-    storage: {
-      historyDir: historyPaths.historyDir,
-      panelMatchHistoryPath: historyPaths.panelMatchHistoryPath,
-      rawHistoryPath: historyPaths.rawHistoryPath,
-    },
-  }
-}
-
-export async function generatePerformanceReport({
-  startAt,
-  endAt,
-  preset = 'current-month',
-} = {}) {
-  const range = resolveDateRange({ preset, startAt, endAt })
+function buildReportSnapshot(range) {
   const records = loadHalfmannPanelMatchHistory({ startAt: range.startAt, endAt: range.endAt, includeFallback: false })
   const runtime = summarizeWellRuntime(records, range.endAt)
   const prioritization = summarizePrioritization(records, range.endAt)
@@ -260,24 +268,30 @@ export async function generatePerformanceReport({
   const validCoveragePct = runtime.wells.length
     ? average(runtime.wells.map((well) => (well.runtimeMeetingPct != null ? 100 : 0)))
     : null
+  const siteSummary = {
+    overallRuntimeMeetingPct: runtime.overallRuntimeMeetingPct,
+    overallAverageMatchPct: runtime.overallAverageMatchPct,
+    prioritizationReliabilityPct: prioritization.scorePct,
+    constrainedRuntimeHours: prioritization.constrainedRuntimeHours,
+    autoPerfectPriorityHours: prioritization.autoPerfectRuntimeHours,
+  }
+  const kpis = {
+    overallWellRuntimePct: runtime.overallRuntimeMeetingPct,
+    averageMatchPct: runtime.overallAverageMatchPct,
+    prioritizationReliabilityPct: prioritization.scorePct,
+    constrainedRuntimeHours: prioritization.constrainedRuntimeHours,
+  }
 
   return {
-    fetchedAt: new Date().toISOString(),
     reportWindow: {
       startAt: toIso(range.startAt),
       endAt: toIso(range.endAt),
-      preset,
+      preset: range.preset,
     },
-    controls: buildControlMeta(),
     runtime,
     prioritization,
-    siteSummary: {
-      overallRuntimeMeetingPct: runtime.overallRuntimeMeetingPct,
-      overallAverageMatchPct: runtime.overallAverageMatchPct,
-      prioritizationReliabilityPct: prioritization.scorePct,
-      constrainedRuntimeHours: prioritization.constrainedRuntimeHours,
-      autoPerfectPriorityHours: prioritization.autoPerfectRuntimeHours,
-    },
+    siteSummary,
+    kpis,
     dataQuality: {
       sampleCount: records.length,
       firstSampleAt: firstRecord?.ts || null,
@@ -285,6 +299,74 @@ export async function generatePerformanceReport({
       validCoveragePct,
       fallbackExcluded: true,
       source: 'volume-history-plus-seeded-csv',
+    },
+    calendar: getCalendarContext(new Date()),
+  }
+}
+
+function windowsMatch(left, right) {
+  return left?.startAt === right?.startAt && left?.endAt === right?.endAt && left?.preset === right?.preset
+}
+
+function withDownloadUrls(meta) {
+  return {
+    ...meta,
+    jsonDownloadUrl: `/api/performance-report/download?path=${encodeURIComponent(meta.jsonRelativePath)}&filename=${encodeURIComponent(meta.jsonRelativePath.split('/').pop() || 'report.json')}`,
+    xlsxDownloadUrl: `/api/performance-report/download?path=${encodeURIComponent(meta.xlsxRelativePath)}&filename=${encodeURIComponent(meta.xlsxRelativePath.split('/').pop() || 'report.xlsx')}`,
+  }
+}
+
+export async function getPerformanceReportMeta() {
+  const historyPaths = getHalfmannHistoryPaths()
+  const storageMeta = getArchivedPerformanceReportStorageMeta()
+  return {
+    fetchedAt: new Date().toISOString(),
+    controls: buildControlMeta(),
+    calendar: storageMeta.monthToDate,
+    storage: {
+      historyDir: historyPaths.historyDir,
+      panelMatchHistoryPath: historyPaths.panelMatchHistoryPath,
+      rawHistoryPath: historyPaths.rawHistoryPath,
+      reportsDir: storageMeta.reportsDir,
+    },
+    archivedReports: listArchivedPerformanceReports(),
+  }
+}
+
+export async function generatePerformanceReport({
+  startAt,
+  endAt,
+  preset = 'current-month',
+} = {}) {
+  const anchorNow = new Date()
+  const selectedRange = resolveDateRange({ preset, startAt, endAt, now: anchorNow })
+  const selectedReport = buildReportSnapshot(selectedRange)
+  const monthToDateReport = buildReportSnapshot(resolveDateRange({ preset: 'current-month', now: anchorNow }))
+  const monthToDateArchive = archivePerformanceReport(monthToDateReport, { kind: 'month-to-date' })
+  const selectedArchive = windowsMatch(selectedReport.reportWindow, monthToDateReport.reportWindow)
+    ? monthToDateArchive
+    : archivePerformanceReport(selectedReport, { kind: selectedRange.preset || 'selected-range' })
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    controls: buildControlMeta(),
+    calendar: monthToDateReport.calendar,
+    reportWindow: selectedReport.reportWindow,
+    runtime: selectedReport.runtime,
+    prioritization: selectedReport.prioritization,
+    siteSummary: selectedReport.siteSummary,
+    kpis: selectedReport.kpis,
+    dataQuality: selectedReport.dataQuality,
+    monthToDate: {
+      reportWindow: monthToDateReport.reportWindow,
+      siteSummary: monthToDateReport.siteSummary,
+      kpis: monthToDateReport.kpis,
+      dataQuality: monthToDateReport.dataQuality,
+    },
+    archives: {
+      selectedReport: withDownloadUrls(selectedArchive),
+      monthToDate: withDownloadUrls(monthToDateArchive),
+      storedReports: listArchivedPerformanceReports(),
     },
   }
 }
