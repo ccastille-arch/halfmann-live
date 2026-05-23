@@ -99,6 +99,21 @@ function getNumeric(dataMap, labels) {
   return parseLiveNumeric(resolvePreferredDatapoint(dataMap, labels)?.value)
 }
 
+function getPanelCompressorsMeetingFlow(dataMap) {
+  const raw = resolvePreferredDatapoint(dataMap, [
+    'Compressors Meeting Flow Demand',
+    'Compressor Meeting Flow Demand',
+    'Meeting Flow Demand',
+    'Compressors Meeting Desired Flow',
+    'Any Compressor Not Meeting Desired Flow',
+  ])?.value
+  if (raw == null) return null
+  const normalized = String(raw).trim().toLowerCase()
+  if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
+  if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
+  return null
+}
+
 function getWellSetpointInfo(dataMap, wellNumber, fallbackValue = null) {
   const customerTargetDatapoint = resolvePreferredDatapoint(dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
@@ -580,14 +595,7 @@ export default function HalfmannLiveView() {
     const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
     return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05)
   }).length
-  const panelCompressorsMeetingFlow = (() => {
-    const raw = resolvePreferredDatapoint(panel, ['Compressors Meeting Flow Demand', 'Meeting Flow Demand'])?.value
-    if (raw == null) return null
-    const normalized = String(raw).trim().toLowerCase()
-    if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
-    if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
-    return null
-  })()
+  const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panel)
   const allCompressorsMeetingCommands = panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
   const compressorCommandScore = compressorCommandScores.length > 0
     ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length

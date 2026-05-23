@@ -87,6 +87,21 @@ function getNumeric(dataMap, labels) {
   return parseNumeric(resolveDatapoint(dataMap, labels)?.value)
 }
 
+function getPanelCompressorsMeetingFlow(dataMap) {
+  const raw = resolveDatapoint(dataMap, [
+    'Compressors Meeting Flow Demand',
+    'Compressor Meeting Flow Demand',
+    'Meeting Flow Demand',
+    'Compressors Meeting Desired Flow',
+    'Any Compressor Not Meeting Desired Flow',
+  ])?.value
+  if (raw == null) return null
+  const normalized = String(raw).trim().toLowerCase()
+  if (normalized === 'yes' || normalized === 'yes (1)' || normalized === 'yes (2)' || normalized === '1' || normalized === '2' || normalized === 'true') return true
+  if (normalized === 'no' || normalized === 'no (0)' || normalized === '0' || normalized === 'false') return false
+  return null
+}
+
 function getTimestamp(data) {
   if (!data?.timestamps?.[0]) return null
   return new Date(data.timestamps[0] * 1000)
@@ -259,6 +274,7 @@ function buildDiagnosis({
   speedDischargePressAutoSp,
   wellheadControlOverride,
   wellheadControlOverrideCompSpeedSp,
+  panelCompressorsMeetingFlow,
 }) {
   if (allOnTarget) {
     return {
@@ -359,6 +375,16 @@ function buildDiagnosis({
       reason: 'The pad total is close to target, but this page does not have proof that the panel has started sacrificing wells.',
       evidence: `Pad is still at ${formatPct(siteMatchPct)} of total desired. Short wells: ${wellsShort.map((well) => `W${well.wellNumber} short ${formatValue(well.shortfall)}`).join(' | ')}.`,
       action: 'Check the short wells for local restriction and compare calculated desired flow against customer target before calling a well sacrificed.',
+    }
+  }
+
+  if (panelCompressorsMeetingFlow === false) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because the panel says compressors are not meeting flow demand',
+      reason: 'The M-Link panel signal `Compressors Meeting Flow Demand` is reporting NO, so this page should treat compressor flow compliance as failed even when per-unit desired-flow tags are incomplete.',
+      evidence: `Compressors Meeting Flow Demand = No (0). ${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. Average compressor flow match is ${commandMatchAvg != null ? formatPct(commandMatchAvg) : 'not visible'}.`,
+      action: 'Trust the panel latch first. Check which compressor is under-delivering, then inspect suction, discharge, and any active override logic.',
     }
   }
 
@@ -467,6 +493,7 @@ export default function HalfmannDiagnosticsView() {
       ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
     const speedDischargePressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Discharge Press PID Auto Sp']), null)
+    const panelCompressorsMeetingFlow = getPanelCompressorsMeetingFlow(panel)
     const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
     const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
 
@@ -534,6 +561,7 @@ export default function HalfmannDiagnosticsView() {
       commandMatchAvg,
       suctionMatchAvg,
       suctionComparisonLines,
+      panelCompressorsMeetingFlow,
     }
   }, [panelData, unitDataRaw, siteSettings.wellTargetPct, meetingState.wells])
 
@@ -638,6 +666,14 @@ export default function HalfmannDiagnosticsView() {
               value={derived.suctionMatchAvg != null ? `${formatPct(derived.suctionMatchAvg, 0)}` : '--'}
               sub={derived.suctionComparisonLines || (derived.speedSuctionPressAutoSp != null ? `Low-suction slow-down target ${formatValue(derived.speedSuctionPressAutoSp, 1)} PSI` : 'Loaded Auto Sp not visible')}
               tone={derived.suctionMatchAvg != null && derived.suctionMatchAvg >= 95 ? 'good' : derived.suctionMatchAvg != null ? 'warn' : 'neutral'}
+            />
+            <SummaryCard
+              label="Compressors Meeting Flow"
+              value={derived.panelCompressorsMeetingFlow == null ? '--' : derived.panelCompressorsMeetingFlow ? 'YES' : 'NO'}
+              sub={derived.panelCompressorsMeetingFlow == null
+                ? 'Compressors Meeting Flow Demand not visible'
+                : 'Direct panel signal from M-Link'}
+              tone={derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : 'bad'}
             />
           </div>
 
