@@ -275,6 +275,10 @@ function normalizeRule(rawRule = {}) {
   }
 }
 
+export function normalizeHalfmannAlertRuleDraft(rawRule = {}) {
+  return normalizeRule(rawRule)
+}
+
 function normalizeRulesState(rawState) {
   const base = buildDefaultState()
   const rules = Array.isArray(rawState?.rules) ? rawState.rules.map(normalizeRule) : []
@@ -347,6 +351,10 @@ function validateRules(rules) {
     validateOperand(rule.condition?.right, `${path}.condition.right`, errors)
   })
   return errors
+}
+
+export function validateHalfmannAlertRulesInput(rules) {
+  return validateRules(rules)
 }
 
 function writeRulesState(nextState) {

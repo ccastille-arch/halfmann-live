@@ -28,9 +28,13 @@ import {
 } from './adminAuth.js'
 import {
   getHalfmannAlertRulesAdminPayload,
+  normalizeHalfmannAlertRuleDraft,
   saveHalfmannAlertRules,
+  validateHalfmannAlertRulesInput,
+  appendHalfmannAlertAudit,
 } from './halfmannAlertRulesStore.js'
 import { evaluateHalfmannAlertRules } from './halfmannAlertEngine.js'
+import { sendAlertEmail } from './emailSender.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -260,6 +264,59 @@ app.put('/api/admin/alert-rules', requireAdmin, (req, res) => {
   } catch (err) {
     res.status(err.status || 400).json({
       error: err.message || 'Failed to save alert rules',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.post('/api/admin/alert-rules/test', requireAdmin, async (req, res) => {
+  try {
+    const rule = normalizeHalfmannAlertRuleDraft(req.body?.rule || {})
+    const errors = validateHalfmannAlertRulesInput([rule])
+    if (errors.length) {
+      return res.status(400).json({
+        error: 'Alert rule validation failed',
+        details: errors,
+      })
+    }
+
+    const subject = `[Halfmann TEST] ${rule.name}`
+    const lines = [
+      'This is a test email from the Halfmann alert system.',
+      '',
+      `Rule: ${rule.name}`,
+      `Severity: ${rule.severity}`,
+      `Sent at: ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })}`,
+      '',
+      'This test confirms that SMTP delivery and recipient routing are working for this alert rule.',
+    ]
+    if (rule.messageTemplate?.trim()) {
+      lines.push('', `Rule note: ${rule.messageTemplate.trim()}`)
+    }
+    await sendAlertEmail({
+      to: rule.recipients,
+      subject,
+      text: lines.join('\n'),
+    })
+
+    appendHalfmannAlertAudit({
+      type: 'alert-rule-test-sent',
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || '',
+      ip: getRequestIp(req),
+      note: `Test email sent for rule "${rule.name}"`,
+      ruleId: rule.id,
+    })
+
+    res.json({
+      ok: true,
+      ruleId: rule.id,
+      recipients: rule.recipients,
+      sentAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to send test alert email',
       details: err.payload || null,
     })
   }

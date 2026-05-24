@@ -277,6 +277,8 @@ function RuleCard({
   rule,
   onChange,
   onRemove,
+  onSendTest,
+  testSending = false,
   fieldOptions,
   deviceOptions,
   comparatorOptions,
@@ -317,6 +319,9 @@ function RuleCard({
           />
           Enabled
         </label>
+        <AdminButton tone="yellow" onClick={onSendTest} disabled={testSending || !rule.recipients?.length}>
+          {testSending ? 'Sending Test…' : 'Send Test Email'}
+        </AdminButton>
         <AdminButton tone="red" onClick={onRemove}>Delete Rule</AdminButton>
       </div>
 
@@ -417,6 +422,8 @@ export default function HalfmannAlertRulesAdminView() {
   const [draftRules, setDraftRules] = useState([])
   const [comment, setComment] = useState('')
   const [error, setError] = useState('')
+  const [testSendingRuleId, setTestSendingRuleId] = useState('')
+  const [testStatus, setTestStatus] = useState({})
 
   const fieldOptions = useMemo(
     () => (payload?.options?.fieldCatalog || []).map((field) => ({
@@ -494,6 +501,38 @@ export default function HalfmannAlertRulesAdminView() {
       setError(err.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function sendTest(rule) {
+    setTestSendingRuleId(rule.id)
+    setError('')
+    setTestStatus((current) => ({ ...current, [rule.id]: '' }))
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/alert-rules/test`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rule,
+          comment,
+        }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const details = Array.isArray(body.details) ? body.details.map((item) => item.message).join(' ') : ''
+        setError([body.error, details].filter(Boolean).join(' ') || 'Failed to send test email')
+        return
+      }
+      setTestStatus((current) => ({
+        ...current,
+        [rule.id]: `Test email sent to ${body.recipients?.join(', ') || 'configured recipients'}.`,
+      }))
+      loadPayload()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTestSendingRuleId('')
     }
   }
 
@@ -636,16 +675,31 @@ export default function HalfmannAlertRulesAdminView() {
         ) : null}
 
         {!loading ? draftRules.map((rule) => (
-          <RuleCard
-            key={rule.id}
-            rule={rule}
-            onChange={(nextRule) => updateRule(rule.id, nextRule)}
-            onRemove={() => removeRule(rule.id)}
-            fieldOptions={fieldOptions}
-            deviceOptions={payload?.options?.devices || []}
-            comparatorOptions={payload?.options?.comparators || []}
-            expressionOperators={payload?.options?.expressionOperators || []}
-          />
+          <div key={rule.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <RuleCard
+              rule={rule}
+              onChange={(nextRule) => updateRule(rule.id, nextRule)}
+              onRemove={() => removeRule(rule.id)}
+              onSendTest={() => sendTest(rule)}
+              testSending={testSendingRuleId === rule.id}
+              fieldOptions={fieldOptions}
+              deviceOptions={payload?.options?.devices || []}
+              comparatorOptions={payload?.options?.comparators || []}
+              expressionOperators={payload?.options?.expressionOperators || []}
+            />
+            {testStatus[rule.id] ? (
+              <div style={{
+                borderRadius: 14,
+                border: '1px solid rgba(31,143,85,0.4)',
+                background: 'rgba(7,34,22,0.75)',
+                color: '#bbf7d0',
+                padding: '10px 12px',
+                fontSize: 13,
+              }}>
+                {testStatus[rule.id]}
+              </div>
+            ) : null}
+          </div>
         )) : null}
 
         {!loading ? (
