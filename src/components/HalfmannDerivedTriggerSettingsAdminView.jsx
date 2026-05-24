@@ -301,10 +301,11 @@ export default function HalfmannDerivedTriggerSettingsAdminView() {
 
   return (
     <div style={{
-      minHeight: '100%',
+      height: '100vh',
       background: 'radial-gradient(circle at top left, rgba(73,208,226,0.08), transparent 30%), linear-gradient(180deg, #05050c 0%, #080812 100%)',
       color: '#f4f8ff',
       padding: 24,
+      overflowY: 'auto',
     }}>
       <div style={{ maxWidth: 1480, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
         <section style={{
