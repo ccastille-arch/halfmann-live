@@ -9,6 +9,8 @@ import HalfmannDerivedTriggerSettingsAdminView from './components/HalfmannDerive
 import { HalfmannDataProvider, useHalfmannData } from './context/HalfmannDataContext'
 import { PANEL_ADDRESSES, getNumericByAddress } from './engine/halfmannRegisters'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 function getPage() {
   const path = window.location.pathname.toLowerCase()
   if (path.includes('/admin/derived-trigger-settings')) return 'admin-derived-trigger-settings'
@@ -63,8 +65,33 @@ function NavButton({ active, alert, children, onClick }) {
   )
 }
 
+function UtilityButton({ children, onClick, active = false }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '0 14px',
+        height: 34,
+        borderRadius: 999,
+        border: `1px solid ${active ? 'rgba(73,208,226,0.45)' : '#24324a'}`,
+        background: active ? 'rgba(73,208,226,0.12)' : '#0b1220',
+        color: active ? '#7dd3fc' : '#bfdbfe',
+        fontSize: 10,
+        fontWeight: 800,
+        letterSpacing: '0.12em',
+        textTransform: 'uppercase',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
 function AppShell() {
   const [page, setPage] = useState(getPage)
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false)
   const { panelData, meetingState, liveError, commsStatus } = useHalfmannData()
 
   useEffect(() => {
@@ -77,9 +104,28 @@ function AppShell() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API_BASE}/api/admin/session`, { credentials: 'include' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!cancelled) setAdminAuthenticated(Boolean(body?.authenticated))
+      })
+      .catch(() => {
+        if (!cancelled) setAdminAuthenticated(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [page])
+
   function goTo(p) {
     if (p === 'performance-report') {
       window.history.pushState({}, '', '/performance-report')
+    } else if (p === 'admin-login') {
+      window.history.pushState({}, '', '/admin/login')
+    } else if (p === 'admin-derived-trigger-settings') {
+      window.history.pushState({}, '', '/admin/derived-trigger-settings')
     } else {
       if (window.location.pathname !== '/') window.history.pushState({}, '', '/')
       if (p === 'telemetry') window.location.hash = '#/telemetry'
@@ -139,8 +185,16 @@ function AppShell() {
         <NavButton active={page === 'telemetry'} alert={false} onClick={() => goTo('telemetry')}>
           All Parameters
         </NavButton>
-        <div style={{ marginLeft: 'auto', fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <UtilityButton
+            active={page === 'admin-login' || page === 'admin-derived-trigger-settings'}
+            onClick={() => goTo(adminAuthenticated ? 'admin-derived-trigger-settings' : 'admin-login')}
+          >
+            {adminAuthenticated ? 'Admin Settings' : 'Admin Login'}
+          </UtilityButton>
+          <div style={{ fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
           Halfmann 1214
+          </div>
         </div>
       </nav>
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
