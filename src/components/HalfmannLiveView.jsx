@@ -786,8 +786,18 @@ export default function HalfmannLiveView() {
                     return (
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
-                        <div className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: '#49D0E2' }}>
-                          Well {well.wellLabel}
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#49D0E2' }}>
+                            Well {well.wellLabel}
+                          </div>
+                          {well.matchPct != null ? (
+                            <div
+                              className="text-[9px] font-bold uppercase tracking-wider shrink-0"
+                              style={{ color: tone === 'good' ? '#4ade80' : tone === 'warn' ? '#fbbf24' : '#fca5a5' }}
+                            >
+                              {well.matchPct.toFixed(1)}% on target
+                            </div>
+                          ) : null}
                         </div>
                         <div className="mb-1">
                           <div className="text-[24px] font-black leading-none"
@@ -987,8 +997,18 @@ export default function HalfmannLiveView() {
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
                         {/* Header */}
-                        <div className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: '#49D0E2' }}>
-                          Well {well.wellLabel}
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#49D0E2' }}>
+                            Well {well.wellLabel}
+                          </div>
+                          {well.matchPct != null ? (
+                            <div
+                              className="text-[9px] font-bold uppercase tracking-wider shrink-0"
+                              style={{ color: onTarget ? '#4ade80' : '#fbbf24' }}
+                            >
+                              {well.matchPct.toFixed(1)}% on target
+                            </div>
+                          ) : null}
                         </div>
 
                         {/* Actual flow — large */}
