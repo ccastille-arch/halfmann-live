@@ -321,12 +321,18 @@ function buildDiagnosis({
   highestDischarge,
   recycleOpen,
   recycleValvePosition,
+  recycleDischargeSetpointPsi,
+  recyclePressureReached,
   runningUnits,
   recommendedCompressors,
   commandMatchAvg,
   speedSuctionPressAutoSp,
   wellheadControlOverride,
   wellheadControlOverrideCompSpeedSp,
+  wellPanelDischargeOverrideSetpointPsi,
+  panelOverridePressureReached,
+  compressorSpeedControlDischargeSetpointPsi,
+  compressorSpeedControlActive,
   panelCompressorsMeetingFlow,
   panelCompressorSignalMismatch,
 }) {
@@ -363,20 +369,40 @@ function buildDiagnosis({
   if (wellheadControlOverride != null && wellheadControlOverride > 0) {
     return {
       tone: 'bad',
-      headline: 'Not meeting rate because the DE4000 override latch is active',
-      reason: 'The Wellhead Control in Override latch is on, which means the DE4000 is actively overriding normal wellhead control because the compressors are flowing too much for current pressure conditions.',
-      evidence: `Wellhead Control in Override = ${formatValue(wellheadControlOverride, 0)}. Override comp speed SP = ${formatValue(wellheadControlOverrideCompSpeedSp, 0)}. Highest site discharge is ${formatValue(highestDischarge, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
-      action: 'Treat this as an active pressure-protection limit. Check discharge-side conditions and the DE4000 override logic before chasing flow on the wells.',
+      headline: 'Not meeting rate because the well panel discharge override is active',
+      reason: 'The DE4000 / well-panel override latch is on, so the panel is lowering compressor flow commands to protect discharge pressure before it keeps chasing well rate.',
+      evidence: `Wellhead Control in Override = ${formatValue(wellheadControlOverride, 0)}. Manual well-panel override setpoint = ${formatValue(wellPanelDischargeOverrideSetpointPsi, 0)} PSI. Override comp speed SP = ${formatValue(wellheadControlOverrideCompSpeedSp, 0)}. Highest site discharge is ${formatValue(highestDischarge, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Treat this as the first pressure-protection layer. Check discharge-side conditions before increasing anything on the well side.',
     }
   }
 
-  if (recycleOpen === true) {
+  if (panelOverridePressureReached) {
     return {
       tone: 'warn',
-      headline: 'Not meeting rate because the recycle valve is open',
-      reason: 'Gas is being recirculated instead of all of it going to the wells.',
-      evidence: `Recycle valve is at ${formatValue(recycleValvePosition, 1)}%. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
-      action: 'Find out why recycle is open. Until it closes, some gas is not reaching the wells.',
+      headline: 'Not meeting rate because the site is at the well panel discharge override trigger',
+      reason: 'The site discharge pressure is at or above the manual well-panel override setpoint, so the panel should start trimming unit flow commands before other pressure protections intervene.',
+      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI against a manual well-panel override setpoint of ${formatValue(wellPanelDischargeOverrideSetpointPsi, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Use small and slow panel-side corrections only. Do not chase more flow until discharge pressure is back below the panel override trigger.',
+    }
+  }
+
+  if (compressorSpeedControlActive) {
+    return {
+      tone: 'bad',
+      headline: 'Not meeting rate because compressor speed control discharge protection is active',
+      reason: 'Compressor speed control has reached its discharge pressure limit, so the units will ignore flow demand and slow down enough to stay below the compressor discharge setpoint.',
+      evidence: `Highest site discharge is ${formatValue(highestDischarge, 0)} PSI against a compressor speed-control discharge setpoint of ${formatValue(compressorSpeedControlDischargeSetpointPsi, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Treat the pad as pressure-limited, not compressor-limited. Do not add compressor load while speed-control discharge protection is active.',
+    }
+  }
+
+  if (recycleOpen === true || recyclePressureReached) {
+    return {
+      tone: 'warn',
+      headline: 'Not meeting rate because recycle protection is active',
+      reason: 'The site has reached the downstream recycle protection layer, so gas is being diverted or is about to be diverted instead of all of it going to the wells.',
+      evidence: `Recycle valve position is ${formatValue(recycleValvePosition, 1)}% and the manual station recycle setpoint is ${formatValue(recycleDischargeSetpointPsi, 0)} PSI. Highest site discharge is ${formatValue(highestDischarge, 0)} PSI. Short wells: ${wellsShort.map((well) => `W${well.wellNumber}`).join(', ')}.`,
+      action: 'Treat this as optimization inefficiency or system imbalance. Reduce excess compressor flow or improve gas allocation before asking for more well flow.',
     }
   }
 
@@ -453,6 +479,11 @@ export default function HalfmannDiagnosticsView() {
     const panel = parseLiveDatapoints(panelData)
     const unitMaps = HALFMANN_UNITS.map((unit) => parseLiveDatapoints(unitDataRaw[unit.key]))
     const wellTargetPct = Number(siteSettings.wellTargetPct) || TARGET_TOLERANCE_PCT
+    const recyclePressureSettings = siteSettings?.derivedTriggerSettings?.recyclePressure || {}
+    const recycleActiveThresholdPct = Number(recyclePressureSettings.recycleActiveThresholdPct) || 5
+    const wellPanelDischargeOverrideSetpointPsi = Number(recyclePressureSettings.wellPanelDischargeOverrideSetpointPsi) || 1250
+    const compressorSpeedControlDischargeSetpointPsi = Number(recyclePressureSettings.compressorSpeedControlDischargeSetpointPsi) || 1340
+    const recycleDischargeSetpointPsi = Number(recyclePressureSettings.stationRecycleDischargeSetpointPsi) || 1350
 
     const wells = WELL_FLOW_KEYS.map((flowKeys, index) => {
       const wellNumber = index + 1
@@ -512,13 +543,10 @@ export default function HalfmannDiagnosticsView() {
     const unitDesiredFlows = rawUnitDesiredFlows
     const recommendedCompressors = getNumericByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getNumeric(panel, ['Recommended Number Of Compressors'])
     const recycleValvePosition = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition) ?? getNumeric(panel, ['Recycle Valve Position', 'Recycle Valve', 'RCV Position', 'Station Recycle Header Valve Command Output'])
-    const recycleOpen = recycleValvePosition != null ? recycleValvePosition > 5 : null
+    const recycleOpen = recycleValvePosition != null ? recycleValvePosition > recycleActiveThresholdPct : null
     const wellheadControlOverride = getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]) ?? getNumeric(panel, ['Wellhead Control in Override'])
     const wellheadControlOverrideCompSpeedSp = getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideCompSpeedSp]) ?? getNumeric(panel, ['Wellhead Control in Override Comp Speed SP'])
-    const dischargeTrigger = getNumeric(panel, ['Altronic Discharge Pressure Trigger', 'Discharge Trigger SP', 'Speed Auto Discharge SP'])
-      ?? unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed Auto Discharge SP', 'Altronic Speed Control SP', 'Speed Control SP']), null)
     const speedSuctionPressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Suction Press PID Auto Sp']), null)
-    const speedDischargePressAutoSp = unitMaps.reduce((match, dataMap) => match ?? getNumeric(dataMap, ['Speed - Discharge Press PID Auto Sp']), null)
     const compressorMeetingSignals = getPanelCompressorMeetingSignals(panelData, panel)
     const panelCompressorsMeetingFlow = compressorMeetingSignals.effective
     const panelCompressorSignalMismatch =
@@ -527,6 +555,9 @@ export default function HalfmannDiagnosticsView() {
       compressorMeetingSignals.perCompressor !== compressorMeetingSignals.broadSummary
     const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
     const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
+    const panelOverridePressureReached = highestDischarge != null && highestDischarge >= wellPanelDischargeOverrideSetpointPsi
+    const compressorSpeedControlActive = highestDischarge != null && highestDischarge >= compressorSpeedControlDischargeSetpointPsi
+    const recyclePressureReached = highestDischarge != null && highestDischarge >= recycleDischargeSetpointPsi
 
     const wellsWithTarget = wells.filter((well) => well.actual != null && well.desired != null)
     const wellsMeetingCount = wellsWithTarget.filter((well) => well.atTarget).length
@@ -584,11 +615,15 @@ export default function HalfmannDiagnosticsView() {
       recommendedCompressors,
       recycleValvePosition,
       recycleOpen,
+      recycleDischargeSetpointPsi,
+      recyclePressureReached,
       wellheadControlOverride,
       wellheadControlOverrideCompSpeedSp,
-      dischargeTrigger,
       speedSuctionPressAutoSp,
-      speedDischargePressAutoSp,
+      wellPanelDischargeOverrideSetpointPsi,
+      panelOverridePressureReached,
+      compressorSpeedControlDischargeSetpointPsi,
+      compressorSpeedControlActive,
       highestDischarge,
       commandMatchAvg,
       suctionMatchAvg,
@@ -596,14 +631,17 @@ export default function HalfmannDiagnosticsView() {
       panelCompressorsMeetingFlow,
       panelCompressorSignalMismatch,
     }
-  }, [panelData, unitDataRaw, siteSettings.wellTargetPct, meetingState.wells])
+  }, [panelData, unitDataRaw, siteSettings.wellTargetPct, siteSettings?.derivedTriggerSettings, meetingState.wells])
 
   const diagnosis = buildDiagnosis(derived)
   const pageTime = derived.timestamp ?? lastRefresh
   const diagnosisNeeded = Boolean(
     derived.wellsShort.length > 0 ||
     derived.recycleOpen === true ||
+    derived.recyclePressureReached === true ||
     (derived.wellheadControlOverride != null && derived.wellheadControlOverride > 0) ||
+    derived.panelOverridePressureReached === true ||
+    derived.compressorSpeedControlActive === true ||
     (derived.panelCompressorsMeetingFlow === false && derived.wellsShort.length > 0) ||
     liveError ||
     commsStatus?.isHolding,
@@ -699,26 +737,34 @@ export default function HalfmannDiagnosticsView() {
             <SummaryCard
               label="Recycle Valve"
               value={derived.recycleValvePosition != null ? `${formatValue(derived.recycleValvePosition, 1)}%` : '--'}
-              sub={derived.recycleOpen == null ? 'Valve position not visible' : derived.recycleOpen ? 'Open' : 'Closed'}
-              tone={derived.recycleOpen ? 'bad' : derived.recycleOpen === false ? 'good' : 'neutral'}
+              sub={derived.recycleOpen == null
+                ? `Valve position not visible | Manual recycle trigger ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI`
+                : derived.recycleOpen
+                  ? `Open | Manual recycle trigger ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI`
+                  : `Closed | Manual recycle trigger ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI`}
+              tone={derived.recycleOpen || derived.recyclePressureReached ? 'bad' : derived.recycleOpen === false ? 'good' : 'neutral'}
             />
             <SummaryCard
               label="DE4000 Override Latch"
               value={derived.wellheadControlOverride != null ? (derived.wellheadControlOverride > 0 ? 'YES' : 'NO') : '--'}
               sub={derived.wellheadControlOverride != null
-                ? `Wellhead Control in Override = ${formatValue(derived.wellheadControlOverride, 0)}${derived.wellheadControlOverrideCompSpeedSp != null ? ` | Override Comp Speed SP ${formatValue(derived.wellheadControlOverrideCompSpeedSp, 0)}` : ''}`
-                : 'Wellhead Control in Override not visible'}
-              tone={derived.wellheadControlOverride == null ? 'neutral' : derived.wellheadControlOverride > 0 ? 'bad' : 'good'}
+                ? `Wellhead Control in Override = ${formatValue(derived.wellheadControlOverride, 0)} | Manual panel override ${formatValue(derived.wellPanelDischargeOverrideSetpointPsi, 0)} PSI${derived.wellheadControlOverrideCompSpeedSp != null ? ` | Override Comp Speed SP ${formatValue(derived.wellheadControlOverrideCompSpeedSp, 0)}` : ''}`
+                : `Wellhead Control in Override not visible | Manual panel override ${formatValue(derived.wellPanelDischargeOverrideSetpointPsi, 0)} PSI`}
+              tone={derived.wellheadControlOverride == null ? (derived.panelOverridePressureReached ? 'warn' : 'neutral') : derived.wellheadControlOverride > 0 ? 'bad' : derived.panelOverridePressureReached ? 'warn' : 'good'}
             />
             <SummaryCard
               label="Discharge Pressure Site"
               value={derived.highestDischarge != null ? `${formatValue(derived.highestDischarge, 0)} PSI` : '--'}
-              sub={derived.wellheadControlOverride != null
-                ? derived.wellheadControlOverride > 0
-                  ? 'Slowing compressors down due to discharge pressure'
-                  : 'Live site discharge pressure reading'
-                : 'Discharge override status not visible'}
-              tone={derived.wellheadControlOverride == null ? 'neutral' : derived.wellheadControlOverride > 0 ? 'bad' : 'neutral'}
+              sub={derived.highestDischarge == null
+                ? 'Live site discharge pressure reading'
+                : derived.recyclePressureReached || derived.recycleOpen
+                  ? `At/above station recycle trigger ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI`
+                  : derived.compressorSpeedControlActive
+                    ? `At/above compressor speed-control trigger ${formatValue(derived.compressorSpeedControlDischargeSetpointPsi, 0)} PSI`
+                    : derived.wellheadControlOverride > 0 || derived.panelOverridePressureReached
+                      ? `At/above well panel override trigger ${formatValue(derived.wellPanelDischargeOverrideSetpointPsi, 0)} PSI`
+                      : `Below manual pressure protection triggers (${formatValue(derived.wellPanelDischargeOverrideSetpointPsi, 0)} / ${formatValue(derived.compressorSpeedControlDischargeSetpointPsi, 0)} / ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI)`}
+              tone={derived.recyclePressureReached || derived.recycleOpen ? 'bad' : derived.compressorSpeedControlActive ? 'warn' : derived.wellheadControlOverride > 0 ? 'bad' : derived.panelOverridePressureReached ? 'warn' : 'neutral'}
             />
             <SummaryCard
               label="Suction Controller Score"

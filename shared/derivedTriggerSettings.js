@@ -226,6 +226,33 @@ export const DERIVED_TRIGGER_SETTINGS_SCHEMA = {
         step: 0.5,
         type: 'number',
       }),
+      wellPanelDischargeOverrideSetpointPsi: defineSetting(1250, {
+        label: 'Well Panel Discharge Override Setpoint PSI',
+        description: 'Manual Altronic / well-panel discharge override setpoint used when MLink does not publish it live.',
+        unit: 'PSI',
+        min: 0,
+        max: 5000,
+        step: 1,
+        type: 'number',
+      }),
+      compressorSpeedControlDischargeSetpointPsi: defineSetting(1340, {
+        label: 'Compressor Speed Control Discharge SP PSI',
+        description: 'Manual compressor speed-control discharge setpoint used to detect protective slowdown when live tags are unavailable.',
+        unit: 'PSI',
+        min: 0,
+        max: 5000,
+        step: 1,
+        type: 'number',
+      }),
+      stationRecycleDischargeSetpointPsi: defineSetting(1350, {
+        label: 'Station Recycle Discharge Setpoint PSI',
+        description: 'Manual customer recycle discharge setpoint used when live station recycle trigger tags are unavailable.',
+        unit: 'PSI',
+        min: 0,
+        max: 5000,
+        step: 1,
+        type: 'number',
+      }),
       dischargePressureWarningPsi: defineSetting(1225, {
         label: 'Discharge Pressure Warning PSI',
         description: 'Site discharge pressure above this level triggers a warning condition.',
@@ -643,6 +670,12 @@ function validateCrossThresholds(settings, errors) {
   if (recycle.recycleValveAllowedPositionPct > recycle.recycleActiveThresholdPct) {
     push('recyclePressure.recycleValveAllowedPositionPct', 'Recycle allowed position cannot exceed the recycle active threshold.')
   }
+  if (recycle.wellPanelDischargeOverrideSetpointPsi > recycle.compressorSpeedControlDischargeSetpointPsi) {
+    push('recyclePressure.wellPanelDischargeOverrideSetpointPsi', 'Well panel discharge override setpoint must be less than or equal to the compressor speed control discharge setpoint.')
+  }
+  if (recycle.compressorSpeedControlDischargeSetpointPsi > recycle.stationRecycleDischargeSetpointPsi) {
+    push('recyclePressure.compressorSpeedControlDischargeSetpointPsi', 'Compressor speed control discharge setpoint must be less than or equal to the station recycle discharge setpoint.')
+  }
 
   const choke = settings.chokeRestriction
   if (choke.highChokeThresholdPct > choke.chokeSaturationThresholdPct) {
@@ -714,6 +747,9 @@ export function getLegacySiteSettings(settings = DEFAULT_DERIVED_TRIGGER_SETTING
     wellTargetPct: merged.wellFlow.allWellsMeetingFlowTolerancePct,
     recycleOpenPct: merged.recyclePressure.recycleActiveThresholdPct,
     recycleAlertThreshold: merged.recyclePressure.recycleValveAllowedPositionPct,
+    wellPanelDischargeOverrideSetpointPsi: merged.recyclePressure.wellPanelDischargeOverrideSetpointPsi,
+    compressorSpeedControlDischargeSetpointPsi: merged.recyclePressure.compressorSpeedControlDischargeSetpointPsi,
+    stationRecycleDischargeSetpointPsi: merged.recyclePressure.stationRecycleDischargeSetpointPsi,
     meetingFlowPersistSeconds: merged.compressorDispatch.compressorDispatchPersistenceSeconds,
   }
 }

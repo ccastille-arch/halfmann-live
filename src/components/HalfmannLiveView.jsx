@@ -191,7 +191,7 @@ function getUnitDesiredFlowDatapoint(panelData, panelDataMap, unitData, unitData
       `Compressor #${compNum} Flow Setpoint`,
       `Compressor ${compNum} Flow Setpoint`,
     ] : []),
-  ]) ?? resolveDatapointByAddress(unitData, UNIT_ADDRESSES.loadedAutoSp) ?? resolvePreferredDatapoint(unitDataMap, [
+  ]) ?? resolvePreferredDatapoint(unitDataMap, [
     'Flow Rate PID Auto Sp',
     'Speed Auto SP Flow',
     'Speed Auto Sp Flow',
@@ -234,6 +234,14 @@ function average(values) {
   const valid = values.filter(v => v != null && Number.isFinite(v))
   if (!valid.length) return null
   return valid.reduce((sum, v) => sum + v, 0) / valid.length
+}
+
+function parseLeadingCount(value) {
+  if (value == null) return null
+  const match = String(value).match(/-?\d+/)
+  if (!match) return null
+  const numeric = Number(match[0])
+  return Number.isFinite(numeric) ? numeric : null
 }
 
 function deriveMissingCompressorFlowDatapoints(unitDatapoints, totalActualFlow, units) {
@@ -519,6 +527,7 @@ export default function HalfmannLiveView() {
   } = useHalfmannData()
   const recycleAlertThreshold = siteSettings.recycleAlertThreshold ?? 0
   const wellTargetPct = siteSettings.wellTargetPct ?? 5
+  const compressorCommandTolerancePct = Number(siteSettings?.derivedTriggerSettings?.compressorDispatch?.compressorCommandMatchTolerancePct) || 5
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
 
   useEffect(() => {
@@ -617,6 +626,24 @@ export default function HalfmannLiveView() {
   const siteWellScore = wellsWithTarget.length > 0
     ? wellsWithTarget.reduce((sum, well) => sum + Math.min(100, well.matchPct ?? 0), 0) / wellsWithTarget.length
     : null
+  const panelAllWellsMeetingFlow = parsePanelBooleanValue(
+    resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.allWellsMeetingFlow])?.value
+      ?? resolvePreferredDatapoint(panel, ['All Wells Meeting Flow?'])?.value,
+  )
+  const panelAnyWellBelowSetpoint = parsePanelBooleanValue(
+    resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.anyWellBelowSetpoint])?.value
+      ?? resolvePreferredDatapoint(panel, ['Any Well Below Setpoint'])?.value,
+  )
+  const panelWellsMeetingRateCount = parseLeadingCount(
+    resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellsMeetingRate])?.value
+      ?? resolvePreferredDatapoint(panel, ['Wells Meeting Rate'])?.value,
+  )
+  const displayedWellMeetingCount = panelWellsMeetingRateCount ?? wellsAtTargetCount
+  const displayedWellMeetingTotal = liveWellPerformance.length || 5
+  const topWellStatusGood = panelAllWellsMeetingFlow ?? allOnTarget
+  const topWellStatusScore = panelWellsMeetingRateCount != null
+    ? (displayedWellMeetingCount / displayedWellMeetingTotal) * 100
+    : siteWellScore
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints may still be missing, but the site total can still be valid.
@@ -637,7 +664,7 @@ export default function HalfmannLiveView() {
   const compressorsMeetingCount = primaryUnitIndexes.filter((index) => {
     const actual = parseLiveNumeric(unitActualFlows[index]?.value)
     const desired = parseLiveNumeric(unitDesiredFlows[index]?.value)
-    return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * 0.05)
+    return meetingState.compressors[HALFMANN_UNITS[index].key] ?? (actual != null && desired != null && desired > 0 && Math.abs(actual - desired) <= desired * (compressorCommandTolerancePct / 100))
   }).length
   const compressorMeetingSignals = getPanelCompressorMeetingSignals(panelData, panel)
   const panelCompressorsMeetingFlow = compressorMeetingSignals.effective
@@ -735,9 +762,11 @@ export default function HalfmannLiveView() {
               <div className="grid gap-4 sm:grid-cols-3 mb-5">
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
-                  good={allOnTarget}
-                  value={siteWellScore != null ? `${siteWellScore.toFixed(0)}%` : undefined}
-                  detail={wellsWithTarget.length > 0
+                  good={topWellStatusGood}
+                  value={topWellStatusScore != null ? `${topWellStatusScore.toFixed(0)}%` : undefined}
+                  detail={panelAllWellsMeetingFlow != null
+                    ? `Panel says: ${panelAllWellsMeetingFlow ? 'YES' : 'NO'}${panelWellsMeetingRateCount != null ? ` | ${displayedWellMeetingCount} of ${displayedWellMeetingTotal} wells meeting rate` : ''}${panelAnyWellBelowSetpoint != null ? ` | Any well below setpoint: ${panelAnyWellBelowSetpoint ? 'YES' : 'NO'}` : ''}`
+                    : wellsWithTarget.length > 0
                     ? `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}`
                     : activeWells.length > 0
                       ? 'Live well setpoint tags are not visible yet'
@@ -758,9 +787,9 @@ export default function HalfmannLiveView() {
                   question="Are all compressors meeting flow commands?"
                   good={allCompressorsMeetingCommands}
                   detail={panelCompressorsMeetingFlow != null
-                    ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
+                    ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
                     : compressorCommandScore != null
-                    ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within 5% | ${compressorCommandScore.toFixed(1)}% avg command score`
+                    ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score`
                     : 'Desired flow command not visible on current site feed'}
                 />
               </div>

@@ -1,5 +1,8 @@
 export const PANEL_ADDRESSES = {
   totalDesiredSiteFlow: '420003',
+  allWellsMeetingFlow: '420031',
+  anyWellBelowSetpoint: '420021',
+  wellsMeetingRate: '420041',
   compressorsMeetingFlowDemand: '420018',
   anyCompressorNotMeetingDesiredFlow: '420023',
   recommendedCompressors: '420039',

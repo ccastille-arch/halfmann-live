@@ -330,6 +330,10 @@ export default function HalfmannOptimizationView() {
     const moderateMismatchPct = Number(compressorSettings.compressorModerateMismatchPct) || REVIEW_BAND
     const severeMismatchPct = Number(compressorSettings.compressorSevereMismatchPct) || INVESTIGATE_BAND
     const recycleActiveThresholdPct = Number(recyclePressureSettings.recycleActiveThresholdPct) || siteSettings.recycleOpenPct || 5
+    const wellPanelDischargeOverrideSetpointPsi = Number(recyclePressureSettings.wellPanelDischargeOverrideSetpointPsi) || 1250
+    const compressorSpeedControlDischargeSetpointPsi = Number(recyclePressureSettings.compressorSpeedControlDischargeSetpointPsi) || 1340
+    const stationRecycleDischargeSetpointPsi = Number(recyclePressureSettings.stationRecycleDischargeSetpointPsi) || 1350
+    const dischargeOverrideActiveThreshold = Number(recyclePressureSettings.dischargeOverrideActiveThreshold) || 0.5
     const overallStableScoreMinimum = Number(stabilityScoreSettings.overallPadStableScoreMinimum) || DEFAULT_STABLE_SCORE
     const overallWatchScoreMinimum = Number(stabilityScoreSettings.overallPadWatchScoreMinimum) || DEFAULT_WATCH_SCORE
     const compressorStableScoreMinimum = Number(stabilityScoreSettings.compressorStableScoreMinimum) || DEFAULT_STABLE_SCORE
@@ -359,7 +363,7 @@ export default function HalfmannOptimizationView() {
     const highChokeCount = wells.filter((well) => well.choke != null && well.choke >= highChokeThresholdPct).length
     const recyclePosition = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition)
     const recycleActive = recyclePosition != null && recyclePosition > recycleActiveThresholdPct
-    const dischargeOverrideActive = (getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]) ?? 0) > 0
+    const dischargeOverrideLatch = getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]) ?? 0
     const panelConstraintFlag = parseBoolean(panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === '420024')?.value) === true
     const panelAnyCompressorNotMeeting = parseBoolean(panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === '420023')?.value) === true
     const avgCompressorMismatch = compressors.filter((unit) => !unit.standby && unit.mismatchPct != null).length
@@ -368,7 +372,11 @@ export default function HalfmannOptimizationView() {
     const maxCompressorMismatch = compressors.filter((unit) => !unit.standby && unit.mismatchPct != null).reduce((max, unit) => Math.max(max, unit.mismatchPct), 0)
     const dischargeSpread = compressors.filter((unit) => !unit.standby && unit.discharge != null).map((unit) => unit.discharge)
     const dischargeInstability = dischargeSpread.length >= 2 ? Math.max(...dischargeSpread) - Math.min(...dischargeSpread) : 0
-    const compressorSlowdownActive = dischargeOverrideActive
+    const highestDischarge = dischargeSpread.length ? Math.max(...dischargeSpread) : null
+    const panelOverridePressureActive = highestDischarge != null && highestDischarge >= wellPanelDischargeOverrideSetpointPsi
+    const compressorSlowdownActive = highestDischarge != null && highestDischarge >= compressorSpeedControlDischargeSetpointPsi
+    const recyclePressureReached = highestDischarge != null && highestDischarge >= stationRecycleDischargeSetpointPsi
+    const dischargeOverrideActive = dischargeOverrideLatch > dischargeOverrideActiveThreshold || panelOverridePressureActive
     const mismatchPersistent = (historyContext.compressorMismatchPersistenceMinutes || 0) >= 10
     const wellBelowPersistent = (historyContext.wellBelowTargetPersistenceMinutes || 0) >= 10
     const lowFlowRetriggerCount = historyContext.repeatedLowFlowRetriggerCount || 0
@@ -382,6 +390,7 @@ export default function HalfmannOptimizationView() {
     const consequenceExists = (
       underTargetCount > 0 ||
       recycleActive ||
+      recyclePressureReached ||
       dischargeOverrideActive ||
       compressorSlowdownActive ||
       siteFlowDeficit ||
@@ -398,7 +407,7 @@ export default function HalfmannOptimizationView() {
     if (avgCompressorMismatch > minorMismatchPct) compressorScore -= Math.min(16, (avgCompressorMismatch - minorMismatchPct) * 1.8)
     if (maxCompressorMismatch > moderateMismatchPct) compressorScore -= Math.min(16, (maxCompressorMismatch - moderateMismatchPct) * 1.5)
     if (dischargeInstability > 40) compressorScore -= 10
-    if (recycleActive) compressorScore -= 12
+    if (recycleActive || recyclePressureReached) compressorScore -= 12
     if (compressorSlowdownActive) compressorScore -= 16
     if (panelConstraintFlag) compressorScore -= 10
     if (mismatchPersistent && maxCompressorMismatch > moderateMismatchPct) compressorScore -= 10
@@ -415,14 +424,21 @@ export default function HalfmannOptimizationView() {
     wellScore = clamp(wellScore, 20, 100)
 
     let pressureScore = 100
-    if (recycleActive) pressureScore -= 25
+    if (recycleActive || recyclePressureReached) pressureScore -= 25
     if (dischargeOverrideActive) pressureScore -= 20
     if (compressorSlowdownActive) pressureScore -= 12
     if (dischargeInstability > 40) pressureScore -= 10
     pressureScore = clamp(pressureScore, 20, 100)
 
     const overallScore = clamp((wellScore * 0.4) + (compressorScore * 0.4) + (pressureScore * 0.2), 20, 100)
-    const stablePad = stablePadForcesHold && overallScore >= overallStableScoreMinimum && allWellsMeeting && !recycleActive && !dischargeOverrideActive
+    const stablePad =
+      stablePadForcesHold &&
+      overallScore >= overallStableScoreMinimum &&
+      allWellsMeeting &&
+      !recycleActive &&
+      !recyclePressureReached &&
+      !dischargeOverrideActive &&
+      !compressorSlowdownActive
 
     let primaryRecommendation
     if (stablePad) {
@@ -434,22 +450,22 @@ export default function HalfmannOptimizationView() {
         why: 'All wells are within target band, recycle is inactive, discharge override is inactive, and current compressor mismatch does not create consequence.',
         whenNotToChange: 'Do not change settings from watch-level variance alone without persistence and operational consequence.',
       }
-    } else if (recycleActive || dischargeOverrideActive) {
+    } else if (recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive) {
       primaryRecommendation = {
         title: 'Prioritize pressure / recycle stability first',
         action: 'Hold well-side tuning until pressure protection clears.',
         amount: 'No immediate flow increase',
         confidence: historyFlags.discharge || historyFlags.recycle ? 82 : 68,
-        why: 'Pressure protection is active, so adding more flow now risks chasing the pad into compressor slowdown or recycle.',
+        why: 'One of the manual pressure-protection layers is active, so adding more flow now risks chasing the pad into compressor slowdown or recycle.',
         whenNotToChange: 'Do not change well-allocation settings until recycle is closed and discharge protection is inactive.',
       }
-    } else if (allWellsMeeting && !recycleActive && !dischargeOverrideActive && minorCompressorVariance) {
+    } else if (allWellsMeeting && !recycleActive && !recyclePressureReached && !dischargeOverrideActive && !compressorSlowdownActive && minorCompressorVariance) {
       primaryRecommendation = {
         title: 'HOLD - system is stable. No panel setting change justified right now.',
         action: 'Nothing at this time.',
         amount: 'No change.',
         confidence: 96,
-        why: 'All wells are meeting target, recycle is closed, discharge override is inactive, and compressor mismatch is minor.',
+        why: 'All wells are meeting target, recycle is closed, discharge override is inactive, the compressor speed-control discharge limit is inactive, and compressor mismatch is minor.',
         whenNotToChange: 'Do not adjust settings based on watch-level variance without persistence and consequence.',
       }
     } else if (compressorScore > 90 && wellScore > 90) {
@@ -518,16 +534,16 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Amount',
-        action: stablePad ? 'Hold' : recycleActive || dischargeOverrideActive ? 'Decrease' : 'Hold',
-        amount: stablePad ? '-' : recycleActive || dischargeOverrideActive ? '5-10%' : '-',
-        confidence: stablePad ? 95 : recycleActive || dischargeOverrideActive ? 80 : 94,
+        action: stablePad ? 'Hold' : recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive ? 'Decrease' : 'Hold',
+        amount: stablePad ? '-' : recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive ? '5-10%' : '-',
+        confidence: stablePad ? 95 : recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive ? 80 : 94,
         reason: stablePad
           ? 'All wells are meeting target and no event history proves low-flow bumps are causing consequence.'
-          : recycleActive || dischargeOverrideActive
+          : recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive
           ? 'Flow corrections are happening into pressure/recycle instability.'
           : 'All wells are meeting target and no event history proves low-flow bumps are causing harmful consequence.',
         whatToWatch: 'Watch whether lower bump sizes reduce pressure/recycle upset without creating well shortfall.',
-        liveEvidence: recycleActive || dischargeOverrideActive,
+        liveEvidence: recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive,
         historicalEvidence: historyFlags.lowFlow || historyFlags.discharge || historyFlags.recycle,
         eventEvidence: lowFlowEventEvidenceSupported && (historyFlags.discharge || historyFlags.recycle),
         whenNotToChange: 'Do not reduce the amount if wells are short and pressure protection is inactive.',
@@ -536,16 +552,16 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Max Change',
-        action: stablePad ? 'Hold' : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 'Decrease' : 'Hold',
-        amount: stablePad ? '-' : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5-10%' : '-',
-        confidence: stablePad ? 95 : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 74 : 92,
+        action: stablePad ? 'Hold' : lowFlowEventEvidenceSupported && (recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive) ? 'Decrease' : 'Hold',
+        amount: stablePad ? '-' : lowFlowEventEvidenceSupported && (recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive) ? '5-10%' : '-',
+        confidence: stablePad ? 95 : lowFlowEventEvidenceSupported && (recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive) ? 74 : 92,
         reason: stablePad
           ? 'No supported event history proves max-change aggressiveness is hurting a stable pad.'
-          : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive)
+          : lowFlowEventEvidenceSupported && (recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive)
           ? 'Low-flow corrections appear too aggressive for the current pressure response.'
           : 'No supported event history proves max-change aggressiveness is hurting pad stability.',
         whatToWatch: 'Watch for overshoot, pressure spikes, or recycle after each low-flow correction.',
-        liveEvidence: recycleActive || dischargeOverrideActive,
+        liveEvidence: recycleActive || recyclePressureReached || dischargeOverrideActive || compressorSlowdownActive,
         historicalEvidence: historyFlags.lowFlow,
         eventEvidence: lowFlowEventEvidenceSupported,
         whenNotToChange: 'Do not lower max change when wells are stable and pressure protection is inactive.',
@@ -675,7 +691,7 @@ export default function HalfmannOptimizationView() {
     let operationsDetail = 'The pad is operating within expected stability limits.'
     let monitoringNote = ''
 
-    if (stablePad || (allWellsMeeting && !recycleActive && !dischargeOverrideActive && !hasActionableSettings)) {
+    if (stablePad || (allWellsMeeting && !recycleActive && !recyclePressureReached && !dischargeOverrideActive && !compressorSlowdownActive && !hasActionableSettings)) {
       operationsSummary = 'No optimization action recommended.'
       operationsDetail = 'The pad is operating within expected stability limits. All wells are inside target band, and no recycle or discharge instability is active.'
       if (monitorSettings.some((item) => item.setting === 'Compressor Flow PV Offset') || avgCompressorMismatch > minorMismatchPct) {
@@ -729,9 +745,13 @@ export default function HalfmannOptimizationView() {
       rawValues: {
         totalDesiredSiteFlow,
         totalActualSiteFlow,
+        highestDischarge,
         recyclePosition,
-        dischargeOverrideLatch: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]),
+        dischargeOverrideLatch,
         dischargeOverrideCompSpeedSp: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideCompSpeedSp]),
+        wellPanelDischargeOverrideSetpointPsi,
+        compressorSpeedControlDischargeSetpointPsi,
+        stationRecycleDischargeSetpointPsi,
         avgCompressorMismatch,
         maxCompressorMismatch,
         averageWellMismatch,
@@ -929,9 +949,13 @@ export default function HalfmannOptimizationView() {
               <div style={detailsBodyStyle}>
                 <div style={evidenceCardStyle}>
                   <EvidenceRow label="Total Desired Site Flow" value={formatMmscfd(derived.rawValues.totalDesiredSiteFlow)} />
+                  <EvidenceRow label="Highest Site Discharge" value={`${formatNumber(derived.rawValues.highestDischarge, 0)} PSI`} />
                   <EvidenceRow label="Recycle Valve Position" value={formatNumber(derived.rawValues.recyclePosition, 1)} />
                   <EvidenceRow label="Discharge Override Latch" value={formatNumber(derived.rawValues.dischargeOverrideLatch, 0)} />
                   <EvidenceRow label="Override Comp Speed SP" value={formatNumber(derived.rawValues.dischargeOverrideCompSpeedSp, 0)} />
+                  <EvidenceRow label="Manual Well Panel Override SP" value={`${formatNumber(derived.rawValues.wellPanelDischargeOverrideSetpointPsi, 0)} PSI`} />
+                  <EvidenceRow label="Manual Compressor Speed Control SP" value={`${formatNumber(derived.rawValues.compressorSpeedControlDischargeSetpointPsi, 0)} PSI`} />
+                  <EvidenceRow label="Manual Station Recycle SP" value={`${formatNumber(derived.rawValues.stationRecycleDischargeSetpointPsi, 0)} PSI`} />
                   <EvidenceRow label="Average Compressor Mismatch" value={formatPercent(derived.rawValues.avgCompressorMismatch, 1)} />
                   <EvidenceRow label="Max Compressor Mismatch" value={formatPercent(derived.rawValues.maxCompressorMismatch, 1)} />
                   <EvidenceRow label="Average Well Mismatch" value={formatPercent(derived.rawValues.averageWellMismatch, 1)} />
