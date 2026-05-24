@@ -531,8 +531,11 @@ export default function HalfmannDiagnosticsView() {
     const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, totalActual, HALFMANN_UNITS)
     const unitSuction = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.suctionPressure) ?? getNumeric(unitMaps[index], ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
-    const unitSuctionTarget = HALFMANN_UNITS.map((unit) =>
-      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp))
+    const unitSuctionTarget = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.loadedAutoSp) ?? getNumeric(unitMaps[index], [
+        'Loaded Auto Sp',
+        'Loaded Auto SP',
+      ]))
     const unitDischarge = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.dischargePressure) ?? getNumeric(unitMaps[index], ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
     const unitRpm = HALFMANN_UNITS.map((unit, index) =>
