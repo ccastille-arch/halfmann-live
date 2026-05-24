@@ -328,6 +328,10 @@ export default function HalfmannDerivedTriggerSettingsAdminView() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <AdminButton tone="blue" onClick={() => {
+                window.history.replaceState({}, '', '/admin/alert-rules')
+                window.dispatchEvent(new PopStateEvent('popstate'))
+              }}>Alert Rules</AdminButton>
               <AdminButton tone="green" onClick={saveChanges} disabled={saving || loading || !draft || changedCount === 0}>Save Changes</AdminButton>
               <AdminButton tone="blue" onClick={exportJson} disabled={loading}>Export Config JSON</AdminButton>
               <AdminButton tone="yellow" onClick={() => fileInputRef.current?.click()} disabled={loading}>Import Config JSON</AdminButton>

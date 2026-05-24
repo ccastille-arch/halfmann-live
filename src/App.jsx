@@ -6,6 +6,7 @@ import HalfmannOptimizationView from './components/HalfmannOptimizationView'
 import HalfmannPerformanceReportView from './components/HalfmannPerformanceReportView'
 import HalfmannAdminLoginView from './components/HalfmannAdminLoginView'
 import HalfmannDerivedTriggerSettingsAdminView from './components/HalfmannDerivedTriggerSettingsAdminView'
+import HalfmannAlertRulesAdminView from './components/HalfmannAlertRulesAdminView'
 import { HalfmannDataProvider, useHalfmannData } from './context/HalfmannDataContext'
 import { PANEL_ADDRESSES, getNumericByAddress } from './engine/halfmannRegisters'
 
@@ -13,6 +14,7 @@ const API_BASE = import.meta.env.VITE_API_URL || ''
 
 function getPage() {
   const path = window.location.pathname.toLowerCase()
+  if (path.includes('/admin/alert-rules')) return 'admin-alert-rules'
   if (path.includes('/admin/derived-trigger-settings')) return 'admin-derived-trigger-settings'
   if (path.includes('/admin/login')) return 'admin-login'
   if (path.includes('performance-report') || path.includes('welllogic-performance-report')) return 'performance-report'
@@ -122,6 +124,8 @@ function AppShell() {
   function goTo(p) {
     if (p === 'performance-report') {
       window.history.pushState({}, '', '/performance-report')
+    } else if (p === 'admin-alert-rules') {
+      window.history.pushState({}, '', '/admin/alert-rules')
     } else if (p === 'admin-login') {
       window.history.pushState({}, '', '/admin/login')
     } else if (p === 'admin-derived-trigger-settings') {
@@ -157,6 +161,10 @@ function AppShell() {
     return <HalfmannDerivedTriggerSettingsAdminView />
   }
 
+  if (page === 'admin-alert-rules') {
+    return <HalfmannAlertRulesAdminView />
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#080810' }}>
       <style>{`
@@ -187,11 +195,19 @@ function AppShell() {
         </NavButton>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <UtilityButton
-            active={page === 'admin-login' || page === 'admin-derived-trigger-settings'}
+            active={page === 'admin-login' || page === 'admin-derived-trigger-settings' || page === 'admin-alert-rules'}
             onClick={() => goTo(adminAuthenticated ? 'admin-derived-trigger-settings' : 'admin-login')}
           >
             {adminAuthenticated ? 'Admin Settings' : 'Admin Login'}
           </UtilityButton>
+          {adminAuthenticated ? (
+            <UtilityButton
+              active={page === 'admin-alert-rules'}
+              onClick={() => goTo('admin-alert-rules')}
+            >
+              Alert Rules
+            </UtilityButton>
+          ) : null}
           <div style={{ fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
           Halfmann 1214
           </div>

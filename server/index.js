@@ -26,6 +26,11 @@ import {
   requireAdmin,
   verifyAdminLogin,
 } from './adminAuth.js'
+import {
+  getHalfmannAlertRulesAdminPayload,
+  saveHalfmannAlertRules,
+} from './halfmannAlertRulesStore.js'
+import { evaluateHalfmannAlertRules } from './halfmannAlertEngine.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -237,6 +242,27 @@ app.get('/api/admin/derived-trigger-settings/audit', requireAdmin, (req, res) =>
     fetchedAt: new Date().toISOString(),
     auditLog: getDerivedTriggerSettingsAuditLog(limit),
   })
+})
+
+app.get('/api/admin/alert-rules', requireAdmin, (req, res) => {
+  const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 100
+  res.json(getHalfmannAlertRulesAdminPayload(limit))
+})
+
+app.put('/api/admin/alert-rules', requireAdmin, (req, res) => {
+  try {
+    const updated = saveHalfmannAlertRules(req.body?.rules || [], {
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || '',
+      ip: getRequestIp(req),
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to save alert rules',
+      details: err.payload || null,
+    })
+  }
 })
 
 // ─── MLink proxy ──────────────────────────────────────────────────────────────
@@ -569,6 +595,11 @@ async function captureHalfmannRuntimeHistory() {
         units: unitSnapshots,
       })
       recordHalfmannPanelMatchSnapshot(panelSnapshot)
+      await evaluateHalfmannAlertRules({
+        capturedAt,
+        panelSnapshot,
+        unitSnapshots,
+      })
     }
   } catch (err) {
     console.error('halfmann history capture failed:', err.message)
