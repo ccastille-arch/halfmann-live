@@ -3,6 +3,7 @@ export const PANEL_ADDRESSES = {
   allWellsMeetingFlow: '420031',
   anyWellBelowSetpoint: '420021',
   wellsMeetingRate: '420041',
+  wellLiveInjectionMatchPct: ['420007', '420008', '420009', '420010', '420011'],
   compressorsMeetingFlowDemand: '420018',
   anyCompressorNotMeetingDesiredFlow: '420023',
   recommendedCompressors: '420039',

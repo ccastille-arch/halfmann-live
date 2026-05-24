@@ -97,6 +97,16 @@ function parseLiveNumeric(value) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function parsePercentNumeric(value) {
+  if (value == null) return null
+  const direct = Number(value)
+  if (Number.isFinite(direct)) return direct
+  const match = String(value).match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const numeric = Number(match[0])
+  return Number.isFinite(numeric) ? numeric : null
+}
+
 function resolvePreferredDatapoint(dataMap, labels) {
   for (const label of labels) {
     const datapoint = findRegisterDatapoint(dataMap, { label, decimals: 3 })
@@ -576,6 +586,16 @@ export default function HalfmannLiveView() {
       `Wellhead #${wellNumber} Tubing Pressure`,
     ])
     const oilPriority = getNumericByAddress(panelData, [LIVE_WELL_OIL_PRIORITY_ADDRESSES[index]])
+    const liveInjectionMatchPct = parsePercentNumeric(
+      resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]])?.value
+        ?? resolvePreferredDatapoint(panel, [
+          `Wellhead #${wellLabel} Live Injection Match Percentage`,
+          `Wellhead #${wellNumber} Live Injection Match Percentage`,
+          `Well ${wellLabel} Live Injection Match Percentage`,
+          `Well ${wellNumber} Live Injection Match Percentage`,
+        ])?.value,
+    )
+    const liveMatchAtTarget = liveInjectionMatchPct != null ? liveInjectionMatchPct >= (100 - wellTargetPct) : null
     return {
       wellNumber,
       wellLabel,
@@ -590,8 +610,8 @@ export default function HalfmannLiveView() {
       tubingPres,
       oilPriority,
       gap: actual != null && desired != null ? actual - desired : null,
-      matchPct: computeMatchPct(actual, desired),
-      atTarget: meetingState.wells[String(wellNumber)] ?? isWithinTarget(actual, desired),
+      matchPct: liveInjectionMatchPct,
+      atTarget: liveMatchAtTarget,
       sacrificed: calculatedDesired != null && desired != null && calculatedDesired < desired,
     }
   })
@@ -617,15 +637,9 @@ export default function HalfmannLiveView() {
   const wellsWithBoth = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
   const totalDesiredFromWells = wellsWithBoth.reduce((sum, w) => sum + (w.desired ?? 0), 0)
   const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
-  const liveSetpointCount = liveWellPerformance.filter((well) => well.desiredSource === 'live').length
   const activeWells = liveWellPerformance.filter(w => w.actual != null)
-  // Only compare wells where we have BOTH actual AND a real setpoint (avoids false YES/NO without targets)
-  const wellsWithTarget = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
-  const wellsAtTargetCount = wellsWithTarget.filter(w => w.atTarget).length
-  const allOnTarget = wellsWithTarget.length > 0 ? wellsAtTargetCount === wellsWithTarget.length : null
-  const siteWellScore = wellsWithTarget.length > 0
-    ? wellsWithTarget.reduce((sum, well) => sum + Math.min(100, well.matchPct ?? 0), 0) / wellsWithTarget.length
-    : null
+  const wellsWithMatchPct = liveWellPerformance.filter(w => w.matchPct != null)
+  const wellsAtTargetCount = wellsWithMatchPct.filter(w => w.atTarget === true).length
   const panelAllWellsMeetingFlow = parsePanelBooleanValue(
     resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.allWellsMeetingFlow])?.value
       ?? resolvePreferredDatapoint(panel, ['All Wells Meeting Flow?'])?.value,
@@ -640,10 +654,7 @@ export default function HalfmannLiveView() {
   )
   const displayedWellMeetingCount = panelWellsMeetingRateCount ?? wellsAtTargetCount
   const displayedWellMeetingTotal = liveWellPerformance.length || 5
-  const topWellStatusGood = panelAllWellsMeetingFlow ?? allOnTarget
-  const topWellStatusScore = panelWellsMeetingRateCount != null
-    ? (displayedWellMeetingCount / displayedWellMeetingTotal) * 100
-    : siteWellScore
+  const topWellStatusGood = panelAllWellsMeetingFlow
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints may still be missing, but the site total can still be valid.
@@ -763,14 +774,9 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={topWellStatusGood}
-                  value={topWellStatusScore != null ? `${topWellStatusScore.toFixed(0)}%` : undefined}
                   detail={panelAllWellsMeetingFlow != null
-                    ? `Panel says: ${panelAllWellsMeetingFlow ? 'YES' : 'NO'}${panelWellsMeetingRateCount != null ? ` | ${displayedWellMeetingCount} of ${displayedWellMeetingTotal} wells meeting rate` : ''}${panelAnyWellBelowSetpoint != null ? ` | Any well below setpoint: ${panelAnyWellBelowSetpoint ? 'YES' : 'NO'}` : ''}`
-                    : wellsWithTarget.length > 0
-                    ? `Using ${liveSetpointCount} live setpoint tag${liveSetpointCount === 1 ? '' : 's'}`
-                    : activeWells.length > 0
-                      ? 'Live well setpoint tags are not visible yet'
-                      : 'Waiting for flow data...'}
+                    ? `Direct MLink register${panelWellsMeetingRateCount != null ? ` | ${displayedWellMeetingCount} of ${displayedWellMeetingTotal} wells meeting rate` : ''}${panelAnyWellBelowSetpoint != null ? ` | Any well below setpoint: ${panelAnyWellBelowSetpoint ? 'YES' : 'NO'}` : ''}`
+                    : 'All Wells Meeting Flow? register not visible on current feed'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
@@ -807,11 +813,11 @@ export default function HalfmannLiveView() {
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                   {liveWellPerformance.map((well) => {
                     const hasData = well.actual != null
-                    const onTarget = well.atTarget
-                    const sacrificed = hasData && !onTarget && well.sacrificed
-                    const tone = !hasData ? 'none' : onTarget ? 'good' : sacrificed ? 'warn' : 'bad'
-                    const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'warn' ? '#8a5b10' : tone === 'bad' ? '#7a1a1a' : '#1a1a2a'
-                    const bgColor = tone === 'good' ? '#071410' : tone === 'warn' ? '#171107' : tone === 'bad' ? '#180909' : '#0a0a14'
+                    const onTarget = well.atTarget === true
+                    const hasMatchPct = well.matchPct != null
+                    const tone = !hasData ? 'none' : !hasMatchPct ? 'neutral' : onTarget ? 'good' : 'bad'
+                    const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'bad' ? '#7a1a1a' : tone === 'neutral' ? '#2d3a52' : '#1a1a2a'
+                    const bgColor = tone === 'good' ? '#071410' : tone === 'bad' ? '#180909' : tone === 'neutral' ? '#101827' : '#0a0a14'
                     return (
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
@@ -822,7 +828,7 @@ export default function HalfmannLiveView() {
                           {well.matchPct != null ? (
                             <div
                               className="text-[9px] font-bold uppercase tracking-wider shrink-0"
-                              style={{ color: tone === 'good' ? '#4ade80' : tone === 'warn' ? '#fbbf24' : '#fca5a5' }}
+                              style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : '#93c5fd' }}
                             >
                               {well.matchPct.toFixed(1)}% on target
                             </div>
@@ -830,10 +836,10 @@ export default function HalfmannLiveView() {
                         </div>
                         <div className="mb-1">
                           <div className="text-[24px] font-black leading-none"
-                            style={{ color: !hasData ? '#333' : tone === 'good' ? '#22c55e' : tone === 'warn' ? '#f59e0b' : '#ef4444', fontFamily: "'Arial Black'" }}>
+                            style={{ color: !hasData ? '#333' : tone === 'good' ? '#22c55e' : tone === 'bad' ? '#ef4444' : '#93c5fd', fontFamily: "'Arial Black'" }}>
                             {hasData ? well.actual.toFixed(3) : 'NO DATA'}
                           </div>
-                          {hasData && <div className="text-[9px] mt-0.5" style={{ color: tone === 'good' ? '#4ade80' : tone === 'warn' ? '#fbbf24' : '#fca5a5' }}>MMSCFD actual</div>}
+                          {hasData && <div className="text-[9px] mt-0.5" style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : '#93c5fd' }}>MMSCFD actual</div>}
                         </div>
                         {well.desired != null ? (
                           <div className="mb-2">
@@ -851,16 +857,16 @@ export default function HalfmannLiveView() {
                               <div className="h-full rounded-full transition-all"
                                 style={{
                                   width: `${Math.min(100, well.matchPct)}%`,
-                                  background: well.matchPct >= 95 ? 'linear-gradient(to right, #22c55e, #4fc3f7)' : '#f59e0b',
+                                  background: onTarget ? 'linear-gradient(to right, #22c55e, #4fc3f7)' : '#ef4444',
                                 }} />
                             </div>
-                            <div className="text-[9px] text-[#555] mt-0.5">{well.matchPct.toFixed(1)}% of target</div>
+                            <div className="text-[9px] text-[#555] mt-0.5">Direct MLink injection match register</div>
                           </div>
                         )}
-                        {hasData && well.desired != null && (
+                        {hasData && hasMatchPct && (
                           <div className="text-[14px] font-black mb-3"
-                            style={{ color: tone === 'good' ? '#22c55e' : tone === 'warn' ? '#f59e0b' : '#ef4444', fontFamily: "'Arial Black'" }}>
-                            {onTarget ? 'ON TARGET' : sacrificed ? 'SACRIFICED' : 'LOW'}
+                            style={{ color: tone === 'good' ? '#22c55e' : '#ef4444', fontFamily: "'Arial Black'" }}>
+                            {onTarget ? 'ON TARGET' : 'LOW'}
                           </div>
                         )}
                         <div className="border-t border-[#1a1a2a] my-2" />
