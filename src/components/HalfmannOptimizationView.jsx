@@ -303,6 +303,8 @@ export default function HalfmannOptimizationView() {
     const underTargetCount = wells.filter((well) => well.underTarget).length
     const overTargetCount = wells.filter((well) => well.overTarget).length
     const restrictedCount = wells.filter((well) => well.restrictedCandidate).length
+    const totalActualSiteFlow = wells.reduce((sum, well) => sum + (Number.isFinite(well.actual) ? well.actual : 0), 0)
+    const totalDesiredSiteFlow = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow])
     const averageWellMismatch = wells.filter((well) => well.errorPct != null).length
       ? wells.filter((well) => well.errorPct != null).reduce((sum, well) => sum + Math.abs(well.errorPct), 0) / wells.filter((well) => well.errorPct != null).length
       : 0
@@ -327,11 +329,15 @@ export default function HalfmannOptimizationView() {
     const noRetainedDischargePattern = /no retained discharge override events/i.test(pressureRecoveryPattern)
     const allWellsMeeting = underTargetCount === 0 && overTargetCount === 0
     const minorCompressorVariance = avgCompressorMismatch <= REVIEW_BAND && maxCompressorMismatch <= REVIEW_BAND
+    const siteFlowDeficit = Number.isFinite(totalDesiredSiteFlow) && totalActualSiteFlow + 0.05 < totalDesiredSiteFlow
+    const oscillationDetected = lowFlowRetriggerCount > 1 || dischargeRetriggerCount > 1
     const consequenceExists = (
       underTargetCount > 0 ||
       recycleActive ||
       dischargeOverrideActive ||
       compressorSlowdownActive ||
+      siteFlowDeficit ||
+      oscillationDetected ||
       (mismatchPersistent && maxCompressorMismatch > REVIEW_BAND) ||
       (lowFlowRetriggerCount > 0 && wellBelowPersistent) ||
       historyFlags.sacrifice ||
@@ -368,9 +374,19 @@ export default function HalfmannOptimizationView() {
     pressureScore = clamp(pressureScore, 20, 100)
 
     const overallScore = clamp((wellScore * 0.4) + (compressorScore * 0.4) + (pressureScore * 0.2), 20, 100)
+    const stablePad = overallScore >= 90 && allWellsMeeting && !recycleActive && !dischargeOverrideActive
 
     let primaryRecommendation
-    if (recycleActive || dischargeOverrideActive) {
+    if (stablePad) {
+      primaryRecommendation = {
+        title: 'HOLD - pad stable. Monitor compressor mismatch only.',
+        action: 'No action recommended.',
+        amount: 'No change.',
+        confidence: 96,
+        why: 'All wells are within target band, recycle is inactive, discharge override is inactive, and current compressor mismatch does not create consequence.',
+        whenNotToChange: 'Do not change settings from watch-level variance alone without persistence and operational consequence.',
+      }
+    } else if (recycleActive || dischargeOverrideActive) {
       primaryRecommendation = {
         title: 'Prioritize pressure / recycle stability first',
         action: 'Hold well-side tuning until pressure protection clears.',
@@ -434,10 +450,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Timer',
-        action: lowFlowEventEvidenceSupported ? 'Increase' : historyFlags.lowFlow ? 'Monitor' : 'Hold',
-        amount: lowFlowEventEvidenceSupported ? '30-60 sec' : '-',
-        confidence: lowFlowEventEvidenceSupported ? 76 : historyFlags.lowFlow ? 72 : 93,
-        reason: lowFlowEventEvidenceSupported
+        action: stablePad ? (historyFlags.lowFlow ? 'Monitor Only' : 'Hold') : lowFlowEventEvidenceSupported ? 'Increase' : historyFlags.lowFlow ? 'Monitor Only' : 'Hold',
+        amount: stablePad ? '-' : lowFlowEventEvidenceSupported ? '30-60 sec' : '-',
+        confidence: stablePad ? 94 : lowFlowEventEvidenceSupported ? 76 : historyFlags.lowFlow ? 72 : 93,
+        reason: stablePad
+          ? 'Wells are currently meeting target and no current consequence proves that low-flow timing needs adjustment.'
+          : lowFlowEventEvidenceSupported
           ? 'Low-flow events are repeating before recovery and they are tied to real consequence.'
           : historyFlags.lowFlow
             ? 'Low-flow history exists, but current wells are meeting target and no harmful retrigger pattern is proven.'
@@ -452,10 +470,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Amount',
-        action: recycleActive || dischargeOverrideActive ? 'Decrease' : 'Hold',
-        amount: recycleActive || dischargeOverrideActive ? '5-10%' : '-',
-        confidence: recycleActive || dischargeOverrideActive ? 80 : 94,
-        reason: recycleActive || dischargeOverrideActive
+        action: stablePad ? 'Hold' : recycleActive || dischargeOverrideActive ? 'Decrease' : 'Hold',
+        amount: stablePad ? '-' : recycleActive || dischargeOverrideActive ? '5-10%' : '-',
+        confidence: stablePad ? 95 : recycleActive || dischargeOverrideActive ? 80 : 94,
+        reason: stablePad
+          ? 'All wells are meeting target and no event history proves low-flow bumps are causing consequence.'
+          : recycleActive || dischargeOverrideActive
           ? 'Flow corrections are happening into pressure/recycle instability.'
           : 'All wells are meeting target and no event history proves low-flow bumps are causing harmful consequence.',
         whatToWatch: 'Watch whether lower bump sizes reduce pressure/recycle upset without creating well shortfall.',
@@ -468,10 +488,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Low Flow Override Max Change',
-        action: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 'Decrease' : 'Hold',
-        amount: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5-10%' : '-',
-        confidence: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 74 : 92,
-        reason: lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive)
+        action: stablePad ? 'Hold' : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 'Decrease' : 'Hold',
+        amount: stablePad ? '-' : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? '5-10%' : '-',
+        confidence: stablePad ? 95 : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive) ? 74 : 92,
+        reason: stablePad
+          ? 'No supported event history proves max-change aggressiveness is hurting a stable pad.'
+          : lowFlowEventEvidenceSupported && (recycleActive || dischargeOverrideActive)
           ? 'Low-flow corrections appear too aggressive for the current pressure response.'
           : 'No supported event history proves max-change aggressiveness is hurting pad stability.',
         whatToWatch: 'Watch for overshoot, pressure spikes, or recycle after each low-flow correction.',
@@ -484,10 +506,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Discharge Settle-Out Timer',
-        action: dischargeEventEvidenceSupported ? 'Increase' : 'Hold',
-        amount: dischargeEventEvidenceSupported ? '60-120 sec' : '-',
-        confidence: dischargeEventEvidenceSupported ? 78 : noRetainedDischargePattern ? 90 : 86,
-        reason: dischargeEventEvidenceSupported
+        action: stablePad ? 'Hold' : dischargeEventEvidenceSupported ? 'Increase' : 'Hold',
+        amount: stablePad ? '-' : dischargeEventEvidenceSupported ? '60-120 sec' : '-',
+        confidence: stablePad ? 95 : dischargeEventEvidenceSupported ? 78 : noRetainedDischargePattern ? 90 : 86,
+        reason: stablePad
+          ? 'Pad is stable and no retained discharge evidence supports a settle-out timer change.'
+          : dischargeEventEvidenceSupported
           ? 'Discharge events are clustering before pressure has settled.'
           : noRetainedDischargePattern
             ? 'No retained discharge override events are available to support a timer change.'
@@ -503,10 +527,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Discharge Override Amount',
-        action: dischargeOverrideActive && underTargetCount > 0 ? 'Decrease' : 'Hold',
-        amount: dischargeOverrideActive && underTargetCount > 0 ? '5-10%' : '-',
-        confidence: dischargeOverrideActive && underTargetCount > 0 ? 73 : 92,
-        reason: dischargeOverrideActive && underTargetCount > 0
+        action: stablePad ? 'Hold' : dischargeOverrideActive && underTargetCount > 0 ? 'Decrease' : 'Hold',
+        amount: stablePad ? '-' : dischargeOverrideActive && underTargetCount > 0 ? '5-10%' : '-',
+        confidence: stablePad ? 95 : dischargeOverrideActive && underTargetCount > 0 ? 73 : 92,
+        reason: stablePad
+          ? 'Discharge override is inactive, so no current evidence supports changing override amount.'
+          : dischargeOverrideActive && underTargetCount > 0
           ? 'Pressure protection is active and wells are going short, which suggests the reduction may be a little too strong.'
           : 'Hold unless discharge override is active now or retained events prove poor recovery.',
         whatToWatch: 'Watch discharge pressure recovery and whether wells stay inside target after the next event.',
@@ -537,10 +563,12 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Well Sacrifice Amount',
-        action: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Investigate' : 'Hold',
-        amount: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Manual validation first' : '-',
-        confidence: historyFlags.sacrifice ? 70 : 92,
-        reason: historyFlags.sacrifice && underTargetCount > 0 && consequenceExists
+        action: stablePad ? 'Hold' : historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Investigate' : 'Hold',
+        amount: stablePad ? '-' : historyFlags.sacrifice && underTargetCount > 0 && consequenceExists ? 'Manual validation first' : '-',
+        confidence: stablePad ? 95 : historyFlags.sacrifice ? 70 : 92,
+        reason: stablePad
+          ? 'No active compressor constraint or failed priority protection event requires sacrifice tuning.'
+          : historyFlags.sacrifice && underTargetCount > 0 && consequenceExists
           ? 'Sacrifice behavior is present, but priority-well protection needs validation before changing the amount.'
           : 'No active compressor constraint or failed priority-protection event supports a sacrifice amount change.',
         whatToWatch: 'Watch whether priority wells stay protected when lower-priority wells absorb reduction.',
@@ -571,17 +599,26 @@ export default function HalfmannOptimizationView() {
       }),
     )
 
-    const relevantSettings = settings.filter((item) =>
-      [
-        'Low Flow Override Timer',
-        'Low Flow Override Amount',
-        'Low Flow Override Max Change',
-        'Discharge Settle-Out Timer',
-        'Discharge Override Amount',
-        'Compressor Flow PV Offset',
-        'Well Sacrifice Amount',
-      ].includes(item.setting)
-    )
+    const relevantSettingNames = stablePad
+      ? [
+          'Low Flow Override Timer',
+          'Low Flow Override Amount',
+          'Discharge Settle-Out Timer',
+          'Discharge Override Amount',
+          'Compressor Flow PV Offset',
+          'Well Sacrifice Amount',
+        ]
+      : [
+          'Low Flow Override Timer',
+          'Low Flow Override Amount',
+          'Low Flow Override Max Change',
+          'Discharge Settle-Out Timer',
+          'Discharge Override Amount',
+          'Compressor Flow PV Offset',
+          'Well Sacrifice Amount',
+        ]
+
+    const relevantSettings = settings.filter((item) => relevantSettingNames.includes(item.setting))
 
     return {
       wells,
@@ -598,6 +635,7 @@ export default function HalfmannOptimizationView() {
       wellScore,
       overallScore,
       pressureScore,
+      stablePad,
       avgCompressorMismatch,
       maxCompressorMismatch,
       averageWellMismatch,
@@ -607,7 +645,8 @@ export default function HalfmannOptimizationView() {
       primaryRecommendation,
       settings: relevantSettings,
       rawValues: {
-        totalDesiredSiteFlow: getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]),
+        totalDesiredSiteFlow,
+        totalActualSiteFlow,
         recyclePosition,
         dischargeOverrideLatch: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]),
         dischargeOverrideCompSpeedSp: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideCompSpeedSp]),
