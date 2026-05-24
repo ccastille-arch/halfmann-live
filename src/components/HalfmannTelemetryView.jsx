@@ -549,27 +549,25 @@ export default function HalfmannTelemetryView() {
     saveSettings,
   } = useHalfmannData()
   const [isAdmin, setIsAdmin] = useState(false)
-  const [adminToken, setAdminToken] = useState(() => { try { return localStorage.getItem('halfmann_admin_token') } catch { return null } })
-  const [showLogin, setShowLogin] = useState(false)
   const [activeSettings, setActiveSettings] = useState(null)
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
 
-  useEffect(() => { if (adminToken) setIsAdmin(true) }, [adminToken])
+  useEffect(() => {
+    fetch(`${API_BASE}/api/admin/session`, { credentials: 'include' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => setIsAdmin(Boolean(body?.authenticated)))
+      .catch(() => {})
+  }, [])
 
-  function handleLogin(token) {
-    setAdminToken(token); try { localStorage.setItem('halfmann_admin_token', token) } catch {}
-    setIsAdmin(true); setShowLogin(false)
-  }
   async function handleLogout() {
-    if (adminToken) fetch(`${API_BASE}/api/admin/logout`, { method: 'POST', headers: { 'x-admin-token': adminToken } }).catch(() => {})
-    try { localStorage.removeItem('halfmann_admin_token') } catch {}
-    setAdminToken(null); setIsAdmin(false)
+    await fetch(`${API_BASE}/api/admin/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
+    setIsAdmin(false)
   }
   async function handleSaveSettings(key, value) {
     const updated = { ...siteSettings, [key]: value }
     try {
-      const r = await saveSettings(updated, adminToken)
-      if (r && r.status === 401) { setIsAdmin(false); setAdminToken(null); try { localStorage.removeItem('halfmann_admin_token') } catch {} }
+      const r = await saveSettings(updated)
+      if (r && r.status === 401) setIsAdmin(false)
     } catch {}
   }
   const openSettings = key => { if (isAdmin) setActiveSettings(key) }
@@ -685,12 +683,11 @@ export default function HalfmannTelemetryView() {
                 <span style={{ fontSize: 9, color: '#22c55e', fontWeight: 700, letterSpacing: '0.1em' }}>ADMIN</span>
                 <button onClick={handleLogout} style={{ background: '#1a1a2a', border: '1px solid #2a2a3a', borderRadius: 6, color: '#888', cursor: 'pointer', padding: '4px 9px', fontSize: 9 }}>Logout</button>
               </div>
-            : <button onClick={() => setShowLogin(true)} style={{ background: '#1a1a2a', border: '1px solid #2a2a3a', borderRadius: 6, color: '#555', cursor: 'pointer', padding: '5px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em' }}>ADMIN</button>
+            : <button onClick={() => { window.history.pushState({}, '', '/admin/login'); window.dispatchEvent(new PopStateEvent('popstate')) }} style={{ background: '#1a1a2a', border: '1px solid #2a2a3a', borderRadius: 6, color: '#555', cursor: 'pointer', padding: '5px 12px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em' }}>ADMIN</button>
           }
         </div>
       </header>
 
-      {showLogin && <AdminLoginModal onClose={() => setShowLogin(false)} onLogin={handleLogin} />}
       {activeSettings && <GaugeSettingsModal settingKey={activeSettings} settings={siteSettings} onSave={handleSaveSettings} onClose={() => setActiveSettings(null)} />}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px' }}>

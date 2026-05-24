@@ -4,11 +4,15 @@ import HalfmannTelemetryView from './components/HalfmannTelemetryView'
 import HalfmannDiagnosticsView from './components/HalfmannDiagnosticsView'
 import HalfmannOptimizationView from './components/HalfmannOptimizationView'
 import HalfmannPerformanceReportView from './components/HalfmannPerformanceReportView'
+import HalfmannAdminLoginView from './components/HalfmannAdminLoginView'
+import HalfmannDerivedTriggerSettingsAdminView from './components/HalfmannDerivedTriggerSettingsAdminView'
 import { HalfmannDataProvider, useHalfmannData } from './context/HalfmannDataContext'
 import { PANEL_ADDRESSES, getNumericByAddress } from './engine/halfmannRegisters'
 
 function getPage() {
   const path = window.location.pathname.toLowerCase()
+  if (path.includes('/admin/derived-trigger-settings')) return 'admin-derived-trigger-settings'
+  if (path.includes('/admin/login')) return 'admin-login'
   if (path.includes('performance-report') || path.includes('welllogic-performance-report')) return 'performance-report'
   if (window.location.hash.includes('optimization')) return 'optimization'
   if (window.location.hash.includes('diagnostics')) return 'diagnostics'
@@ -98,6 +102,14 @@ function AppShell() {
     const compressorFlowDiagnostic = wellShortActive && (compressorShortActive || anyCompressorNotMeeting === true)
     return wellShortActive || compressorFlowDiagnostic || overrideActive || recycleActive || feedIssue
   }, [panelData, meetingState, liveError, commsStatus])
+
+  if (page === 'admin-login') {
+    return <HalfmannAdminLoginView />
+  }
+
+  if (page === 'admin-derived-trigger-settings') {
+    return <HalfmannDerivedTriggerSettingsAdminView />
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#080810' }}>

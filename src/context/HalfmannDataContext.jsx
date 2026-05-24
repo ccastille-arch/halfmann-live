@@ -304,19 +304,19 @@ export function HalfmannDataProvider({ children }) {
 
   const reloadSettings = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/settings`)
+      const res = await fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
       if (!res.ok) return
       const body = await res.json()
       setSiteSettings({ ...DEFAULT_SETTINGS, ...body })
     } catch {}
   }, [])
 
-  const saveSettings = useCallback(async (updated, adminToken) => {
+  const saveSettings = useCallback(async (updated) => {
     const res = await fetch(`${API_BASE}/api/settings`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...(adminToken ? { 'x-admin-token': adminToken } : {}),
       },
       body: JSON.stringify(updated),
     })
@@ -416,6 +416,17 @@ export function HalfmannDataProvider({ children }) {
       .catch(() => {})
     reloadSettings()
   }, [reloadSettings])
+
+  useEffect(() => {
+    function handleSettingsUpdated(event) {
+      const next = event?.detail
+      if (!next) return
+      setSiteSettings((current) => ({ ...current, ...next }))
+    }
+
+    window.addEventListener('derived-trigger-settings-updated', handleSettingsUpdated)
+    return () => window.removeEventListener('derived-trigger-settings-updated', handleSettingsUpdated)
+  }, [])
 
   useEffect(() => {
     refresh()

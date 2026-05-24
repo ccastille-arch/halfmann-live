@@ -2,12 +2,30 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { ensureScheduledPerformanceArchives, generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
 import { ensureHalfmannHistoryBootstrapped, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
 import { listArchivedPerformanceReports, resolveArchivedPerformanceReportPath } from './halfmannReportArchive.js'
+import {
+  exportDerivedTriggerSettingsPayload,
+  getDerivedTriggerSettingsAuditLog,
+  getDerivedTriggerSettingsAdminPayload,
+  getDerivedTriggerSettingsPublicPayload,
+  importDerivedTriggerSettings,
+  loadDerivedTriggerSettingsState,
+  resetDerivedTriggerSetting,
+  resetDerivedTriggerSettingsGroup,
+  saveDerivedTriggerSettings,
+} from './derivedTriggerSettingsStore.js'
+import {
+  clearAdminSession,
+  getAdminAuthStatus,
+  getAdminSession,
+  issueAdminSession,
+  requireAdmin,
+  verifyAdminLogin,
+} from './adminAuth.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
@@ -38,40 +56,187 @@ function saveSettings(s) {
 // ─── Admin sessions (in-memory, cleared on restart) ──────────────────────────
 const ADMIN_SESSIONS = new Map() // token -> expiry timestamp
 
+function getRequestIp(req) {
+  const forwarded = req.headers['x-forwarded-for']
+  if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',')[0].trim()
+  return req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
+function buildLegacySettingsPayload() {
+  const payload = getDerivedTriggerSettingsPublicPayload()
+  return {
+    ...payload.legacySettings,
+    derivedTriggerSettings: payload.derivedTriggerSettings,
+    fetchedAt: payload.fetchedAt,
+  }
+}
+
+function applyLegacySettingsToDerived(input = {}) {
+  const current = loadDerivedTriggerSettingsState().derivedTriggerSettings
+  const next = JSON.parse(JSON.stringify(current))
+  if (input.wellTargetPct != null) {
+    next.wellFlow.allWellsMeetingFlowTolerancePct = Number(input.wellTargetPct)
+    next.wellFlow.individualWellMeetingFlowTolerancePct = Number(input.wellTargetPct)
+  }
+  if (input.recycleOpenPct != null) {
+    next.recyclePressure.recycleActiveThresholdPct = Number(input.recycleOpenPct)
+  }
+  if (input.recycleAlertThreshold != null) {
+    next.recyclePressure.recycleValveAllowedPositionPct = Number(input.recycleAlertThreshold)
+  }
+  if (input.meetingFlowPersistSeconds != null) {
+    next.compressorDispatch.compressorDispatchPersistenceSeconds = Number(input.meetingFlowPersistSeconds)
+    next.chokeRestriction.restrictedWellPersistenceSeconds = Number(input.meetingFlowPersistSeconds)
+    next.eventHistory.eventPersistenceSeconds = Number(input.meetingFlowPersistSeconds)
+  }
+  return next
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() })
 })
 
 app.get('/api/settings', (_req, res) => {
-  res.json(loadSettings())
+  res.json(buildLegacySettingsPayload())
 })
 
-app.post('/api/settings', (req, res) => {
-  const token = req.headers['x-admin-token']
-  const session = ADMIN_SESSIONS.get(token)
-  if (!session || Date.now() > session) {
-    ADMIN_SESSIONS.delete(token)
-    return res.status(401).json({ error: 'Unauthorized' })
-  }
-  const updated = { ...loadSettings(), ...req.body }
-  saveSettings(updated)
-  res.json(updated)
+app.get('/api/derived-trigger-settings', (_req, res) => {
+  res.json(getDerivedTriggerSettingsPublicPayload())
 })
 
-app.post('/api/admin/login', (req, res) => {
-  const pw = process.env.ADMIN_PASSWORD
-  if (!pw) return res.status(503).json({ error: 'ADMIN_PASSWORD not configured' })
-  if (!req.body?.password || req.body.password !== pw) {
-    return res.status(401).json({ error: 'Invalid password' })
+app.post('/api/settings', requireAdmin, (req, res) => {
+  try {
+    const nextSettings = applyLegacySettingsToDerived(req.body || {})
+    const updated = saveDerivedTriggerSettings(nextSettings, {
+      user: req.adminSession.username,
+      reason: req.body?.reason || 'Legacy settings update',
+      ip: getRequestIp(req),
+    })
+    res.json({
+      ...updated.legacySettings,
+      derivedTriggerSettings: updated.derivedTriggerSettings,
+      fetchedAt: updated.fetchedAt,
+    })
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to save settings',
+      details: err.payload || null,
+    })
   }
-  const token = randomBytes(32).toString('hex')
-  ADMIN_SESSIONS.set(token, Date.now() + 8 * 3600 * 1000) // 8-hr session
-  res.json({ token })
+})
+
+app.get('/api/admin/session', (req, res) => {
+  const session = getAdminSession(req)
+  res.json({
+    authenticated: Boolean(session),
+    username: session?.username || null,
+    expiresAt: session?.expiresAt ? new Date(session.expiresAt).toISOString() : null,
+    authConfigured: getAdminAuthStatus().configured,
+  })
+})
+
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim()
+    const password = String(req.body?.password || '')
+    const auth = await verifyAdminLogin({ username, password, req })
+    issueAdminSession(res, req, auth.username)
+    res.json({
+      ok: true,
+      username: auth.username,
+      authConfigured: true,
+    })
+  } catch (err) {
+    res.status(err.status || 401).json({
+      error: err.status === 503 ? err.message : 'Invalid credentials',
+      authConfigured: getAdminAuthStatus().configured,
+    })
+  }
 })
 
 app.post('/api/admin/logout', (req, res) => {
-  ADMIN_SESSIONS.delete(req.headers['x-admin-token'])
+  clearAdminSession(res, req)
   res.json({ ok: true })
+})
+
+app.get('/api/admin/derived-trigger-settings', requireAdmin, (_req, res) => {
+  res.json(getDerivedTriggerSettingsAdminPayload())
+})
+
+app.put('/api/admin/derived-trigger-settings', requireAdmin, (req, res) => {
+  try {
+    const updated = saveDerivedTriggerSettings(req.body?.derivedTriggerSettings || req.body, {
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || '',
+      ip: getRequestIp(req),
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to save derived trigger settings',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.post('/api/admin/derived-trigger-settings/reset-group', requireAdmin, (req, res) => {
+  try {
+    const updated = resetDerivedTriggerSettingsGroup(String(req.body?.groupKey || ''), {
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || '',
+      ip: getRequestIp(req),
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to reset settings group',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.post('/api/admin/derived-trigger-settings/reset-setting', requireAdmin, (req, res) => {
+  try {
+    const updated = resetDerivedTriggerSetting(String(req.body?.path || ''), {
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || '',
+      ip: getRequestIp(req),
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to reset setting',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.post('/api/admin/derived-trigger-settings/import', requireAdmin, (req, res) => {
+  try {
+    const updated = importDerivedTriggerSettings(req.body, {
+      user: req.adminSession.username,
+      reason: req.body?.comment || req.body?.reason || 'Imported config',
+      ip: getRequestIp(req),
+    })
+    res.json(updated)
+  } catch (err) {
+    res.status(err.status || 400).json({
+      error: err.message || 'Failed to import settings',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.get('/api/admin/derived-trigger-settings/export', requireAdmin, (_req, res) => {
+  res.json(exportDerivedTriggerSettingsPayload())
+})
+
+app.get('/api/admin/derived-trigger-settings/audit', requireAdmin, (req, res) => {
+  const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 200
+  res.json({
+    fetchedAt: new Date().toISOString(),
+    auditLog: getDerivedTriggerSettingsAuditLog(limit),
+  })
 })
 
 // ─── MLink proxy ──────────────────────────────────────────────────────────────

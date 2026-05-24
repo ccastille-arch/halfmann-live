@@ -9,6 +9,8 @@ const WELL_OIL_PRIORITY = ['461036', '461038', '461040', '461042', '461044']
 const MONITOR_BAND = 3
 const REVIEW_BAND = 7
 const INVESTIGATE_BAND = 12
+const DEFAULT_STABLE_SCORE = 90
+const DEFAULT_WATCH_SCORE = 75
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -42,19 +44,27 @@ function toneStyles(tone) {
   return { border: '#29547a', bg: 'linear-gradient(180deg, rgba(10,21,34,0.96) 0%, rgba(8,14,24,0.96) 100%)', label: '#7dd3fc', text: '#dbeafe' }
 }
 
-function scoreTone(score) {
-  if (score >= 90) return 'green'
-  if (score >= 80) return 'blue'
-  if (score >= 75) return 'yellow'
-  if (score >= 60) return 'orange'
+function scoreTone(score, thresholds = {}) {
+  const stable = thresholds.stable ?? DEFAULT_STABLE_SCORE
+  const watch = thresholds.watch ?? DEFAULT_WATCH_SCORE
+  const stableWatch = Math.max(watch, stable - 10)
+  const tune = Math.max(0, watch - 15)
+  if (score >= stable) return 'green'
+  if (score >= stableWatch) return 'blue'
+  if (score >= watch) return 'yellow'
+  if (score >= tune) return 'orange'
   return 'red'
 }
 
-function scoreLabel(score) {
-  if (score >= 90) return 'Stable'
-  if (score >= 80) return 'Stable / Watch'
-  if (score >= 75) return 'Watch'
-  if (score >= 60) return 'Tune Only If Consequence Exists'
+function scoreLabel(score, thresholds = {}) {
+  const stable = thresholds.stable ?? DEFAULT_STABLE_SCORE
+  const watch = thresholds.watch ?? DEFAULT_WATCH_SCORE
+  const stableWatch = Math.max(watch, stable - 10)
+  const tune = Math.max(0, watch - 15)
+  if (score >= stable) return 'Stable'
+  if (score >= stableWatch) return 'Stable / Watch'
+  if (score >= watch) return 'Watch'
+  if (score >= tune) return 'Tune Only If Consequence Exists'
   return 'Investigate'
 }
 
@@ -103,8 +113,8 @@ function SectionCard({ title, eyebrow, children, right }) {
   )
 }
 
-function ScoreCard({ label, score, note }) {
-  const tone = scoreTone(score)
+function ScoreCard({ label, score, note, thresholds }) {
+  const tone = scoreTone(score, thresholds)
   const style = toneStyles(tone)
   return (
     <div style={{
@@ -120,7 +130,7 @@ function ScoreCard({ label, score, note }) {
       <div style={{ fontSize: 11, color: '#8ab7e8', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase' }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
         <div style={{ fontSize: 42, lineHeight: 1, fontWeight: 900, color: style.label }}>{formatNumber(score, 0)}</div>
-        <div style={{ fontSize: 14, fontWeight: 800, color: style.text }}>{scoreLabel(score)}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: style.text }}>{scoreLabel(score, thresholds)}</div>
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.7, color: style.text }}>{note}</div>
     </div>
@@ -162,7 +172,10 @@ function getUnitDesiredFlow(panelData, unitIndex) {
   return getNumericByAddress(panelData, [UNIT_FLOW_SETPOINTS[unitIndex]])
 }
 
-function buildWellRows(panelData) {
+function buildWellRows(panelData, thresholds = {}) {
+  const underThresholdPct = Number.isFinite(Number(thresholds.underTargetPct)) ? Number(thresholds.underTargetPct) : 2
+  const overThresholdPct = Number.isFinite(Number(thresholds.overTargetPct)) ? Number(thresholds.overTargetPct) : 2
+  const chokeSaturationPct = Number.isFinite(Number(thresholds.chokeSaturationPct)) ? Number(thresholds.chokeSaturationPct) : 90
   return WELL_NAMES.map((name, index) => {
     const actual = getNumericByAddress(panelData, [PANEL_ADDRESSES.wellFlow[index]])
     const desired = getNumericByAddress(panelData, [PANEL_ADDRESSES.wellSetpoint[index]]) ?? getNumericByAddress(panelData, [PANEL_ADDRESSES.wellCalculatedDesiredFlow[index]])
@@ -171,9 +184,9 @@ function buildWellRows(panelData) {
     const tubing = getNumericByAddress(panelData, [PANEL_ADDRESSES.wellTubingPressure[index]])
     const oilPriority = getNumericByAddress(panelData, [WELL_OIL_PRIORITY[index]])
     const errorPct = actual != null && desired != null && desired > 0 ? ((actual - desired) / desired) * 100 : null
-    const underTarget = errorPct != null ? errorPct < -2 : null
-    const overTarget = errorPct != null ? errorPct > 2 : null
-    const restrictedCandidate = Boolean(underTarget && choke != null && choke >= 90)
+    const underTarget = errorPct != null ? errorPct < (-1 * underThresholdPct) : null
+    const overTarget = errorPct != null ? errorPct > overThresholdPct : null
+    const restrictedCandidate = Boolean(underTarget && choke != null && choke >= chokeSaturationPct)
     return {
       wellName: `Well ${name}`,
       actual,
@@ -274,7 +287,8 @@ export default function HalfmannOptimizationView() {
     let cancelled = false
     setHistoryLoading(true)
     setHistoryError('')
-    fetch(`${API_BASE}/api/optimization-history?lookbackDays=14&reportLimit=7`)
+    const lookbackDays = Number(siteSettings?.derivedTriggerSettings?.eventHistory?.lookbackWindowDays) || 14
+    fetch(`${API_BASE}/api/optimization-history?lookbackDays=${encodeURIComponent(lookbackDays)}&reportLimit=7`)
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}))
@@ -292,10 +306,34 @@ export default function HalfmannOptimizationView() {
         if (!cancelled) setHistoryLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [siteSettings?.derivedTriggerSettings?.eventHistory?.lookbackWindowDays])
 
   const derived = useMemo(() => {
-    const wells = buildWellRows(panelData)
+    const triggerSettings = siteSettings?.derivedTriggerSettings || {}
+    const wellFlowSettings = triggerSettings.wellFlow || {}
+    const compressorSettings = triggerSettings.compressorDispatch || {}
+    const recyclePressureSettings = triggerSettings.recyclePressure || {}
+    const chokeSettings = triggerSettings.chokeRestriction || {}
+    const stabilityScoreSettings = triggerSettings.stabilityScores || {}
+    const recommendationRuleSettings = triggerSettings.recommendationRules || {}
+
+    const minorMismatchPct = Number(compressorSettings.compressorMinorMismatchPct) || MONITOR_BAND
+    const moderateMismatchPct = Number(compressorSettings.compressorModerateMismatchPct) || REVIEW_BAND
+    const severeMismatchPct = Number(compressorSettings.compressorSevereMismatchPct) || INVESTIGATE_BAND
+    const recycleActiveThresholdPct = Number(recyclePressureSettings.recycleActiveThresholdPct) || siteSettings.recycleOpenPct || 5
+    const overallStableScoreMinimum = Number(stabilityScoreSettings.overallPadStableScoreMinimum) || DEFAULT_STABLE_SCORE
+    const overallWatchScoreMinimum = Number(stabilityScoreSettings.overallPadWatchScoreMinimum) || DEFAULT_WATCH_SCORE
+    const compressorStableScoreMinimum = Number(stabilityScoreSettings.compressorStableScoreMinimum) || DEFAULT_STABLE_SCORE
+    const compressorWatchScoreMinimum = Number(stabilityScoreSettings.compressorWatchScoreMinimum) || DEFAULT_WATCH_SCORE
+    const wellStableScoreMinimum = Number(stabilityScoreSettings.wellStableScoreMinimum) || DEFAULT_STABLE_SCORE
+    const wellWatchScoreMinimum = Number(stabilityScoreSettings.wellWatchScoreMinimum) || DEFAULT_WATCH_SCORE
+    const stablePadForcesHold = recommendationRuleSettings.stablePadForcesHold !== false
+
+    const wells = buildWellRows(panelData, {
+      underTargetPct: Number(wellFlowSettings.wellUnderTargetThresholdPct) || 2,
+      overTargetPct: Number(wellFlowSettings.wellOverTargetThresholdPct) || 2,
+      chokeSaturationPct: Number(chokeSettings.chokeSaturationThresholdPct) || 90,
+    })
     const compressors = buildCompressorRows(panelData, unitDataRaw)
     const historyFlags = buildHistoryFlags(history)
     const historyContext = history?.optimizationHistoryContext || {}
@@ -308,9 +346,10 @@ export default function HalfmannOptimizationView() {
     const averageWellMismatch = wells.filter((well) => well.errorPct != null).length
       ? wells.filter((well) => well.errorPct != null).reduce((sum, well) => sum + Math.abs(well.errorPct), 0) / wells.filter((well) => well.errorPct != null).length
       : 0
-    const highChokeCount = wells.filter((well) => well.choke != null && well.choke >= 90).length
+    const highChokeThresholdPct = Number(chokeSettings.highChokeThresholdPct) || 85
+    const highChokeCount = wells.filter((well) => well.choke != null && well.choke >= highChokeThresholdPct).length
     const recyclePosition = getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition)
-    const recycleActive = recyclePosition != null && recyclePosition > (siteSettings.recycleOpenPct || 5)
+    const recycleActive = recyclePosition != null && recyclePosition > recycleActiveThresholdPct
     const dischargeOverrideActive = (getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]) ?? 0) > 0
     const panelConstraintFlag = parseBoolean(panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === '420024')?.value) === true
     const panelAnyCompressorNotMeeting = parseBoolean(panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === '420023')?.value) === true
@@ -328,7 +367,7 @@ export default function HalfmannOptimizationView() {
     const pressureRecoveryPattern = historyContext.pressureRecoveryPattern || ''
     const noRetainedDischargePattern = /no retained discharge override events/i.test(pressureRecoveryPattern)
     const allWellsMeeting = underTargetCount === 0 && overTargetCount === 0
-    const minorCompressorVariance = avgCompressorMismatch <= REVIEW_BAND && maxCompressorMismatch <= REVIEW_BAND
+    const minorCompressorVariance = avgCompressorMismatch <= moderateMismatchPct && maxCompressorMismatch <= moderateMismatchPct
     const siteFlowDeficit = Number.isFinite(totalDesiredSiteFlow) && totalActualSiteFlow + 0.05 < totalDesiredSiteFlow
     const oscillationDetected = lowFlowRetriggerCount > 1 || dischargeRetriggerCount > 1
     const consequenceExists = (
@@ -338,7 +377,7 @@ export default function HalfmannOptimizationView() {
       compressorSlowdownActive ||
       siteFlowDeficit ||
       oscillationDetected ||
-      (mismatchPersistent && maxCompressorMismatch > REVIEW_BAND) ||
+      (mismatchPersistent && maxCompressorMismatch > moderateMismatchPct) ||
       (lowFlowRetriggerCount > 0 && wellBelowPersistent) ||
       historyFlags.sacrifice ||
       historyFlags.constraint
@@ -347,13 +386,13 @@ export default function HalfmannOptimizationView() {
     const dischargeEventEvidenceSupported = historyFlags.discharge && !noRetainedDischargePattern && dischargeRetriggerCount > 0
 
     let compressorScore = 100
-    if (avgCompressorMismatch > MONITOR_BAND) compressorScore -= Math.min(16, (avgCompressorMismatch - MONITOR_BAND) * 1.8)
-    if (maxCompressorMismatch > REVIEW_BAND) compressorScore -= Math.min(16, (maxCompressorMismatch - REVIEW_BAND) * 1.5)
+    if (avgCompressorMismatch > minorMismatchPct) compressorScore -= Math.min(16, (avgCompressorMismatch - minorMismatchPct) * 1.8)
+    if (maxCompressorMismatch > moderateMismatchPct) compressorScore -= Math.min(16, (maxCompressorMismatch - moderateMismatchPct) * 1.5)
     if (dischargeInstability > 40) compressorScore -= 10
     if (recycleActive) compressorScore -= 12
     if (compressorSlowdownActive) compressorScore -= 16
     if (panelConstraintFlag) compressorScore -= 10
-    if (mismatchPersistent && maxCompressorMismatch > REVIEW_BAND) compressorScore -= 10
+    if (mismatchPersistent && maxCompressorMismatch > moderateMismatchPct) compressorScore -= 10
     compressorScore = clamp(compressorScore, 20, 100)
 
     let wellScore = 100
@@ -374,7 +413,7 @@ export default function HalfmannOptimizationView() {
     pressureScore = clamp(pressureScore, 20, 100)
 
     const overallScore = clamp((wellScore * 0.4) + (compressorScore * 0.4) + (pressureScore * 0.2), 20, 100)
-    const stablePad = overallScore >= 90 && allWellsMeeting && !recycleActive && !dischargeOverrideActive
+    const stablePad = stablePadForcesHold && overallScore >= overallStableScoreMinimum && allWellsMeeting && !recycleActive && !dischargeOverrideActive
 
     let primaryRecommendation
     if (stablePad) {
@@ -413,7 +452,7 @@ export default function HalfmannOptimizationView() {
         why: 'Compressor stability, well stability, and pressure stability are all strong. No setting adjustment is supported by current evidence.',
         whenNotToChange: 'Do not change anything unless a meaningful mismatch persists and causes a real consequence.',
       }
-    } else if (wellScore < 90 && compressorScore >= 90) {
+    } else if (wellScore < wellStableScoreMinimum && compressorScore >= compressorStableScoreMinimum) {
       primaryRecommendation = {
         title: restrictedCount > 0 ? 'Review restricted well response' : 'Adjust well-side behavior conservatively',
         action: restrictedCount > 0 ? 'Investigate the saturated well before increasing bumps.' : 'Use a small well-side timer or amount adjustment only if under-target behavior persists.',
@@ -422,11 +461,11 @@ export default function HalfmannOptimizationView() {
         why: restrictedCount > 0 ? 'A well is short while choke is near open, which looks more like deliverability restriction than compressor shortage.' : 'Wells are the unstable side while compressors are carrying load cleanly.',
         whenNotToChange: 'Do not increase well-side aggressiveness if recycle or discharge protection starts to activate.',
       }
-    } else if (compressorScore < 90 && wellScore >= 90) {
+    } else if (compressorScore < compressorStableScoreMinimum && wellScore >= wellStableScoreMinimum) {
       primaryRecommendation = {
         title: minorCompressorVariance ? 'HOLD - pad is stable; monitor compressor variance only.' : 'Review compressor-side stability first',
         action: minorCompressorVariance ? 'Nothing at this time.' : 'Monitor compressor mismatch or local compressor tuning before touching well allocation.',
-        amount: minorCompressorVariance ? 'No change.' : maxCompressorMismatch > INVESTIGATE_BAND ? 'Investigate >12% mismatch' : 'Monitor only',
+        amount: minorCompressorVariance ? 'No change.' : maxCompressorMismatch > severeMismatchPct ? `Investigate >${severeMismatchPct}% mismatch` : 'Monitor only',
         confidence: minorCompressorVariance ? 91 : mismatchPersistent ? 79 : 67,
         why: minorCompressorVariance
           ? 'Wells are stable and the compressor variance is still inside a watch-level band with no proven site consequence.'
@@ -581,14 +620,14 @@ export default function HalfmannOptimizationView() {
     settings.push(
       makeSetting({
         setting: 'Compressor Flow PV Offset',
-        action: maxCompressorMismatch <= REVIEW_BAND ? 'Monitor Only' : mismatchPersistent && consequenceExists ? 'Investigate' : 'Monitor Only',
+        action: maxCompressorMismatch <= moderateMismatchPct ? 'Monitor Only' : mismatchPersistent && consequenceExists ? 'Investigate' : 'Monitor Only',
         amount: '-',
         confidence: mismatchPersistent && consequenceExists ? 79 : 84,
-        reason: maxCompressorMismatch <= MONITOR_BAND
+        reason: maxCompressorMismatch <= minorMismatchPct
           ? 'Unit mismatch is inside the +/-3% normal deadband.'
-          : maxCompressorMismatch <= REVIEW_BAND
+          : maxCompressorMismatch <= moderateMismatchPct
             ? 'Mismatch is present but still inside the monitor-only band unless it persists and causes a site consequence.'
-            : maxCompressorMismatch <= INVESTIGATE_BAND
+            : maxCompressorMismatch <= severeMismatchPct
               ? 'Mismatch has reached the review band and should only be reviewed if it stays persistent and starts affecting pad performance.'
               : 'Mismatch exceeds the investigate band and is large enough to justify compressor-side review.',
         whatToWatch: 'Watch persistence, not just magnitude, before changing offsets.',
@@ -654,6 +693,11 @@ export default function HalfmannOptimizationView() {
         maxCompressorMismatch,
         averageWellMismatch,
       },
+      scoreThresholds: {
+        overall: { stable: overallStableScoreMinimum, watch: overallWatchScoreMinimum },
+        compressor: { stable: compressorStableScoreMinimum, watch: compressorWatchScoreMinimum },
+        well: { stable: wellStableScoreMinimum, watch: wellWatchScoreMinimum },
+      },
     }
   }, [panelData, unitDataRaw, history, siteSettings])
 
@@ -678,9 +722,9 @@ export default function HalfmannOptimizationView() {
           }
         >
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
-            <ScoreCard label="Overall Pad Stability Score" score={derived.overallScore} note={`${scoreLabel(derived.overallScore)}. Combined from wells, compressors, and pressure/recycle stability.`} />
-            <ScoreCard label="Compressor Stability Score" score={derived.compressorScore} note={`${formatPercent(100 - derived.avgCompressorMismatch, 1)} average dispatch fit. ${derived.mismatchPersistent ? 'Mismatch is persistent.' : 'Mismatch is not persistent.'}`} />
-            <ScoreCard label="Well Stability Score" score={derived.wellScore} note={`${derived.underTargetCount} wells under target, ${derived.overTargetCount} wells over target, ${derived.restrictedCount} restricted-well candidates.`} />
+            <ScoreCard label="Overall Pad Stability Score" score={derived.overallScore} thresholds={derived.scoreThresholds.overall} note={`${scoreLabel(derived.overallScore, derived.scoreThresholds.overall)}. Combined from wells, compressors, and pressure/recycle stability.`} />
+            <ScoreCard label="Compressor Stability Score" score={derived.compressorScore} thresholds={derived.scoreThresholds.compressor} note={`${formatPercent(100 - derived.avgCompressorMismatch, 1)} average dispatch fit. ${derived.mismatchPersistent ? 'Mismatch is persistent.' : 'Mismatch is not persistent.'}`} />
+            <ScoreCard label="Well Stability Score" score={derived.wellScore} thresholds={derived.scoreThresholds.well} note={`${derived.underTargetCount} wells under target, ${derived.overTargetCount} wells over target, ${derived.restrictedCount} restricted-well candidates.`} />
           </div>
         </SectionCard>
 

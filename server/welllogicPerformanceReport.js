@@ -8,6 +8,7 @@ import {
   listArchivedPerformanceReports,
   zonedDateTimeToUtc,
 } from './halfmannReportArchive.js'
+import { loadDerivedTriggerSettingsState } from './derivedTriggerSettingsStore.js'
 
 const HALF_MANN_DEVICE_MANIFEST = [
   { deviceId: '2507-501508', unitName: 'Halfmann Well Panel' },
@@ -27,7 +28,6 @@ const WELL_CONFIG = [
 ]
 
 const MAIN_COMPRESSOR_COUNT = 4
-const MATCH_TOLERANCE_PCT = 98
 const DEFAULT_SAMPLE_MS = 2000
 const MAX_CONTIGUOUS_SAMPLE_MS = 5000
 const RELATIVE_PRESET_OPTIONS = [
@@ -230,7 +230,7 @@ function getDurationHours(currentRecord, nextRecord, reportEndAt) {
   return durationMs / 3600000
 }
 
-function summarizeWellRuntime(records, reportEndAt) {
+function summarizeWellRuntime(records, reportEndAt, matchTolerancePct) {
   const totals = Object.fromEntries(WELL_CONFIG.map((well) => [well.key, {
     wellName: well.wellName,
     priority: well.priority,
@@ -251,7 +251,7 @@ function summarizeWellRuntime(records, reportEndAt) {
       bucket.validHours += durationHours
       bucket.weightedMatch += match * durationHours
       bucket.sampleCount += 1
-      if (match >= MATCH_TOLERANCE_PCT) bucket.meetingHours += durationHours
+      if (match >= matchTolerancePct) bucket.meetingHours += durationHours
       else bucket.belowHours += durationHours
     }
   }
@@ -273,7 +273,7 @@ function summarizeWellRuntime(records, reportEndAt) {
   })
 
   return {
-    tolerancePct: MATCH_TOLERANCE_PCT,
+    tolerancePct: matchTolerancePct,
     wells,
     overallRuntimeMeetingPct: average(wells.map((well) => well.runtimeMeetingPct)),
     overallAverageMatchPct: average(wells.map((well) => well.averageMatchPct)),
@@ -296,7 +296,7 @@ function isConstraintActive(record) {
   return false
 }
 
-function summarizePrioritization(records, reportEndAt) {
+function summarizePrioritization(records, reportEndAt, priorityProtectionTolerancePct) {
   let totalWeightedScore = 0
   let totalHours = 0
   let constrainedHours = 0
@@ -334,7 +334,7 @@ function summarizePrioritization(records, reportEndAt) {
 
       const wellBucket = perWell[well.key]
       wellBucket.constrainedValidHours += durationHours
-      if (match >= MATCH_TOLERANCE_PCT) wellBucket.constrainedProtectedHours += durationHours
+      if (match >= priorityProtectionTolerancePct) wellBucket.constrainedProtectedHours += durationHours
       else wellBucket.constrainedShortHours += durationHours
     }
 
@@ -344,7 +344,7 @@ function summarizePrioritization(records, reportEndAt) {
       const lowerPriorityBetter = weightedSamples.some((other) =>
         other.priority > sample.priority &&
         other.match > sample.match + 2 &&
-        sample.match < MATCH_TOLERANCE_PCT,
+        sample.match < priorityProtectionTolerancePct,
       )
       if (lowerPriorityBetter) samplePenalty += 6
     }
@@ -381,9 +381,14 @@ function summarizePrioritization(records, reportEndAt) {
 }
 
 function buildReportSnapshot(range) {
+  const derivedSettings = loadDerivedTriggerSettingsState().derivedTriggerSettings
+  const runtimeTolerancePct = Number(derivedSettings?.eventHistory?.runtimeReportTolerancePct) || 98
+  const monthlyKpiTolerancePct = Number(derivedSettings?.eventHistory?.monthlyKpiComplianceTolerancePct) || runtimeTolerancePct
+  const effectiveRuntimeTolerancePct = range.preset === 'current-month' ? monthlyKpiTolerancePct : runtimeTolerancePct
+  const priorityProtectionTolerancePct = Number(derivedSettings?.eventHistory?.priorityProtectionTolerancePct) || effectiveRuntimeTolerancePct
   const records = loadHalfmannPanelMatchHistory({ startAt: range.startAt, endAt: range.endAt, includeFallback: false })
-  const runtime = summarizeWellRuntime(records, range.endAt)
-  const prioritization = summarizePrioritization(records, range.endAt)
+  const runtime = summarizeWellRuntime(records, range.endAt, effectiveRuntimeTolerancePct)
+  const prioritization = summarizePrioritization(records, range.endAt, priorityProtectionTolerancePct)
   const firstRecord = records[0] || null
   const lastRecord = records[records.length - 1] || null
   const validCoveragePct = runtime.wells.length
