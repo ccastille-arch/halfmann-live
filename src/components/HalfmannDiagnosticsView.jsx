@@ -211,6 +211,43 @@ function SummaryCard({ label, value, sub, tone = 'neutral' }) {
   )
 }
 
+function SuctionControllerCard({ score, units, tone = 'neutral' }) {
+  const c = statusColors(tone)
+  return (
+    <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: 16, padding: '14px 16px', gridColumn: '1 / -1' }}>
+      <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 8 }}>
+        Suction Controller Score
+      </div>
+      <div style={{ fontSize: 28, color: c.title, fontWeight: 900, lineHeight: 1, fontFamily: "'Arial Black', sans-serif", marginBottom: 12 }}>
+        {score != null ? formatPct(score, 0) : '--'}
+      </div>
+      {units?.length ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+          {units.map((unit) => (
+            <div key={unit.key} style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 12, padding: '10px 12px' }}>
+              <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+                {unit.label}
+              </div>
+              <div style={{ fontSize: 18, color: unit.score != null && unit.score >= 95 ? '#4ade80' : unit.score != null ? '#fbbf24' : '#93c5fd', fontWeight: 900, lineHeight: 1, fontFamily: "'Arial Black', sans-serif", marginBottom: 6 }}>
+                {unit.score != null ? formatPct(unit.score, 0) : '--'}
+              </div>
+              <div style={{ fontSize: 11, color: '#dbeafe', lineHeight: 1.5 }}>
+                {unit.actual != null && unit.target != null
+                  ? `${formatValue(unit.actual, 1)} actual / ${formatValue(unit.target, 1)} target PSI`
+                  : 'Loaded Auto Sp register not visible on current feed'}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: c.text, marginTop: 8, lineHeight: 1.5 }}>
+          Loaded Auto Sp register not visible on current feed
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OperatorCallout({ diagnosis }) {
   const c = statusColors(diagnosis.tone)
   return (
@@ -585,15 +622,23 @@ export default function HalfmannDiagnosticsView() {
     const suctionMatchAvg = suctionMatchValues.length
       ? suctionMatchValues.reduce((sum, value) => sum + value, 0) / suctionMatchValues.length
       : null
-    const suctionComparisonLines = suctionMatchAvg != null ? HALFMANN_UNITS
+    const suctionControllerUnits = HALFMANN_UNITS
       .filter((unit) => !unit.standby)
       .map((unit) => {
         const index = HALFMANN_UNITS.findIndex((entry) => entry.key === unit.key)
-        return `${unit.label}: ${formatValue(unitSuction[index], 1)} actual / ${formatValue(unitSuctionTarget[index], 1)} target PSI`
+        const target = unitSuctionTarget[index]
+        const actual = unitSuction[index]
+        const score = target != null && actual != null && target > 0
+          ? Math.max(0, 100 - (Math.abs(actual - target) / target) * 100)
+          : null
+        return {
+          key: unit.key,
+          label: unit.label,
+          actual,
+          target,
+          score,
+        }
       })
-      .join('\n')
-      : ''
-
     return {
       timestamp: getTimestamp(panelData),
       wells,
@@ -630,7 +675,7 @@ export default function HalfmannDiagnosticsView() {
       highestDischarge,
       commandMatchAvg,
       suctionMatchAvg,
-      suctionComparisonLines,
+      suctionControllerUnits,
       panelCompressorsMeetingFlow,
       panelCompressorSignalMismatch,
     }
@@ -769,11 +814,9 @@ export default function HalfmannDiagnosticsView() {
                       : `Below manual pressure protection triggers (${formatValue(derived.wellPanelDischargeOverrideSetpointPsi, 0)} / ${formatValue(derived.compressorSpeedControlDischargeSetpointPsi, 0)} / ${formatValue(derived.recycleDischargeSetpointPsi, 0)} PSI)`}
               tone={derived.recyclePressureReached || derived.recycleOpen ? 'bad' : derived.compressorSpeedControlActive ? 'warn' : derived.wellheadControlOverride > 0 ? 'bad' : derived.panelOverridePressureReached ? 'warn' : 'neutral'}
             />
-            <SummaryCard
-              label="Suction Controller Score"
-              value={derived.suctionMatchAvg != null ? `${formatPct(derived.suctionMatchAvg, 0)}` : '--'}
-              sub={derived.suctionComparisonLines
-                || 'Loaded Auto Sp register not visible on current feed'}
+            <SuctionControllerCard
+              score={derived.suctionMatchAvg}
+              units={derived.suctionControllerUnits}
               tone={derived.suctionMatchAvg != null && derived.suctionMatchAvg >= 95 ? 'good' : derived.suctionMatchAvg != null ? 'warn' : 'neutral'}
             />
             <SummaryCard
