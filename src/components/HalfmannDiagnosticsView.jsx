@@ -333,10 +333,10 @@ function buildDiagnosis({
   if (allOnTarget) {
     return {
       tone: 'good',
-      headline: 'Meeting rate',
-      reason: 'All wells with targets are at or above 95% of setpoint.',
+      headline: 'Nothing to diagnose',
+      reason: 'Wells are on target and the pad is operating inside expected limits.',
       evidence: `${formatValue(totalActual)} actual vs ${formatValue(totalDesired)} desired. ${wellsShort.length} wells are short.`,
-      action: 'No action needed right now. Keep watching discharge pressure and recycle position.',
+      action: 'No diagnostic action needed right now.',
     }
   }
 
@@ -447,6 +447,7 @@ export default function HalfmannDiagnosticsView() {
     refresh,
   } = useHalfmannData()
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
+  const [viewMode, setViewMode] = useState('operations')
 
   const derived = useMemo(() => {
     const panel = parseLiveDatapoints(panelData)
@@ -599,15 +600,37 @@ export default function HalfmannDiagnosticsView() {
 
   const diagnosis = buildDiagnosis(derived)
   const pageTime = derived.timestamp ?? lastRefresh
+  const diagnosisNeeded = Boolean(
+    derived.wellsShort.length > 0 ||
+    derived.recycleOpen === true ||
+    (derived.wellheadControlOverride != null && derived.wellheadControlOverride > 0) ||
+    (derived.panelCompressorsMeetingFlow === false && derived.wellsShort.length > 0) ||
+    liveError ||
+    commsStatus?.isHolding,
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 48px)', background: '#080810' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid #1a1a2a', background: '#0c0c16' }}>
         <div>
           <div style={{ fontSize: 14, color: '#fff', fontWeight: 900, fontFamily: "'Arial Black', sans-serif" }}>Diagnostics - Halfmann 1214</div>
-          <div style={{ fontSize: 10, color: '#64748b' }}>Simple operator page: what is wrong, why it is wrong, and what to check next</div>
+          <div style={{ fontSize: 10, color: '#64748b' }}>Operator view first. Engineering evidence only when you open it.</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'inline-flex', borderRadius: 999, border: '1px solid rgba(73,208,226,0.22)', overflow: 'hidden' }}>
+            <button
+              onClick={() => setViewMode('operations')}
+              style={modeButtonStyle(viewMode === 'operations')}
+            >
+              Operations View
+            </button>
+            <button
+              onClick={() => setViewMode('engineering')}
+              style={modeButtonStyle(viewMode === 'engineering')}
+            >
+              Engineering Diagnostics
+            </button>
+          </div>
           <CommsIndicator commsStatus={commsStatus} />
           {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
           <button
@@ -718,6 +741,20 @@ export default function HalfmannDiagnosticsView() {
             />
           </div>
 
+          {!diagnosisNeeded && viewMode === 'operations' ? (
+            <div style={{ marginTop: 4, border: '1px solid #1d6c3d', background: '#0b1a12', borderRadius: 18, padding: '18px 20px' }}>
+              <div style={{ fontSize: 10, color: '#49D0E2', fontWeight: 900, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 8 }}>
+                Operations Summary
+              </div>
+              <div style={{ fontSize: 24, color: '#4ade80', fontWeight: 900, lineHeight: 1.1, fontFamily: "'Arial Black', sans-serif", marginBottom: 10 }}>
+                Nothing to diagnose.
+              </div>
+              <div style={{ fontSize: 13, color: '#d1fae5', lineHeight: 1.7 }}>
+                Wells are on target. No recycle or discharge-protection issue is active, so no diagnostic follow-up is needed right now.
+              </div>
+            </div>
+          ) : (
+            <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
             <div style={{ border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
               <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
@@ -753,6 +790,7 @@ export default function HalfmannDiagnosticsView() {
             </div>
           </div>
 
+          {viewMode === 'engineering' ? (
           <div style={{ marginTop: 18, border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
             <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
               Accuracy Rule
@@ -767,8 +805,26 @@ export default function HalfmannDiagnosticsView() {
               calculated desired flow is below that well customer target setpoint.
             </div>
           </div>
+          ) : null}
+            </>
+          )}
         </div>
       </div>
     </div>
   )
+}
+
+function modeButtonStyle(active) {
+  return {
+    border: 'none',
+    background: active ? 'linear-gradient(180deg, rgba(73,208,226,0.22) 0%, rgba(73,208,226,0.08) 100%)' : 'rgba(6,10,18,0.9)',
+    color: active ? '#7dd3fc' : '#8ca0be',
+    padding: '9px 14px',
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  }
 }
