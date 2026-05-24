@@ -679,6 +679,12 @@ export default function HalfmannLiveView() {
   }).length
   const compressorMeetingSignals = getPanelCompressorMeetingSignals(panelData, panel)
   const panelCompressorsMeetingFlow = compressorMeetingSignals.effective
+  const panelCompressorMeetingCount = compressorMeetingSignals.directFlags.length
+    ? compressorMeetingSignals.directFlags.filter(Boolean).length
+    : null
+  const panelCompressorMeetingTotal = compressorMeetingSignals.directFlags.length || null
+  const displayedCompressorMeetingCount = panelCompressorMeetingCount ?? compressorsMeetingCount
+  const displayedCompressorMeetingTotal = panelCompressorMeetingTotal ?? compressorCommandScores.length
   const allCompressorsMeetingCommands = panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
   const compressorCommandScore = compressorCommandScores.length > 0
     ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length
@@ -793,7 +799,7 @@ export default function HalfmannLiveView() {
                   question="Are all compressors meeting flow commands?"
                   good={allCompressorsMeetingCommands}
                   detail={panelCompressorsMeetingFlow != null
-                    ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
+                    ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${displayedCompressorMeetingCount} of ${displayedCompressorMeetingTotal} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
                     : compressorCommandScore != null
                     ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score`
                     : 'Desired flow command not visible on current site feed'}
