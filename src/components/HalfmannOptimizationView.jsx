@@ -273,6 +273,14 @@ function makeSetting({
   }
 }
 
+function isActionableAdjustment(item) {
+  return ['Increase', 'Decrease', 'Adjust', 'Investigate', 'Review'].includes(item.action)
+}
+
+function isMonitorOnlyAdjustment(item) {
+  return item.action === 'Monitor' || item.action === 'Monitor Only'
+}
+
 function readBooleanPanel(panelData, address) {
   return parseBoolean(getNumericByAddress(panelData, [address]) ?? null) ?? parseBoolean(panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === String(address))?.value)
 }
@@ -282,6 +290,7 @@ export default function HalfmannOptimizationView() {
   const [history, setHistory] = useState(null)
   const [historyError, setHistoryError] = useState('')
   const [historyLoading, setHistoryLoading] = useState(true)
+  const [viewMode, setViewMode] = useState('operations')
 
   useEffect(() => {
     let cancelled = false
@@ -658,6 +667,34 @@ export default function HalfmannOptimizationView() {
         ]
 
     const relevantSettings = settings.filter((item) => relevantSettingNames.includes(item.setting))
+    const actionableSettings = relevantSettings.filter(isActionableAdjustment)
+    const monitorSettings = relevantSettings.filter(isMonitorOnlyAdjustment)
+    const hasActionableSettings = actionableSettings.length > 0
+
+    let operationsSummary = 'Pad stable. No optimization action recommended.'
+    let operationsDetail = 'The pad is operating within expected stability limits.'
+    let monitoringNote = ''
+
+    if (stablePad || (allWellsMeeting && !recycleActive && !dischargeOverrideActive && !hasActionableSettings)) {
+      operationsSummary = 'No optimization action recommended.'
+      operationsDetail = 'The pad is operating within expected stability limits. All wells are inside target band, and no recycle or discharge instability is active.'
+      if (monitorSettings.some((item) => item.setting === 'Compressor Flow PV Offset') || avgCompressorMismatch > minorMismatchPct) {
+        const unitWithHighestMismatch = compressors
+          .filter((unit) => !unit.standby && unit.mismatchPct != null)
+          .sort((a, b) => (b.mismatchPct || 0) - (a.mismatchPct || 0))[0]
+        monitoringNote = unitWithHighestMismatch && unitWithHighestMismatch.mismatchPct > minorMismatchPct
+          ? `Monitoring minor compressor dispatch variance on ${unitWithHighestMismatch.label}.`
+          : 'Monitoring minor compressor dispatch variance.'
+      }
+    } else if (hasActionableSettings) {
+      operationsSummary = primaryRecommendation.title
+      operationsDetail = primaryRecommendation.why
+      monitoringNote = primaryRecommendation.whenNotToChange
+    } else if (compressorScore < compressorStableScoreMinimum && allWellsMeeting) {
+      operationsSummary = 'Minor compressor variance detected.'
+      operationsDetail = 'The wells are still stable, so no panel setting change is justified right now.'
+      monitoringNote = 'Monitoring for persistence.'
+    }
 
     return {
       wells,
@@ -683,6 +720,12 @@ export default function HalfmannOptimizationView() {
       wellBelowPersistent,
       primaryRecommendation,
       settings: relevantSettings,
+      actionableSettings,
+      monitorSettings,
+      hasActionableSettings,
+      operationsSummary,
+      operationsDetail,
+      monitoringNote,
       rawValues: {
         totalDesiredSiteFlow,
         totalActualSiteFlow,
@@ -714,10 +757,26 @@ export default function HalfmannOptimizationView() {
           eyebrow="Compact Stability View"
           right={
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'inline-flex', borderRadius: 999, border: '1px solid rgba(73,208,226,0.22)', overflow: 'hidden' }}>
+                <button
+                  onClick={() => setViewMode('operations')}
+                  style={modeButtonStyle(viewMode === 'operations')}
+                >
+                  Operations View
+                </button>
+                <button
+                  onClick={() => setViewMode('engineering')}
+                  style={modeButtonStyle(viewMode === 'engineering')}
+                >
+                  Engineering Diagnostics
+                </button>
+              </div>
               <Badge tone={liveError ? 'red' : 'green'}>{liveError ? 'Live feed degraded' : 'Live feed healthy'}</Badge>
-              <Badge tone={historyError ? 'orange' : historyLoading ? 'yellow' : 'blue'}>
+              {viewMode === 'engineering' ? (
+                <Badge tone={historyError ? 'orange' : historyLoading ? 'yellow' : 'blue'}>
                 {historyError ? 'History limited' : historyLoading ? 'Loading history' : history?.optimizationHistoryContext?.historySource === 'volume-plus-consumer' ? 'Volume + history checked' : history?.optimizationHistoryContext?.historySource === 'volume-history' ? 'Volume history checked' : 'History checked'}
-              </Badge>
+                </Badge>
+              ) : null}
             </div>
           }
         >
@@ -728,26 +787,75 @@ export default function HalfmannOptimizationView() {
           </div>
         </SectionCard>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(360px, 1.05fr) minmax(360px, 1fr)', gap: 18, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: derived.hasActionableSettings ? 'minmax(360px, 1.05fr) minmax(360px, 1fr)' : 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
           <SectionCard
-            title="Primary Recommendation"
-            eyebrow="Best Next Move"
+            title={derived.hasActionableSettings ? 'Primary Recommendation' : 'Operations Summary'}
+            eyebrow={derived.hasActionableSettings ? 'Best Next Move' : 'Default Operator View'}
             right={<Badge tone={scoreTone(derived.primaryRecommendation.confidence)}>{formatPercent(derived.primaryRecommendation.confidence, 0)} confidence</Badge>}
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ fontSize: 28, fontWeight: 900, color: scoreTone(derived.overallScore) === 'green' ? '#4ade80' : '#f8fafc' }}>
-                {derived.primaryRecommendation.title}
+                {derived.hasActionableSettings ? derived.primaryRecommendation.title : derived.operationsSummary}
               </div>
               <div style={{ fontSize: 14, color: '#d8e6fb', lineHeight: 1.8 }}>
-                <strong style={{ color: '#7dd3fc' }}>What to adjust:</strong> {derived.primaryRecommendation.action}<br />
-                <strong style={{ color: '#7dd3fc' }}>How much:</strong> {derived.primaryRecommendation.amount}<br />
-                <strong style={{ color: '#7dd3fc' }}>Why:</strong> {derived.primaryRecommendation.why}<br />
-                <strong style={{ color: '#7dd3fc' }}>When not to change it:</strong> {derived.primaryRecommendation.whenNotToChange}
+                {derived.hasActionableSettings ? (
+                  <>
+                    <strong style={{ color: '#7dd3fc' }}>What to adjust:</strong> {derived.primaryRecommendation.action}<br />
+                    <strong style={{ color: '#7dd3fc' }}>How much:</strong> {derived.primaryRecommendation.amount}<br />
+                    <strong style={{ color: '#7dd3fc' }}>Why:</strong> {derived.primaryRecommendation.why}<br />
+                    <strong style={{ color: '#7dd3fc' }}>When not to change it:</strong> {derived.primaryRecommendation.whenNotToChange}
+                  </>
+                ) : (
+                  <>
+                    {derived.operationsDetail}
+                    {derived.monitoringNote ? (
+                      <>
+                        <br />
+                        <strong style={{ color: '#7dd3fc' }}>Monitoring:</strong> {derived.monitoringNote}
+                      </>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard title="Recommended Setting Adjustments" eyebrow="Only Relevant Items">
+          {derived.hasActionableSettings ? (
+          <SectionCard title="Recommended Setting Adjustments" eyebrow="Only Actionable Items">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {derived.actionableSettings.map((item) => (
+                <div key={item.setting} style={{
+                  borderRadius: 18,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(9,15,24,0.92)',
+                  padding: 16,
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(180px, 220px) minmax(0, 1fr)',
+                  gap: 16,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: '#8ab7e8', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>{item.setting}</div>
+                    <Badge tone={badgeTone(item.badge)}>{item.badge}</Badge>
+                    <div style={{ marginTop: 10, fontSize: 12, color: '#a9bdd9' }}>Action: <strong style={{ color: '#f4f8ff' }}>{item.action}</strong></div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: '#a9bdd9' }}>Amount: <strong style={{ color: '#f4f8ff' }}>{item.amount}</strong></div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: '#a9bdd9' }}>Confidence: <strong style={{ color: '#f4f8ff' }}>{formatPercent(item.confidence, 0)}</strong></div>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#d8e6fb', lineHeight: 1.8 }}>
+                    <div><strong style={{ color: '#7dd3fc' }}>Reason:</strong> {item.reason}</div>
+                    <div><strong style={{ color: '#7dd3fc' }}>What to watch:</strong> {item.whatToWatch}</div>
+                    <div><strong style={{ color: '#7dd3fc' }}>When not to change:</strong> {item.whenNotToChange}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+          ) : null}
+        </div>
+
+        {viewMode === 'engineering' ? (
+        <>
+        {!derived.hasActionableSettings ? (
+          <SectionCard title="Engineering Diagnostics" eyebrow="Collapsed by Default">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {derived.settings.map((item) => (
                 <div key={item.setting} style={{
@@ -780,7 +888,7 @@ export default function HalfmannOptimizationView() {
               ))}
             </div>
           </SectionCard>
-        </div>
+        ) : null}
 
         <SectionCard title="Expandable Evidence" eyebrow="Collapsed by Default">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -847,6 +955,8 @@ export default function HalfmannOptimizationView() {
             </details>
           </div>
         </SectionCard>
+        </>
+        ) : null}
 
         <div style={{ fontSize: 12, color: '#7c8da8', letterSpacing: '0.04em', padding: '0 4px 10px' }}>
           Last live refresh: {lastRefresh ? new Date(lastRefresh).toLocaleString() : '--'} | History source: {historyLoading ? 'loading' : historyError ? 'limited' : history?.optimizationHistoryContext?.historySource || 'checked'} {commsStatus?.message ? `| ${commsStatus.message}` : ''}
@@ -884,4 +994,18 @@ const evidenceCardStyle = {
   border: '1px solid rgba(255,255,255,0.08)',
   background: 'rgba(6,11,18,0.94)',
   padding: 14,
+}
+
+function modeButtonStyle(active) {
+  return {
+    border: 'none',
+    background: active ? 'linear-gradient(180deg, rgba(73,208,226,0.22) 0%, rgba(73,208,226,0.08) 100%)' : 'rgba(6,10,18,0.9)',
+    color: active ? '#7dd3fc' : '#8ca0be',
+    padding: '9px 14px',
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    cursor: 'pointer',
+  }
 }
