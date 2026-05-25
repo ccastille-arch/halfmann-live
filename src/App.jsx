@@ -24,6 +24,23 @@ function getPage() {
   return 'live'
 }
 
+function useIsNarrowViewport(breakpoint = 760) {
+  const [isNarrow, setIsNarrow] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth <= breakpoint : false
+  ))
+
+  useEffect(() => {
+    function handleResize() {
+      setIsNarrow(window.innerWidth <= breakpoint)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [breakpoint])
+
+  return isNarrow
+}
+
 function parseSignalBoolean(value) {
   if (value == null) return null
   const normalized = String(value).trim().toLowerCase()
@@ -32,7 +49,7 @@ function parseSignalBoolean(value) {
   return null
 }
 
-function NavButton({ active, alert, children, onClick }) {
+function NavButton({ active, alert, children, onClick, compact = false }) {
   const activeColor = '#49D0E2'
   const idleColor = '#8888a8'
   const alertColor = '#ff4d4d'
@@ -41,9 +58,9 @@ function NavButton({ active, alert, children, onClick }) {
     <button
       onClick={onClick}
       style={{
-        padding: '0 20px',
-        height: 48,
-        fontSize: 11,
+        padding: compact ? '0 12px' : '0 20px',
+        height: compact ? 40 : 48,
+        fontSize: compact ? 10 : 11,
         fontWeight: 800,
         letterSpacing: '0.12em',
         textTransform: 'uppercase',
@@ -95,6 +112,7 @@ function AppShell() {
   const [page, setPage] = useState(getPage)
   const [adminAuthenticated, setAdminAuthenticated] = useState(false)
   const { panelData, meetingState, liveError, commsStatus } = useHalfmannData()
+  const isNarrow = useIsNarrowViewport()
 
   useEffect(() => {
     const handler = () => setPage(getPage())
@@ -174,42 +192,65 @@ function AppShell() {
         }
       `}</style>
       <nav style={{
-        display: 'flex', alignItems: 'center',
-        background: '#05050f', borderBottom: '2px solid #1a1a2a',
-        padding: '0 16px', height: 48, flexShrink: 0, gap: 4,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        background: '#05050f',
+        borderBottom: '2px solid #1a1a2a',
+        padding: isNarrow ? '8px 10px 6px' : '0 16px',
+        minHeight: isNarrow ? 0 : 48,
+        flexShrink: 0,
+        gap: isNarrow ? 8 : 0,
       }}>
-        <NavButton active={page === 'live'} alert={false} onClick={() => goTo('live')}>
-          Live View
-        </NavButton>
-        <NavButton active={page === 'diagnostics'} alert={diagnosticsAlert} onClick={() => goTo('diagnostics')}>
-          Diagnostics
-        </NavButton>
-        <NavButton active={page === 'optimization'} alert={false} onClick={() => goTo('optimization')}>
-          Optimization
-        </NavButton>
-        <NavButton active={page === 'performance-report'} alert={false} onClick={() => goTo('performance-report')}>
-          Performance Report
-        </NavButton>
-        <NavButton active={page === 'telemetry'} alert={false} onClick={() => goTo('telemetry')}>
-          All Parameters
-        </NavButton>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <UtilityButton
-            active={page === 'admin-login' || page === 'admin-derived-trigger-settings' || page === 'admin-alert-rules'}
-            onClick={() => goTo(adminAuthenticated ? 'admin-derived-trigger-settings' : 'admin-login')}
-          >
-            {adminAuthenticated ? 'Admin Settings' : 'Admin Login'}
-          </UtilityButton>
-          {adminAuthenticated ? (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          overflowX: 'auto',
+          scrollbarWidth: 'none',
+        }}>
+          <NavButton active={page === 'live'} alert={false} onClick={() => goTo('live')} compact={isNarrow}>
+            Live View
+          </NavButton>
+          <NavButton active={page === 'diagnostics'} alert={diagnosticsAlert} onClick={() => goTo('diagnostics')} compact={isNarrow}>
+            Diagnostics
+          </NavButton>
+          <NavButton active={page === 'optimization'} alert={false} onClick={() => goTo('optimization')} compact={isNarrow}>
+            Optimization
+          </NavButton>
+          <NavButton active={page === 'performance-report'} alert={false} onClick={() => goTo('performance-report')} compact={isNarrow}>
+            Performance Report
+          </NavButton>
+          <NavButton active={page === 'telemetry'} alert={false} onClick={() => goTo('telemetry')} compact={isNarrow}>
+            All Parameters
+          </NavButton>
+        </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: isNarrow ? 'space-between' : 'flex-end',
+          flexWrap: 'wrap',
+          gap: 10,
+          marginTop: isNarrow ? 0 : -40,
+        }}>
+          <div style={{ fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase', order: isNarrow ? 0 : 1 }}>
+            Halfmann 1214
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', order: isNarrow ? 1 : 0 }}>
             <UtilityButton
-              active={page === 'admin-alert-rules'}
-              onClick={() => goTo('admin-alert-rules')}
+              active={page === 'admin-login' || page === 'admin-derived-trigger-settings' || page === 'admin-alert-rules'}
+              onClick={() => goTo(adminAuthenticated ? 'admin-derived-trigger-settings' : 'admin-login')}
             >
-              Alert Rules
+              {adminAuthenticated ? 'Admin Settings' : 'Admin Login'}
             </UtilityButton>
-          ) : null}
-          <div style={{ fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
-          Halfmann 1214
+            {adminAuthenticated ? (
+              <UtilityButton
+                active={page === 'admin-alert-rules'}
+                onClick={() => goTo('admin-alert-rules')}
+              >
+                Alert Rules
+              </UtilityButton>
+            ) : null}
           </div>
         </div>
       </nav>

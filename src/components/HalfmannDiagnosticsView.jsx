@@ -183,6 +183,23 @@ function formatPct(value, decimals = 1) {
   return value != null && Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '--'
 }
 
+function useIsNarrowViewport(breakpoint = 760) {
+  const [isNarrow, setIsNarrow] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth <= breakpoint : false
+  ))
+
+  useEffect(() => {
+    function handleResize() {
+      setIsNarrow(window.innerWidth <= breakpoint)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [breakpoint])
+
+  return isNarrow
+}
+
 function isWellMeetingTarget(actual, desired, tolerancePct = TARGET_TOLERANCE_PCT) {
   if (actual == null || desired == null || desired <= 0) return false
   return actual >= desired * (1 - (tolerancePct / 100))
@@ -211,7 +228,7 @@ function SummaryCard({ label, value, sub, tone = 'neutral' }) {
   )
 }
 
-function SuctionControllerCard({ score, units, tone = 'neutral' }) {
+function SuctionControllerCard({ score, units, tone = 'neutral', isNarrow = false }) {
   const c = statusColors(tone)
   return (
     <div style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: 16, padding: '14px 16px', gridColumn: '1 / -1' }}>
@@ -222,7 +239,7 @@ function SuctionControllerCard({ score, units, tone = 'neutral' }) {
         {score != null ? formatPct(score, 0) : '--'}
       </div>
       {units?.length ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 140 : 180}px, 1fr))`, gap: 10 }}>
           {units.map((unit) => (
             <div key={unit.key} style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 12, padding: '10px 12px' }}>
               <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
@@ -231,9 +248,9 @@ function SuctionControllerCard({ score, units, tone = 'neutral' }) {
               <div style={{ fontSize: 18, color: unit.score != null && unit.score >= 95 ? '#4ade80' : unit.score != null ? '#fbbf24' : '#93c5fd', fontWeight: 900, lineHeight: 1, fontFamily: "'Arial Black', sans-serif", marginBottom: 6 }}>
                 {unit.score != null ? formatPct(unit.score, 0) : '--'}
               </div>
-              <div style={{ fontSize: 11, color: '#dbeafe', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: '#dbeafe', lineHeight: 1.5, whiteSpace: 'pre-line' }}>
                 {unit.actual != null && unit.target != null
-                  ? `${formatValue(unit.actual, 1)} actual / ${formatValue(unit.target, 1)} target PSI`
+                  ? `${formatValue(unit.actual, 1)} actual\n${formatValue(unit.target, 1)} target PSI`
                   : 'Loaded Auto Sp register not visible on current feed'}
               </div>
             </div>
@@ -511,6 +528,7 @@ export default function HalfmannDiagnosticsView() {
   } = useHalfmannData()
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   const [viewMode, setViewMode] = useState('operations')
+  const isNarrow = useIsNarrowViewport()
 
   const derived = useMemo(() => {
     const panel = parseLiveDatapoints(panelData)
@@ -697,46 +715,48 @@ export default function HalfmannDiagnosticsView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 48px)', background: '#080810' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid #1a1a2a', background: '#0c0c16' }}>
+      <header style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'stretch' : 'center', justifyContent: 'space-between', gap: 12, padding: isNarrow ? '12px 14px' : '14px 20px', borderBottom: '1px solid #1a1a2a', background: '#0c0c16' }}>
         <div>
           <div style={{ fontSize: 14, color: '#fff', fontWeight: 900, fontFamily: "'Arial Black', sans-serif" }}>Diagnostics - Halfmann 1214</div>
           <div style={{ fontSize: 10, color: '#64748b' }}>Operator view first. Engineering evidence only when you open it.</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ display: 'inline-flex', borderRadius: 999, border: '1px solid rgba(73,208,226,0.22)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: isNarrow ? 'stretch' : 'center', flexDirection: isNarrow ? 'column' : 'row', gap: 10 }}>
+          <div style={{ display: 'inline-flex', width: isNarrow ? '100%' : 'auto', borderRadius: 999, border: '1px solid rgba(73,208,226,0.22)', overflow: 'hidden' }}>
             <button
               onClick={() => setViewMode('operations')}
-              style={modeButtonStyle(viewMode === 'operations')}
+              style={{ ...modeButtonStyle(viewMode === 'operations'), flex: isNarrow ? 1 : '0 0 auto' }}
             >
               Operations View
             </button>
             <button
               onClick={() => setViewMode('engineering')}
-              style={modeButtonStyle(viewMode === 'engineering')}
+              style={{ ...modeButtonStyle(viewMode === 'engineering'), flex: isNarrow ? 1 : '0 0 auto' }}
             >
               Engineering Diagnostics
             </button>
           </div>
-          <CommsIndicator commsStatus={commsStatus} />
-          {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
-          <button
-            onClick={refresh}
-            disabled={loading}
-            style={{
-              border: '1px solid #253449',
-              background: '#131d2e',
-              color: loading ? '#64748b' : '#bfdbfe',
-              borderRadius: 10,
-              padding: '8px 12px',
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              cursor: loading ? 'default' : 'pointer',
-            }}
-          >
-            {loading ? `Refreshing ${countdown}s` : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: isNarrow ? 'space-between' : 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+            <CommsIndicator commsStatus={commsStatus} />
+            {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
+            <button
+              onClick={refresh}
+              disabled={loading}
+              style={{
+                border: '1px solid #253449',
+                background: '#131d2e',
+                color: loading ? '#64748b' : '#bfdbfe',
+                borderRadius: 10,
+                padding: '8px 12px',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                cursor: loading ? 'default' : 'pointer',
+              }}
+            >
+              {loading ? `Refreshing ${countdown}s` : 'Refresh'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -763,7 +783,7 @@ export default function HalfmannDiagnosticsView() {
 
           <OperatorCallout diagnosis={diagnosis} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 160 : 220}px, 1fr))`, gap: 14, marginBottom: 20 }}>
             <SummaryCard
               label="Wells Meeting"
               value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
@@ -817,6 +837,7 @@ export default function HalfmannDiagnosticsView() {
             <SuctionControllerCard
               score={derived.suctionMatchAvg}
               units={derived.suctionControllerUnits}
+              isNarrow={isNarrow}
               tone={derived.suctionMatchAvg != null && derived.suctionMatchAvg >= 95 ? 'good' : derived.suctionMatchAvg != null ? 'warn' : 'neutral'}
             />
             <SummaryCard
@@ -847,7 +868,7 @@ export default function HalfmannDiagnosticsView() {
             </div>
           ) : (
             <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 260 : 320}px, 1fr))`, gap: 18 }}>
             <div style={{ border: '1px solid #1f3650', background: '#0d1726', borderRadius: 18, padding: '16px 18px' }}>
               <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
                 Wells To Watch
