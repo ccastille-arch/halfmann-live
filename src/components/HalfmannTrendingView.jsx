@@ -380,10 +380,6 @@ function buildDecisionEvents(samples, thresholds) {
     const current = samples[index]
     const demandDelta = getCompressorDemandDelta(prev, current)
     const commandNotes = getCompressorCommandNotes(prev, current)
-    const outputNotes = getCompressorOutputNotes(prev, current)
-    const prevDischarge = toNumber(prev?.siteDischarge)
-    const currentDischarge = toNumber(current?.siteDischarge)
-    const dischargeDelta = prevDischarge != null && currentDischarge != null ? currentDischarge - prevDischarge : null
     const dischargeAtOverride =
       dischargeThreshold != null &&
       current.siteDischarge != null &&
@@ -420,68 +416,6 @@ function buildDecisionEvents(samples, thresholds) {
         label: `Panel raised compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because wells were not meeting rate`,
         note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Wells below rate flag = YES${shortWells.length ? ` | Short wells: ${shortWells.join(', ')}` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
         value: toNumber(getDemandValue(current)),
-      })
-    }
-
-    WELLS.forEach((well, wellIndex) => {
-      const prevCommand = getWellChokeValue(prev?.wells?.[wellIndex])
-      const currentCommand = getWellChokeValue(current?.wells?.[wellIndex])
-      if (prevCommand != null && currentCommand != null && Math.abs(currentCommand - prevCommand) >= 5) {
-        events.push({
-          timestampMs: current.timestampMs,
-          type: 'chokeMove',
-          level: EVENT_LEVELS.chokeMove,
-          label: `${well.label} choke command ${prevCommand.toFixed(1)}% -> ${currentCommand.toFixed(1)}%`,
-          note: `Live panel choke output changed by ${(currentCommand - prevCommand).toFixed(1)} percentage points`,
-          value: currentCommand,
-          wellKey: well.key,
-        })
-      }
-
-      const prevOnline = prev?.wells?.[wellIndex]?.online
-      const currentOnline = current?.wells?.[wellIndex]?.online
-      if (prevOnline != null && currentOnline != null && prevOnline !== currentOnline) {
-        events.push({
-          timestampMs: current.timestampMs,
-          type: 'wellState',
-          level: EVENT_LEVELS.wellState,
-          label: `${well.label} ${currentOnline ? 'came online' : 'went offline'}`,
-          note: `Panel running-status bit changed for ${well.label}`,
-          value: currentCommand ?? 0,
-          wellKey: well.key,
-        })
-      }
-    })
-
-    if (commandNotes.length && !events.some((event) => event.timestampMs === current.timestampMs && (event.type === 'reduceForDischarge' || event.type === 'raiseForRate'))) {
-      events.push({
-        timestampMs: current.timestampMs,
-        type: 'compressorShift',
-        level: EVENT_LEVELS.compressorShift,
-        label: `Per-compressor flow SP shift: ${commandNotes.join(', ')}`,
-        note: 'At least one unit flow setpoint moved, even without a clear reduce/raise panel verdict flag.',
-        value: toNumber(getDemandValue(current)),
-      })
-    }
-
-    if (
-      (outputNotes.length || (dischargeDelta != null && Math.abs(dischargeDelta) >= 5)) &&
-      !events.some((event) => event.timestampMs === current.timestampMs && event.type === 'compressorShift')
-    ) {
-      const details = []
-      if (outputNotes.length) details.push(`Outputs: ${outputNotes.join(', ')}`)
-      if (dischargeDelta != null && Math.abs(dischargeDelta) >= 5) {
-        details.push(`Site discharge ${prevDischarge?.toFixed(0) ?? '--'} -> ${currentDischarge?.toFixed(0) ?? '--'} PSI (${formatSignedDelta(dischargeDelta, 0, 'PSI')})`)
-      }
-      events.push({
-        timestampMs: current.timestampMs,
-        type: 'compressorShift',
-        level: EVENT_LEVELS.compressorShift,
-        label: outputNotes.length
-          ? `Compressor outputs shifted${dischargeDelta != null && Math.abs(dischargeDelta) >= 5 ? ' with a site discharge move' : ''}`
-          : `Site discharge moved ${formatSignedDelta(dischargeDelta, 0, 'PSI')}`,
-        note: details.join(' | '),
-        value: currentDischarge ?? toNumber(getDemandValue(current)),
       })
     }
   }
@@ -1504,7 +1438,7 @@ export default function HalfmannTrendingView() {
 
           <ChartPanel
             title="Decision Timeline"
-            subtitle="One event lane for reduce-for-discharge, raise-for-rate, choke moves, compressor shifts, and well online/offline transitions"
+            subtitle="Only real panel demand decisions: reduced-for-discharge override or raised-for-wells-not-meeting-rate"
             heightClass="h-[280px]"
             action={
               <button
@@ -1547,7 +1481,7 @@ export default function HalfmannTrendingView() {
               </div>
             )) : (
               <div className="text-[12px] text-[#94a3b8]">
-                No retained decision markers are available yet in the selected time window. Leave the page in live mode to let the server continue building the history.
+                No retained panel demand decisions are available yet in the selected time window. This list only shows true panel raise/lower demand decisions.
               </div>
             )}
           </div>
