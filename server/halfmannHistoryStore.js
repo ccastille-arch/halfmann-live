@@ -50,6 +50,7 @@ const WELL_TREND_MANIFEST = [
     actualFlowAddress: '460212',
     targetFlowAddress: '460220',
     staticPressureAddress: '460214',
+    differentialPressureAddress: '460216',
     runningStatusAddress: '460074',
     flowRunningPctAddress: '460146',
   },
@@ -64,6 +65,7 @@ const WELL_TREND_MANIFEST = [
     actualFlowAddress: '460226',
     targetFlowAddress: '460234',
     staticPressureAddress: '460228',
+    differentialPressureAddress: '460230',
     runningStatusAddress: '460076',
     flowRunningPctAddress: '460152',
   },
@@ -78,6 +80,7 @@ const WELL_TREND_MANIFEST = [
     actualFlowAddress: '460240',
     targetFlowAddress: '460248',
     staticPressureAddress: '460242',
+    differentialPressureAddress: '460244',
     runningStatusAddress: '460078',
     flowRunningPctAddress: '460158',
   },
@@ -92,6 +95,7 @@ const WELL_TREND_MANIFEST = [
     actualFlowAddress: '460254',
     targetFlowAddress: '460262',
     staticPressureAddress: '460256',
+    differentialPressureAddress: '460258',
     runningStatusAddress: '460080',
     flowRunningPctAddress: '460164',
   },
@@ -106,6 +110,7 @@ const WELL_TREND_MANIFEST = [
     actualFlowAddress: '460268',
     targetFlowAddress: '460276',
     staticPressureAddress: '460270',
+    differentialPressureAddress: '460272',
     runningStatusAddress: '460082',
     flowRunningPctAddress: '460170',
   },
@@ -387,6 +392,14 @@ function buildTrendingSample(recordPair) {
           well.staticPressureAddress,
           `Wellhead #${well.wellNumber} Injection Static Pressure From Customer PLC`,
           `Well ${well.wellNumber} Static Pressure`,
+        ])
+      : null,
+    differentialPressure: panelSnapshot
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.differentialPressureAddress,
+          `Wellhead #${well.wellNumber} Injection Differential Prs From Customer PLC`,
+          `Well ${well.wellNumber} Injection Differential Pressure`,
+          `Well ${well.wellNumber} Differential Pressure`,
         ])
       : null,
     online: panelSnapshot

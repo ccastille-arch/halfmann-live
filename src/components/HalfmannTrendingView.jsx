@@ -1040,10 +1040,10 @@ export default function HalfmannTrendingView() {
     WELLS.forEach((well, index) => {
       datasets.push(
         makeLineDataset(
-          `${well.label} Static`,
+          `${well.label} Diff`,
           well.color,
-          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wells[index]?.staticPressure })),
-          { borderDash: [5, 5], borderWidth: 1.5 },
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wells[index]?.differentialPressure })),
+          { borderDash: [5, 5], borderWidth: 1.5, yAxisID: 'y1' },
         ),
       )
     })
@@ -1053,7 +1053,8 @@ export default function HalfmannTrendingView() {
 
   const pressureChartOptions = useMemo(() => buildSharedChartOptions({
     currentTimestampMs: currentSample?.timestampMs,
-    yTitle: 'Pressure (PSI)',
+    yTitle: 'Site Suction (PSI)',
+    yRightTitle: 'Well Differential (In/H2O)',
     xTickFormatter,
     xMin: activeZoomRange?.min,
     xMax: activeZoomRange?.max,
@@ -1204,17 +1205,17 @@ export default function HalfmannTrendingView() {
   })
 
   const exportPressureChart = () => downloadWorkbook({
-    fileName: `halfmann-suction-static-pressures-${exportSuffix}.xlsx`,
+    fileName: `halfmann-suction-differential-pressures-${exportSuffix}.xlsx`,
     sheetName: 'Pressure Trend',
     rows: exportSamples.map((sample) => ({
       Timestamp: formatTime(sample.timestampMs),
       TimestampMs: sample.timestampMs,
       SiteSuction_PSI: sample.siteSuction,
-      Well214_Static_PSI: sample.wells?.[0]?.staticPressure,
-      Well444_Static_PSI: sample.wells?.[1]?.staticPressure,
-      Well334_Static_PSI: sample.wells?.[2]?.staticPressure,
-      Well213_Static_PSI: sample.wells?.[3]?.staticPressure,
-      Well333_Static_PSI: sample.wells?.[4]?.staticPressure,
+      Well214_InjectionDifferentialPressure_InH2O: sample.wells?.[0]?.differentialPressure,
+      Well444_InjectionDifferentialPressure_InH2O: sample.wells?.[1]?.differentialPressure,
+      Well334_InjectionDifferentialPressure_InH2O: sample.wells?.[2]?.differentialPressure,
+      Well213_InjectionDifferentialPressure_InH2O: sample.wells?.[3]?.differentialPressure,
+      Well333_InjectionDifferentialPressure_InH2O: sample.wells?.[4]?.differentialPressure,
     })),
   })
 
@@ -1480,8 +1481,8 @@ export default function HalfmannTrendingView() {
           </ChartPanel>
 
           <ChartPanel
-            title="Suction and Static Pressures"
-            subtitle="Site suction overlaid with each well's static pressure so you can line up pressure context with panel decisions"
+            title="Suction and Well Differential Pressures"
+            subtitle="Site suction overlaid with each well's injection differential pressure so you can line up real well pressure movement with panel decisions"
             action={
               <button
                 onClick={exportPressureChart}
