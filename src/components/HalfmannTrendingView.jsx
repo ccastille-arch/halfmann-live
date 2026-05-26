@@ -93,7 +93,7 @@ async function readErrorPayload(res) {
 }
 
 async function fetchTrendingHistory(windowHours) {
-  const res = await fetch(`${API_BASE}/api/halfmann/trending?hours=${windowHours}`)
+  const res = await fetch(`${API_BASE}/api/halfmann/trending?hours=${windowHours}&includeFallback=true`)
   if (!res.ok) throw new Error(await readErrorPayload(res))
   return res.json()
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import * as XLSX from 'xlsx'
@@ -168,6 +168,55 @@ function readJsonLines(filePath) {
       }
     })
     .filter(Boolean)
+}
+
+function readJsonLinesTail(filePath, maxLines) {
+  if (!existsSync(filePath)) return []
+  if (!Number.isFinite(maxLines) || maxLines <= 0) return readJsonLines(filePath)
+
+  const stats = statSync(filePath)
+  if (!stats.size) return []
+
+  const fd = openSync(filePath, 'r')
+  const chunkSize = 64 * 1024
+  let position = stats.size
+  let text = ''
+  let lines = []
+
+  try {
+    while (position > 0 && lines.length <= maxLines + 1) {
+      const bytesToRead = Math.min(chunkSize, position)
+      position -= bytesToRead
+      const buffer = Buffer.alloc(bytesToRead)
+      readSync(fd, buffer, 0, bytesToRead, position)
+      text = buffer.toString('utf8') + text
+      lines = text.split(/\r?\n/)
+    }
+  } finally {
+    closeSync(fd)
+  }
+
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-maxLines)
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+}
+
+function estimateTailLineBudget({ startAt, endAt, cadenceSeconds = 2, multiplier = 1.5, minimum = 2000, maximum = 400000 } = {}) {
+  const startMs = startAt ? new Date(startAt).getTime() : null
+  const endMs = endAt ? new Date(endAt).getTime() : Date.now()
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return minimum
+  const spanSeconds = Math.max(1, Math.ceil((endMs - startMs) / 1000))
+  const estimated = Math.ceil((spanSeconds / cadenceSeconds) * multiplier)
+  return Math.max(minimum, Math.min(maximum, estimated))
 }
 
 function findDatapoint(snapshot, address) {
@@ -442,8 +491,9 @@ export function loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback 
   ensureHalfmannHistoryBootstrapped()
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
+  const maxLines = estimateTailLineBudget({ startAt, endAt, cadenceSeconds: 2, multiplier: 1.35, minimum: 1500, maximum: 350000 })
 
-  return readJsonLines(PANEL_MATCH_HISTORY_PATH)
+  return readJsonLinesTail(PANEL_MATCH_HISTORY_PATH, maxLines)
     .filter((record) => {
       const ts = new Date(record.ts).getTime()
       if (!Number.isFinite(ts)) return false
@@ -459,8 +509,9 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
   ensureHalfmannHistoryBootstrapped()
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
+  const maxLines = estimateTailLineBudget({ startAt, endAt, cadenceSeconds: 2, multiplier: 1.6, minimum: 2500, maximum: 450000 })
 
-  return readJsonLines(RAW_HISTORY_PATH)
+  return readJsonLinesTail(RAW_HISTORY_PATH, maxLines)
     .filter((record) => {
       const ts = new Date(record.capturedAt || record.ts).getTime()
       if (!Number.isFinite(ts)) return false
