@@ -423,6 +423,110 @@ function buildDecisionEvents(samples, thresholds) {
   return events.sort((left, right) => left.timestampMs - right.timestampMs)
 }
 
+function getAverageWellMatch(sample) {
+  return average((sample?.wells || []).map((well) => toNumber(well?.matchPct)).filter((value) => value != null))
+}
+
+function getShortWellKeys(sample) {
+  return (sample?.wells || [])
+    .filter((well) => well?.matchPct != null && Number(well.matchPct) < 99.95)
+    .map((well) => well.key)
+}
+
+function buildPressureInvestigations(samples, thresholds, events) {
+  const investigations = []
+  const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
+  const lookbackMs = 5 * 60 * 1000
+  const lookaheadMs = 5 * 60 * 1000
+  const episodeGapMs = 3 * 60 * 1000
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const prev = samples[index - 1]
+    const current = samples[index]
+    const prevDischarge = toNumber(prev?.siteDischarge)
+    const currentDischarge = toNumber(current?.siteDischarge)
+    if (prevDischarge == null || currentDischarge == null) continue
+
+    const dischargeDelta = currentDischarge - prevDischarge
+    const crossedOverride = (
+      dischargeThreshold != null &&
+      prevDischarge < dischargeThreshold - 0.5 &&
+      currentDischarge >= dischargeThreshold - 0.5
+    )
+    const hardRise = dischargeDelta >= 8
+    if (!crossedOverride && !hardRise) continue
+
+    const last = investigations[investigations.length - 1]
+    if (last && current.timestampMs - last.timestampMs < episodeGapMs) continue
+
+    const lookbackStart = current.timestampMs - lookbackMs
+    const baseline = samples.find((sample) => sample.timestampMs >= lookbackStart) || prev
+    const demandBefore = (
+      getDemandValue(baseline) != null && getDemandValue(current) != null
+        ? getDemandValue(current) - getDemandValue(baseline)
+        : null
+    )
+    const totalFlowBefore = (
+      toNumber(baseline?.totalSiteFlow) != null && toNumber(current?.totalSiteFlow) != null
+        ? toNumber(current.totalSiteFlow) - toNumber(baseline.totalSiteFlow)
+        : null
+    )
+    const avgMatchBefore = (
+      getAverageWellMatch(baseline) != null && getAverageWellMatch(current) != null
+        ? getAverageWellMatch(current) - getAverageWellMatch(baseline)
+        : null
+    )
+
+    const precedingRaise = events.find((event) => (
+      event.type === 'raiseForRate' &&
+      event.timestampMs >= lookbackStart &&
+      event.timestampMs <= current.timestampMs
+    ))
+    const followingReduce = events.find((event) => (
+      event.type === 'reduceForDischarge' &&
+      event.timestampMs >= current.timestampMs &&
+      event.timestampMs <= current.timestampMs + lookaheadMs
+    ))
+
+    const demandRoseFirst = Boolean(precedingRaise) || (demandBefore != null && demandBefore >= 0.01)
+    const responseLabel = followingReduce
+      ? `Panel later cut demand at ${formatTime(followingReduce.timestampMs)}`
+      : current.flowTargetBeingReduced || (current.dischargeOverrideLatch ?? 0) > 0
+        ? 'Pressure protection was already active at this point'
+        : 'No panel cut was captured in the next 5 minutes'
+
+    const headline = demandRoseFirst
+      ? 'Demand was already up before the discharge jump'
+      : 'Discharge jumped before any new panel demand increase'
+
+    const causeHint = demandRoseFirst
+      ? 'This spike may have followed a panel increase in compressor demand.'
+      : (totalFlowBefore != null && totalFlowBefore < -0.03) || (avgMatchBefore != null && avgMatchBefore < -0.15)
+        ? 'This looks more like a well-side unload / pressure backup than a panel-caused ramp.'
+        : 'The live signals do not prove the root cause yet, but the panel does not appear to have raised demand first.'
+
+    const shortWells = getShortWellKeys(current)
+    const evidence = [
+      `Discharge ${prevDischarge.toFixed(0)} -> ${currentDischarge.toFixed(0)} PSI (${formatSignedDelta(dischargeDelta, 0, 'PSI')})${dischargeThreshold != null ? ` | override ${dischargeThreshold.toFixed(0)} PSI` : ''}`,
+      `Panel commanded flow ${getDemandValue(baseline)?.toFixed(3) ?? '--'} -> ${getDemandValue(current)?.toFixed(3) ?? '--'} MMSCFD${demandBefore != null ? ` (${formatSignedDelta(demandBefore, 3, 'MMSCFD')})` : ''}`,
+      `Total site flow ${toNumber(baseline?.totalSiteFlow)?.toFixed(3) ?? '--'} -> ${toNumber(current?.totalSiteFlow)?.toFixed(3) ?? '--'} MMSCFD${totalFlowBefore != null ? ` (${formatSignedDelta(totalFlowBefore, 3, 'MMSCFD')})` : ''}`,
+      `Avg well match ${getAverageWellMatch(baseline)?.toFixed(1) ?? '--'}% -> ${getAverageWellMatch(current)?.toFixed(1) ?? '--'}%${shortWells.length ? ` | short wells: ${shortWells.join(', ')}` : ''}`,
+      responseLabel,
+    ]
+
+    investigations.push({
+      timestampMs: current.timestampMs,
+      headline,
+      causeHint,
+      evidence,
+      demandRoseFirst,
+      hadReduceResponse: Boolean(followingReduce || current.flowTargetBeingReduced || (current.dischargeOverrideLatch ?? 0) > 0),
+    })
+  }
+
+  return investigations.sort((left, right) => right.timestampMs - left.timestampMs).slice(0, 8)
+}
+
 function getWindowedSamples(samples, hours) {
   if (!samples.length) return []
   const endMs = samples[samples.length - 1].timestampMs
@@ -486,6 +590,30 @@ function MetricChip({ label, value, helper }) {
         {value}
       </div>
       <div className="mt-1 text-[11px] leading-relaxed text-[#94a3b8]">{helper}</div>
+    </div>
+  )
+}
+
+function InvestigationCard({ item }) {
+  return (
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{formatTime(item.timestampMs)}</div>
+          <div className="mt-1 text-[13px] font-bold text-white">{item.headline}</div>
+        </div>
+        <div className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${item.demandRoseFirst ? 'bg-[#3b1f17] text-[#fdba74]' : 'bg-[#102235] text-[#7dd3fc]'}`}>
+          {item.demandRoseFirst ? 'Demand first' : 'Pressure first'}
+        </div>
+      </div>
+      <div className="mt-2 text-[11px] text-[#cbd5e1]">{item.causeHint}</div>
+      <div className="mt-3 grid gap-2">
+        {item.evidence.map((line) => (
+          <div key={line} className="text-[10px] leading-relaxed text-[#94a3b8]">
+            {line}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -787,6 +915,7 @@ export default function HalfmannTrendingView() {
   }, [currentIndex, direction, isLiveMode, isPlaying, speed, visibleSamples])
 
   const events = useMemo(() => buildDecisionEvents(visibleSamples, thresholds), [thresholds, visibleSamples])
+  const pressureInvestigations = useMemo(() => buildPressureInvestigations(visibleSamples, thresholds, events), [events, thresholds, visibleSamples])
   const valveStability = useMemo(() => computeValveStability(last24HoursSamples), [last24HoursSamples])
   const colors = getChartColors()
   const xTickFormatter = (value) => formatCompactTime(value)
@@ -1326,6 +1455,22 @@ export default function HalfmannTrendingView() {
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
+          <div className="xl:col-span-2 rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Pressure Event Diagnosis</div>
+            <div className="mb-3 text-[11px] text-[#94a3b8]">
+              For each hard discharge rise or override hit, show whether panel demand had already been increased first or whether the pressure jump happened before any new demand increase, then show whether the panel later cut demand.
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {pressureInvestigations.length ? pressureInvestigations.map((item) => (
+                <InvestigationCard key={`investigation-${item.timestampMs}`} item={item} />
+              )) : (
+                <div className="text-[12px] text-[#94a3b8]">
+                  No qualifying discharge-rise investigations were found in the selected time window.
+                </div>
+              )}
+            </div>
+          </div>
+
           <ChartPanel
             title="Panel Flow Demand Decisions"
             subtitle="Real panel demand lines with markers when compressor flow demand was reduced for discharge pressure or raised for wells below rate"
