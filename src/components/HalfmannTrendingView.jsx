@@ -610,32 +610,32 @@ function computeValveStability(samples) {
 
 function MetricChip({ label, value, helper }) {
   return (
-    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3 sm:p-3.5">
-      <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{label}</div>
-      <div className="mt-2 text-[22px] font-black text-white sm:text-[18px]" style={{ fontFamily: "'Arial Black', sans-serif" }}>
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-4">
+      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#7dd3fc]">{label}</div>
+      <div className="mt-2 text-[24px] font-black text-white lg:text-[28px]" style={{ fontFamily: "'Arial Black', sans-serif" }}>
         {value}
       </div>
-      <div className="mt-1 text-[11px] leading-relaxed text-[#94a3b8]">{helper}</div>
+      <div className="mt-2 text-[12px] leading-relaxed text-[#94a3b8]">{helper}</div>
     </div>
   )
 }
 
 function InvestigationCard({ item }) {
   return (
-    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{formatTime(item.timestampMs)}</div>
-          <div className="mt-1 text-[13px] font-bold text-white">{item.headline}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{formatTime(item.timestampMs)}</div>
+          <div className="mt-1 text-[15px] font-bold leading-snug text-white">{item.headline}</div>
         </div>
-        <div className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${item.demandRoseFirst ? 'bg-[#3b1f17] text-[#fdba74]' : 'bg-[#102235] text-[#7dd3fc]'}`}>
+        <div className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${item.demandRoseFirst ? 'bg-[#3b1f17] text-[#fdba74]' : 'bg-[#102235] text-[#7dd3fc]'}`}>
           {item.demandRoseFirst ? 'Demand first' : 'Pressure first'}
         </div>
       </div>
-      <div className="mt-2 text-[11px] text-[#cbd5e1]">{item.causeHint}</div>
+      <div className="mt-3 text-[12px] leading-relaxed text-[#cbd5e1]">{item.causeHint}</div>
       <div className="mt-3 grid gap-2">
         {item.evidence.map((line) => (
-          <div key={line} className="text-[10px] leading-relaxed text-[#94a3b8]">
+          <div key={line} className="text-[11px] leading-relaxed text-[#94a3b8]">
             {line}
           </div>
         ))}
@@ -644,13 +644,13 @@ function InvestigationCard({ item }) {
   )
 }
 
-function ChartPanel({ title, subtitle, heightClass = 'h-[360px] sm:h-[320px] lg:h-[300px]', action, children }) {
+function ChartPanel({ title, subtitle, heightClass = 'h-[360px] lg:h-[420px] 2xl:h-[340px]', action, children }) {
   return (
-    <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-3.5 sm:p-4">
+    <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4 lg:p-5">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">{title}</div>
-          {subtitle ? <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div> : null}
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#49d0e2]">{title}</div>
+          {subtitle ? <div className="mt-1 text-[12px] leading-relaxed text-[#94a3b8]">{subtitle}</div> : null}
         </div>
         {action ? <div className="shrink-0 self-start">{action}</div> : null}
       </div>
@@ -741,30 +741,30 @@ function ZoomableChart({ data, options, dragState, onDragStart, onDragMove, onDr
 
 function StabilityCard({ metric }) {
   return (
-    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{metric.label}</div>
-        <div className="text-[18px] font-black text-white" style={{ fontFamily: "'Arial Black', sans-serif" }}>
+        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#7dd3fc]">{metric.label}</div>
+        <div className="text-[22px] font-black text-white" style={{ fontFamily: "'Arial Black', sans-serif" }}>
           {metric.stabilityScore != null ? `${metric.stabilityScore.toFixed(0)}%` : '--'}
         </div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         <div>
           <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Avg Position</div>
-          <div className="mt-1 text-[13px] font-bold text-white">{metric.avgPosition != null ? `${metric.avgPosition.toFixed(1)}%` : '--'}</div>
+          <div className="mt-1 text-[14px] font-bold text-white">{metric.avgPosition != null ? `${metric.avgPosition.toFixed(1)}%` : '--'}</div>
         </div>
         <div>
           <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Travel / Hr</div>
-          <div className="mt-1 text-[13px] font-bold text-white">{metric.travelPerHour != null ? `${metric.travelPerHour.toFixed(1)}%` : '--'}</div>
+          <div className="mt-1 text-[14px] font-bold text-white">{metric.travelPerHour != null ? `${metric.travelPerHour.toFixed(1)}%` : '--'}</div>
         </div>
         <div>
           <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Avg Step</div>
-          <div className="mt-1 text-[13px] font-bold text-white">{metric.avgStepChange != null ? `${metric.avgStepChange.toFixed(2)}%` : '--'}</div>
+          <div className="mt-1 text-[14px] font-bold text-white">{metric.avgStepChange != null ? `${metric.avgStepChange.toFixed(2)}%` : '--'}</div>
         </div>
       </div>
-      <div className="mt-2 text-[10px] text-[#64748b]">{metric.sampleCount} retained samples over the last 24 hours</div>
+      <div className="mt-2 text-[11px] text-[#64748b]">{metric.sampleCount} retained samples over the last 24 hours</div>
       {metric.sampleCount === 0 ? (
-        <div className="mt-2 text-[10px] text-[#fca5a5]">No retained choke-command history available for this well yet.</div>
+        <div className="mt-2 text-[11px] text-[#fca5a5]">No retained choke-command history available for this well yet.</div>
       ) : null}
     </div>
   )
@@ -1404,25 +1404,25 @@ export default function HalfmannTrendingView() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-3 py-4 sm:px-5 sm:py-6">
+      <main className="mx-auto flex w-full max-w-[1720px] flex-col gap-5 px-3 py-4 sm:px-5 sm:py-6 lg:px-6">
         {error ? (
           <div className="rounded-xl border border-[#7a1a1a] bg-[#1b0d0d] px-4 py-3 text-[11px] text-[#fecaca]">
             {error}
           </div>
         ) : null}
 
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-3.5 sm:p-4">
-            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="grid gap-4 min-[1500px]:grid-cols-[minmax(0,1.35fr)_minmax(380px,0.85fr)]">
+          <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4 lg:p-5">
+            <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Playback Controls</div>
-                <div className="mt-1 text-[12px] leading-relaxed text-[#cbd5e1]">
+                <div className="mt-1 text-[13px] leading-relaxed text-[#cbd5e1]">
                   Current timestamp: <span className="font-bold text-white">{currentTimestampLabel}</span>
                 </div>
-                <div className="mt-1 text-[11px] text-[#64748b]">
+                <div className="mt-1 text-[12px] text-[#64748b]">
                   Retained samples: {bufferedSampleCount} | Visible window: {visibleSampleCount} | Mode: {isLiveMode ? 'Live follow' : isPlaying ? 'Playback running' : 'Playback paused'}
                 </div>
-                <div className="mt-1 text-[11px] text-[#64748b]">
+                <div className="mt-1 text-[12px] text-[#64748b]">
                   Drag across any graph to zoom that time slice. Double-click a graph or use Reset Zoom to return to the full selected window.
                 </div>
               </div>
@@ -1494,13 +1494,13 @@ export default function HalfmannTrendingView() {
           </div>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="xl:col-span-2 rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+        <div className="grid gap-5 min-[1680px]:grid-cols-2">
+          <div className="min-[1680px]:col-span-2 rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
             <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Pressure Event Diagnosis</div>
-            <div className="mb-3 text-[11px] text-[#94a3b8]">
+            <div className="mb-4 text-[12px] leading-relaxed text-[#94a3b8]">
               For each hard discharge rise or override hit, show whether panel demand had already been increased first or whether the pressure jump happened before any new demand increase, then show whether the panel later cut demand.
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-4 min-[1680px]:grid-cols-2">
               {pressureInvestigations.length ? pressureInvestigations.map((item) => (
                 <InvestigationCard key={`investigation-${item.timestampMs}`} item={item} />
               )) : (
@@ -1624,7 +1624,7 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Decision Timeline"
             subtitle="Only real panel demand decisions: reduced-for-discharge override or raised-for-wells-not-meeting-rate"
-            heightClass="h-[280px]"
+            heightClass="h-[320px] lg:h-[360px] 2xl:h-[300px]"
             action={
               <button
                 onClick={exportDecisionTimeline}
@@ -1645,18 +1645,18 @@ export default function HalfmannTrendingView() {
           </ChartPanel>
         </div>
 
-        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4 lg:p-5">
           <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">24h Valve Stability</div>
-          <div className="grid gap-3 lg:grid-cols-5">
+          <div className="grid gap-3 lg:grid-cols-2 min-[1500px]:grid-cols-3 min-[1800px]:grid-cols-5">
             {valveStability.map((metric) => (
               <StabilityCard key={metric.key} metric={metric} />
             ))}
           </div>
         </div>
 
-        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4 lg:p-5">
           <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Recent Decision Notes</div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 min-[1600px]:grid-cols-2">
             {recentEvents.length ? recentEvents.map((event) => (
               <div key={`${event.type}-${event.timestampMs}-${event.label}`} className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
                 <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{EVENT_LABELS[event.level]}</div>
