@@ -397,50 +397,101 @@ function getCompressorOutputNotes(prev, current) {
   return notes
 }
 
+function classifyDemandDecision(current, thresholds, demandDelta) {
+  const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
+  const siteDischarge = toNumber(current?.siteDischarge)
+  const expectedWellCount = current?.wells?.length || WELLS.length
+  const dischargeAtOverride =
+    dischargeThreshold != null &&
+    siteDischarge != null &&
+    siteDischarge >= dischargeThreshold - 0.5
+  const dischargeProtectionActive =
+    current?.flowTargetBeingReduced ||
+    toNumber(current?.dischargeOverrideLatch) > 0 ||
+    dischargeAtOverride
+  const wellsBelowRate =
+    current?.anyWellBelowSetpoint ||
+    current?.allWellsMeetingFlow === false ||
+    (toNumber(current?.wellsMeetingRate) != null && toNumber(current?.wellsMeetingRate) < expectedWellCount)
+
+  if (demandDelta <= -0.01) {
+    if (dischargeProtectionActive) {
+      return {
+        type: 'reduceForDischarge',
+        level: EVENT_LEVELS.reduceForDischarge,
+        reason: `because discharge override was active${dischargeThreshold != null ? ` near ${dischargeThreshold.toFixed(0)} PSI` : ''}`,
+      }
+    }
+    if (wellsBelowRate) {
+      return {
+        type: 'reduceForDischarge',
+        level: EVENT_LEVELS.reduceForDischarge,
+        reason: 'while wells were below rate, so retained data does not prove the exact cut trigger',
+      }
+    }
+    return {
+      type: 'reduceForDischarge',
+      level: EVENT_LEVELS.reduceForDischarge,
+      reason: 'but retained data does not prove the exact cut trigger',
+    }
+  }
+
+  if (demandDelta >= 0.01) {
+    if (wellsBelowRate && !current?.flowTargetBeingReduced) {
+      return {
+        type: 'raiseForRate',
+        level: EVENT_LEVELS.raiseForRate,
+        reason: 'because wells were not meeting rate',
+      }
+    }
+    if (dischargeProtectionActive) {
+      return {
+        type: 'raiseForRate',
+        level: EVENT_LEVELS.raiseForRate,
+        reason: 'after discharge protection was active, but retained data does not prove a clean rate-recovery trigger',
+      }
+    }
+    return {
+      type: 'raiseForRate',
+      level: EVENT_LEVELS.raiseForRate,
+      reason: 'but retained data does not prove the exact raise trigger',
+    }
+  }
+
+  return null
+}
+
 function buildDecisionEvents(samples, thresholds) {
   const events = []
-  const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
 
   for (let index = 1; index < samples.length; index += 1) {
     const prev = samples[index - 1]
     const current = samples[index]
     const demandDelta = getCompressorDemandDelta(prev, current)
     const commandNotes = getCompressorCommandNotes(prev, current)
-    const dischargeAtOverride =
-      dischargeThreshold != null &&
-      current.siteDischarge != null &&
-      current.siteDischarge >= dischargeThreshold - 0.5
-
-    if (
-      demandDelta != null &&
-      demandDelta <= -0.01 &&
-      (current.flowTargetBeingReduced || current.dischargeOverrideLatch > 0 || dischargeAtOverride)
-    ) {
-      events.push({
-        timestampMs: current.timestampMs,
-        type: 'reduceForDischarge',
-        level: EVENT_LEVELS.reduceForDischarge,
-        label: `Panel lowered compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because discharge protection was active`,
-        note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Site discharge ${current.siteDischarge?.toFixed(1) ?? '--'} PSI${dischargeThreshold != null ? ` vs override ${dischargeThreshold.toFixed(0)} PSI` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
-        value: toNumber(getDemandValue(current)),
-      })
-    }
-
-    if (
-      demandDelta != null &&
-      demandDelta >= 0.01 &&
-      current.anyWellBelowSetpoint &&
-      !current.flowTargetBeingReduced
-    ) {
+    if (demandDelta != null && Math.abs(demandDelta) >= 0.01) {
       const shortWells = (current.wells || [])
         .filter((well) => well.matchPct != null && well.matchPct < 99.95)
         .map((well) => well.key)
+      const classification = classifyDemandDecision(current, thresholds, demandDelta)
+      if (!classification) continue
+      const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
+      const pressureText = current.siteDischarge != null
+        ? ` | Site discharge ${current.siteDischarge.toFixed(1)} PSI${dischargeThreshold != null ? ` vs override ${dischargeThreshold.toFixed(0)} PSI` : ''}`
+        : ''
+      const wellText = current.anyWellBelowSetpoint
+        ? ` | Wells below rate flag = YES${shortWells.length ? ` | Short wells: ${shortWells.join(', ')}` : ''}`
+        : current.allWellsMeetingFlow != null
+          ? ` | All wells meeting flow = ${current.allWellsMeetingFlow ? 'YES' : 'NO'}`
+          : ''
+      const reductionText = current.flowTargetBeingReduced ? ' | Flow target being reduced = YES' : ''
+
       events.push({
         timestampMs: current.timestampMs,
-        type: 'raiseForRate',
-        level: EVENT_LEVELS.raiseForRate,
-        label: `Panel raised compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because wells were not meeting rate`,
-        note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Wells below rate flag = YES${shortWells.length ? ` | Short wells: ${shortWells.join(', ')}` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
+        type: classification.type,
+        level: classification.level,
+        label: `Panel ${demandDelta < 0 ? 'lowered' : 'raised'} compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} ${classification.reason}`,
+        note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD${pressureText}${wellText}${reductionText}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
         value: toNumber(getDemandValue(current)),
       })
     }
