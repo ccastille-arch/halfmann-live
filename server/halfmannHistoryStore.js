@@ -10,6 +10,8 @@ const RAW_HISTORY_PATH = join(HISTORY_DIR, 'raw-snapshots.ndjson')
 const PANEL_MATCH_HISTORY_PATH = join(HISTORY_DIR, 'panel-match-history.ndjson')
 const SEED_IMPORTED_MARKER_PATH = join(HISTORY_DIR, 'seed-imported.json')
 const SEED_CSV_PATH = join(__dirname, 'seed/halfmann-panel-match-seed.csv')
+const RECENT_TREND_SAMPLE_LIMIT = 1800
+const RECENT_TREND_SAMPLES = []
 
 const WELL_HEADERS = {
   '214': ['Wellhead #214 Live Injection Match Percentage', 'Wellhead 214 Live Injection Match Percentage', 'Wellhead #1 Live Injection Match Percentage'],
@@ -312,6 +314,19 @@ function average(values) {
   return valid.reduce((sum, value) => sum + value, 0) / valid.length
 }
 
+function pushRecentTrendSample(sample) {
+  if (!sample?.timestampMs) return
+  const last = RECENT_TREND_SAMPLES[RECENT_TREND_SAMPLES.length - 1]
+  if (last?.timestampMs === sample.timestampMs) {
+    RECENT_TREND_SAMPLES[RECENT_TREND_SAMPLES.length - 1] = sample
+  } else {
+    RECENT_TREND_SAMPLES.push(sample)
+  }
+  if (RECENT_TREND_SAMPLES.length > RECENT_TREND_SAMPLE_LIMIT) {
+    RECENT_TREND_SAMPLES.splice(0, RECENT_TREND_SAMPLES.length - RECENT_TREND_SAMPLE_LIMIT)
+  }
+}
+
 function maxValue(values) {
   const valid = values.filter((value) => value != null && Number.isFinite(value))
   if (!valid.length) return null
@@ -457,6 +472,14 @@ export function ensureHalfmannHistoryBootstrapped() {
 
 export function recordHalfmannRawSnapshot(record) {
   appendJsonLine(RAW_HISTORY_PATH, record)
+  const timestampMs = parseTimestampMs(record?.capturedAt || record?.ts)
+  if (timestampMs != null) {
+    pushRecentTrendSample(buildTrendingSample({
+      raw: record,
+      match: null,
+      timestampMs,
+    }))
+  }
 }
 
 export function recordHalfmannPanelMatchSnapshot(panelSnapshot) {
@@ -549,6 +572,17 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
 }
 
 export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = false } = {}) {
+  const startMs = startAt ? new Date(startAt).getTime() : null
+  const endMs = endAt ? new Date(endAt).getTime() : null
+  const recentSamples = RECENT_TREND_SAMPLES.filter((sample) => {
+    if (!sample?.timestampMs) return false
+    if (startMs != null && sample.timestampMs < startMs) return false
+    if (endMs != null && sample.timestampMs > endMs) return false
+    if (!includeFallback && sample.isFallback) return false
+    return true
+  })
+  if (recentSamples.length) return recentSamples
+
   const rawRecords = loadHalfmannRawHistory({ startAt, endAt })
   const matchRecords = loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback })
   const merged = mergeHistoryStreams(rawRecords, matchRecords)
