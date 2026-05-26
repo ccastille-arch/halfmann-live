@@ -330,6 +330,13 @@ function average(values) {
   return valid.reduce((sum, value) => sum + value, 0) / valid.length
 }
 
+function firstDefinedNumber(...values) {
+  for (const value of values) {
+    if (value != null && Number.isFinite(value)) return value
+  }
+  return null
+}
+
 function pushRecentTrendSample(sample) {
   if (!sample?.timestampMs) return
   const last = RECENT_TREND_SAMPLES[RECENT_TREND_SAMPLES.length - 1]
@@ -355,13 +362,11 @@ function buildTrendingSample(recordPair) {
   const panelSnapshot = rawRecord?.panel || null
   const unitMap = buildUnitSnapshotMap(rawRecord)
 
-  const wells = WELL_TREND_MANIFEST.map((well) => ({
-    key: well.key,
-    label: well.label,
-    matchPct: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.matchAddress)
-      : parseNumber(matchRecord?.matches?.[well.key]),
-    chokeCommand: panelSnapshot
+  const wells = WELL_TREND_MANIFEST.map((well) => {
+    const overridePosition = panelSnapshot
+      ? getSnapshotNumber(panelSnapshot, well.overrideAddress)
+      : null
+    const directChokeCommand = panelSnapshot
       ? getSnapshotNumberFromMatchers(panelSnapshot, [
           well.chokePositionAddress,
           well.analogOutputAddress,
@@ -369,52 +374,62 @@ function buildTrendingSample(recordPair) {
           `Well ${well.wellNumber} Choke Position`,
           `Well #${well.wellNumber} Analog Output ${well.wellNumber}`,
         ])
-      : null,
-    overridePosition: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.overrideAddress)
-      : null,
-    actualFlow: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [
-          well.actualFlowAddress,
-          `Wellhead #${well.wellNumber} Injection Flow Rate From Customer PLC`,
-          `Well #${well.wellNumber} Flow Rate`,
-        ])
-      : null,
-    targetFlow: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [
-          well.targetFlowAddress,
-          `Wellhead #${well.wellNumber} Setpoint From Customer PLC`,
-          `Well ${well.wellNumber} Setpoint`,
-        ])
-      : null,
-    staticPressure: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [
-          well.staticPressureAddress,
-          `Wellhead #${well.wellNumber} Injection Static Pressure From Customer PLC`,
-          `Well ${well.wellNumber} Static Pressure`,
-        ])
-      : null,
-    differentialPressure: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [
-          well.differentialPressureAddress,
-          `Wellhead #${well.wellNumber} Injection Differential Prs From Customer PLC`,
-          `Well ${well.wellNumber} Injection Differential Pressure`,
-          `Well ${well.wellNumber} Differential Pressure`,
-        ])
-      : null,
-    online: panelSnapshot
-      ? getSnapshotBooleanFromMatchers(panelSnapshot, [
-          well.runningStatusAddress,
-          `WellHead #${well.wellNumber} Running Status`,
-        ])
-      : null,
-    flowRunningPct: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [
-          well.flowRunningPctAddress,
-          `Wellhead #${well.wellNumber} Flow Running Status Percent`,
-        ])
-      : null,
-  }))
+      : null
+
+    return {
+      key: well.key,
+      label: well.label,
+      matchPct: panelSnapshot
+        ? getSnapshotNumber(panelSnapshot, well.matchAddress)
+        : parseNumber(matchRecord?.matches?.[well.key]),
+      chokeCommand: firstDefinedNumber(
+        directChokeCommand,
+        overridePosition != null && overridePosition > 0 ? overridePosition : null,
+      ),
+      overridePosition,
+      actualFlow: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            well.actualFlowAddress,
+            `Wellhead #${well.wellNumber} Injection Flow Rate From Customer PLC`,
+            `Well #${well.wellNumber} Flow Rate`,
+          ])
+        : null,
+      targetFlow: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            well.targetFlowAddress,
+            `Wellhead #${well.wellNumber} Setpoint From Customer PLC`,
+            `Well ${well.wellNumber} Setpoint`,
+          ])
+        : null,
+      staticPressure: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            well.staticPressureAddress,
+            `Wellhead #${well.wellNumber} Injection Static Pressure From Customer PLC`,
+            `Well ${well.wellNumber} Static Pressure`,
+          ])
+        : null,
+      differentialPressure: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            well.differentialPressureAddress,
+            `Wellhead #${well.wellNumber} Injection Differential Prs From Customer PLC`,
+            `Well ${well.wellNumber} Injection Differential Pressure`,
+            `Well ${well.wellNumber} Differential Pressure`,
+          ])
+        : null,
+      online: panelSnapshot
+        ? getSnapshotBooleanFromMatchers(panelSnapshot, [
+            well.runningStatusAddress,
+            `WellHead #${well.wellNumber} Running Status`,
+          ])
+        : null,
+      flowRunningPct: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            well.flowRunningPctAddress,
+            `Wellhead #${well.wellNumber} Flow Running Status Percent`,
+          ])
+        : null,
+    }
+  })
 
   const compressors = COMPRESSOR_TREND_MANIFEST.map((compressor, index) => {
     const unitSnapshot = unitMap.get(compressor.deviceId) || null
