@@ -40,9 +40,11 @@ const MATCH_ADDRESSES = {
 const WELL_TREND_MANIFEST = [
   {
     key: '214',
+    wellNumber: 1,
     label: 'Well 214',
     matchAddress: '420007',
     overrideAddress: '460466',
+    chokePositionAddress: '400017',
     analogOutputAddress: '400260',
     actualFlowAddress: '460212',
     targetFlowAddress: '460220',
@@ -52,9 +54,11 @@ const WELL_TREND_MANIFEST = [
   },
   {
     key: '444',
+    wellNumber: 2,
     label: 'Well 444',
     matchAddress: '420008',
     overrideAddress: '460468',
+    chokePositionAddress: '400035',
     analogOutputAddress: '400261',
     actualFlowAddress: '460226',
     targetFlowAddress: '460234',
@@ -64,9 +68,11 @@ const WELL_TREND_MANIFEST = [
   },
   {
     key: '334',
+    wellNumber: 3,
     label: 'Well 334',
     matchAddress: '420009',
     overrideAddress: '460470',
+    chokePositionAddress: '400053',
     analogOutputAddress: '400262',
     actualFlowAddress: '460240',
     targetFlowAddress: '460248',
@@ -76,9 +82,11 @@ const WELL_TREND_MANIFEST = [
   },
   {
     key: '213',
+    wellNumber: 4,
     label: 'Well 213',
     matchAddress: '420010',
     overrideAddress: '460472',
+    chokePositionAddress: '400071',
     analogOutputAddress: '400263',
     actualFlowAddress: '460254',
     targetFlowAddress: '460262',
@@ -88,9 +96,11 @@ const WELL_TREND_MANIFEST = [
   },
   {
     key: '333',
+    wellNumber: 5,
     label: 'Well 333',
     matchAddress: '420011',
     overrideAddress: '460474',
+    chokePositionAddress: '400089',
     analogOutputAddress: '400264',
     actualFlowAddress: '460268',
     targetFlowAddress: '460276',
@@ -346,25 +356,49 @@ function buildTrendingSample(recordPair) {
       ? getSnapshotNumber(panelSnapshot, well.matchAddress)
       : parseNumber(matchRecord?.matches?.[well.key]),
     chokeCommand: panelSnapshot
-      ? getSnapshotNumberFromMatchers(panelSnapshot, [well.analogOutputAddress, `Well #${well.key} Analog Output`, `Well ${well.key} Choke Position`])
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.chokePositionAddress,
+          well.analogOutputAddress,
+          `Wellhead #${well.wellNumber} Choke Position`,
+          `Well ${well.wellNumber} Choke Position`,
+          `Well #${well.wellNumber} Analog Output ${well.wellNumber}`,
+        ])
       : null,
     overridePosition: panelSnapshot
       ? getSnapshotNumber(panelSnapshot, well.overrideAddress)
       : null,
     actualFlow: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.actualFlowAddress)
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.actualFlowAddress,
+          `Wellhead #${well.wellNumber} Injection Flow Rate From Customer PLC`,
+          `Well #${well.wellNumber} Flow Rate`,
+        ])
       : null,
     targetFlow: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.targetFlowAddress)
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.targetFlowAddress,
+          `Wellhead #${well.wellNumber} Setpoint From Customer PLC`,
+          `Well ${well.wellNumber} Setpoint`,
+        ])
       : null,
     staticPressure: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.staticPressureAddress)
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.staticPressureAddress,
+          `Wellhead #${well.wellNumber} Injection Static Pressure From Customer PLC`,
+          `Well ${well.wellNumber} Static Pressure`,
+        ])
       : null,
     online: panelSnapshot
-      ? getSnapshotBooleanFromMatchers(panelSnapshot, well.runningStatusAddress)
+      ? getSnapshotBooleanFromMatchers(panelSnapshot, [
+          well.runningStatusAddress,
+          `WellHead #${well.wellNumber} Running Status`,
+        ])
       : null,
     flowRunningPct: panelSnapshot
-      ? getSnapshotNumber(panelSnapshot, well.flowRunningPctAddress)
+      ? getSnapshotNumberFromMatchers(panelSnapshot, [
+          well.flowRunningPctAddress,
+          `Wellhead #${well.wellNumber} Flow Running Status Percent`,
+        ])
       : null,
   }))
 
@@ -374,9 +408,26 @@ function buildTrendingSample(recordPair) {
       key: compressor.key,
       label: `Compressor ${index + 1}`,
       unitLabel: compressor.unitLabel,
-      desiredFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, compressor.desiredFlowAddress) : null,
-      currentFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, compressor.currentFlowAddress) : null,
-      meetingFlow: panelSnapshot ? getSnapshotBoolean(panelSnapshot, compressor.meetingAddress) : null,
+      desiredFlow: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            compressor.desiredFlowAddress,
+            `Compressor #${index + 1} Unit ${compressor.unitLabel} Desire Flow SP For PID Murphy`,
+            `Compressor #${index + 1} Desire Flow SP For PID Murphy`,
+          ])
+        : null,
+      currentFlow: panelSnapshot
+        ? getSnapshotNumberFromMatchers(panelSnapshot, [
+            compressor.currentFlowAddress,
+            `Compressor #${index + 1} Unit ${compressor.unitLabel} Current Flow Output`,
+            `Compressor #${index + 1} Current Flow Output`,
+          ])
+        : null,
+      meetingFlow: panelSnapshot
+        ? getSnapshotBooleanFromMatchers(panelSnapshot, [
+            compressor.meetingAddress,
+            `Compressor #${index + 1} Meeting Flow Demand`,
+          ])
+        : null,
       suctionPressure: unitSnapshot
         ? getSnapshotNumberFromMatchers(unitSnapshot, ['400505', 'Stage 1 Suction Prs', 'Suction Pressure', 'Stage 1 Suction Pressure'])
         : null,
@@ -389,7 +440,9 @@ function buildTrendingSample(recordPair) {
     }
   })
 
-  const siteSuctionRaw = panelSnapshot ? getSnapshotNumberFromMatchers(panelSnapshot, ['400183', 'Suction Header Pressure']) : null
+  const siteSuctionRaw = panelSnapshot
+    ? getSnapshotNumberFromMatchers(panelSnapshot, ['400183', 'Suction Header Pressure', 'Site Suction'])
+    : null
   const siteSuction = siteSuctionRaw != null && siteSuctionRaw > 0
     ? siteSuctionRaw
     : average(compressors.map((compressor) => compressor.suctionPressure))
@@ -411,10 +464,10 @@ function buildTrendingSample(recordPair) {
       : matchRecord?.recycleValvePosition ?? null,
     dischargeOverrideLatch: panelSnapshot ? getSnapshotNumber(panelSnapshot, '460018') : matchRecord?.dischargeOverrideLatch ?? null,
     dischargeOverrideCompSpeedSp: panelSnapshot ? getSnapshotNumber(panelSnapshot, '460020') : null,
-    totalDesiredSiteFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, '420003') : matchRecord?.totalDesiredSiteFlow ?? null,
-    totalAscCompressorFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, '420012') : matchRecord?.totalAscCompressorFlow ?? null,
-    totalSiteFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, '420005') : matchRecord?.totalSiteFlow ?? null,
-    panelCommandedCompressorFlow: panelSnapshot ? getSnapshotNumber(panelSnapshot, '420042') : null,
+    totalDesiredSiteFlow: panelSnapshot ? getSnapshotNumberFromMatchers(panelSnapshot, ['420003', 'Total Desired Site Flow']) : matchRecord?.totalDesiredSiteFlow ?? null,
+    totalAscCompressorFlow: panelSnapshot ? getSnapshotNumberFromMatchers(panelSnapshot, ['420012', 'Total ASC Compressor Flow']) : matchRecord?.totalAscCompressorFlow ?? null,
+    totalSiteFlow: panelSnapshot ? getSnapshotNumberFromMatchers(panelSnapshot, ['420005', 'Total Site Flow']) : matchRecord?.totalSiteFlow ?? null,
+    panelCommandedCompressorFlow: panelSnapshot ? getSnapshotNumberFromMatchers(panelSnapshot, ['420042', 'Well Panel Commanded Compressor Flow']) : null,
     siteDischarge: maxValue(compressors.map((compressor) => compressor.dischargePressure)),
     siteSuction,
     wells,
