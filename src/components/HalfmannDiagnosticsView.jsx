@@ -37,6 +37,7 @@ const WELL_SETPOINT_ADDRESSES = PANEL_ADDRESSES.wellSetpoint
 const WELL_CALCULATED_DESIRED_ADDRESSES = PANEL_ADDRESSES.wellCalculatedDesiredFlow
 const WELL_STATIC_ADDRESSES = PANEL_ADDRESSES.wellStaticPressure
 const UNIT_DESIRED_FLOW_ADDRESSES = PANEL_ADDRESSES.unitDesiredFlowSetpoints
+const UNIT_CURRENT_FLOW_OUTPUT_ADDRESSES = ['460364', '460384', '460404', '460424']
 
 const WELL_SETPOINT_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Wellhead #${n} Setpoint From Customer PLC`,
@@ -217,6 +218,11 @@ function statusColors(tone) {
   return { border: '#24324a', bg: '#101827', title: '#93c5fd', text: '#dbeafe' }
 }
 
+function computePercentMatch(actual, target) {
+  if (actual == null || target == null || target <= 0) return null
+  return Math.max(0, 100 - (Math.abs(actual - target) / target) * 100)
+}
+
 function SummaryCard({ label, value, sub, tone = 'neutral' }) {
   const c = statusColors(tone)
   return (
@@ -249,16 +255,16 @@ function SuctionControllerCard({ score, units, tone = 'neutral', isNarrow = fals
                 {unit.score != null ? formatPct(unit.score, 0) : '--'}
               </div>
               <div style={{ fontSize: 11, color: '#dbeafe', lineHeight: 1.5, whiteSpace: 'pre-line' }}>
-                {unit.actual != null && unit.target != null
-                  ? `${formatValue(unit.actual, 1)} actual\n${formatValue(unit.target, 1)} target PSI`
-                  : 'Loaded Auto Sp register not visible on current feed'}
+                {unit.displayLines?.length
+                  ? unit.displayLines.join('\n')
+                  : 'Suction controller data not visible on current feed'}
               </div>
             </div>
           ))}
         </div>
       ) : (
         <div style={{ fontSize: 11, color: c.text, marginTop: 8, lineHeight: 1.5 }}>
-          Loaded Auto Sp register not visible on current feed
+          Suction controller data not visible on current feed
         </div>
       )}
     </div>
@@ -584,6 +590,14 @@ export default function HalfmannDiagnosticsView() {
     const rawUnitActualFlows = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.actualFlow) ?? getNumeric(unitMaps[index], ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']))
     const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, totalActual, HALFMANN_UNITS)
+    const panelUnitCurrentFlowOutputs = HALFMANN_UNITS.map((unit) => {
+      const compressorNumber = UNIT_TO_COMP_NUM[unit.key]
+      const unitNumber = unit.label.match(/\d{4}/)?.[0]
+      return getNumericByAddress(panelData, [UNIT_CURRENT_FLOW_OUTPUT_ADDRESSES[(compressorNumber ?? 1) - 1]]) ?? getNumeric(panel, [
+        ...(compressorNumber && unitNumber ? [`Compressor #${compressorNumber} Unit ${unitNumber} Current Flow Output`] : []),
+        ...(compressorNumber ? [`Compressor #${compressorNumber} Current Flow Output`, `Compressor ${compressorNumber} Current Flow Output`] : []),
+      ])
+    })
     const unitSuction = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.suctionPressure) ?? getNumeric(unitMaps[index], ['Suction Pressure', 'Stage 1 Suction Prs', 'Suction Prs']))
     const unitSuctionTarget = HALFMANN_UNITS.map((unit, index) =>
@@ -633,9 +647,16 @@ export default function HalfmannDiagnosticsView() {
     const commandMatchAvg = commandMatchValues.length
       ? commandMatchValues.reduce((sum, value) => sum + value, 0) / commandMatchValues.length
       : null
-    const suctionMatchValues = unitSuctionTarget.map((target, index) => {
-      if (HALFMANN_UNITS[index].standby || target == null || unitSuction[index] == null || target <= 0) return null
-      return Math.max(0, 100 - (Math.abs(unitSuction[index] - target) / target) * 100)
+    const suctionMatchValues = HALFMANN_UNITS.map((unit, index) => {
+      if (unit.standby) return null
+      const target = unitSuctionTarget[index]
+      const actual = unitSuction[index]
+      const directScore = computePercentMatch(actual, target)
+      if (directScore != null) return directScore
+      const desiredFlow = unitDesiredFlows[index]
+      const panelCurrentFlow = panelUnitCurrentFlowOutputs[index]
+      const actualFlow = panelCurrentFlow ?? unitActualFlows[index]
+      return computePercentMatch(actualFlow, desiredFlow)
     }).filter((value) => value != null)
     const suctionMatchAvg = suctionMatchValues.length
       ? suctionMatchValues.reduce((sum, value) => sum + value, 0) / suctionMatchValues.length
@@ -646,15 +667,26 @@ export default function HalfmannDiagnosticsView() {
         const index = HALFMANN_UNITS.findIndex((entry) => entry.key === unit.key)
         const target = unitSuctionTarget[index]
         const actual = unitSuction[index]
-        const score = target != null && actual != null && target > 0
-          ? Math.max(0, 100 - (Math.abs(actual - target) / target) * 100)
-          : null
+        const desiredFlow = unitDesiredFlows[index]
+        const panelCurrentFlow = panelUnitCurrentFlowOutputs[index]
+        const actualFlow = panelCurrentFlow ?? unitActualFlows[index]
+        const directScore = computePercentMatch(actual, target)
+        const fallbackScore = computePercentMatch(actualFlow, desiredFlow)
+        const score = directScore ?? fallbackScore
+        const displayLines = []
+        if (actual != null) displayLines.push(`${formatValue(actual, 1)} suction PSI`)
+        if (directScore != null) {
+          displayLines.push(`${formatValue(target, 1)} target PSI`)
+        } else if (actualFlow != null && desiredFlow != null) {
+          displayLines.push(`${formatValue(actualFlow, 2)} actual / ${formatValue(desiredFlow, 2)} command MMSCFD`)
+        }
         return {
           key: unit.key,
           label: unit.label,
           actual,
           target,
           score,
+          displayLines,
         }
       })
     return {
