@@ -222,6 +222,8 @@ function buildSharedChartOptions({
   yMin = null,
   yMax = null,
   xTickFormatter,
+  xMin = null,
+  xMax = null,
 }) {
   return {
     responsive: true,
@@ -254,6 +256,8 @@ function buildSharedChartOptions({
     scales: {
       x: {
         type: 'linear',
+        min: xMin,
+        max: xMax,
         ticks: {
           color: '#94a3b8',
           maxTicksLimit: 8,
@@ -278,6 +282,22 @@ function buildSharedChartOptions({
       } : {}),
     },
   }
+}
+
+function getZoomBounds(samples) {
+  if (!samples.length) return null
+  return {
+    min: samples[0].timestampMs,
+    max: samples[samples.length - 1].timestampMs,
+  }
+}
+
+function clampZoomRange(range, bounds) {
+  if (!range || !bounds) return null
+  const min = clamp(Math.min(range.min, range.max), bounds.min, bounds.max)
+  const max = clamp(Math.max(range.min, range.max), bounds.min, bounds.max)
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 30 * 1000) return null
+  return { min, max }
 }
 
 function getDemandValue(sample) {
@@ -469,6 +489,84 @@ function ChartPanel({ title, subtitle, heightClass = 'h-[300px]', children }) {
   )
 }
 
+function getTimestampFromPointer(chart, event) {
+  if (!chart?.canvas || !chart?.scales?.x) return null
+  const rect = chart.canvas.getBoundingClientRect()
+  if (!rect.width) return null
+  const scaledX = ((event.clientX - rect.left) * chart.width) / rect.width
+  const clampedX = clamp(scaledX, chart.chartArea?.left ?? 0, chart.chartArea?.right ?? chart.width)
+  const value = chart.scales.x.getValueForPixel(clampedX)
+  return Number.isFinite(value) ? value : null
+}
+
+function getPixelFromTimestamp(chart, timestampMs) {
+  if (!chart?.canvas || !chart?.scales?.x) return null
+  const rect = chart.canvas.getBoundingClientRect()
+  if (!rect.width || !chart.width) return null
+  const pixel = chart.scales.x.getPixelForValue(timestampMs)
+  if (!Number.isFinite(pixel)) return null
+  return (pixel * rect.width) / chart.width
+}
+
+function ZoomableChart({ data, options, dragState, onDragStart, onDragMove, onDragEnd }) {
+  const chartRef = useRef(null)
+  const isDragging = Boolean(dragState?.active)
+
+  const selectionStyle = useMemo(() => {
+    if (!isDragging || !chartRef.current) return null
+    const startPixel = getPixelFromTimestamp(chartRef.current, dragState.startTs)
+    const currentPixel = getPixelFromTimestamp(chartRef.current, dragState.currentTs)
+    if (!Number.isFinite(startPixel) || !Number.isFinite(currentPixel)) return null
+    return {
+      left: Math.min(startPixel, currentPixel),
+      width: Math.max(Math.abs(currentPixel - startPixel), 2),
+    }
+  }, [dragState, isDragging])
+
+  return (
+    <div
+      className="relative h-full"
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        const chart = chartRef.current
+        const ts = getTimestampFromPointer(chart, event)
+        if (ts == null) return
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+        onDragStart(ts)
+      }}
+      onPointerMove={(event) => {
+        if (!isDragging) return
+        const chart = chartRef.current
+        const ts = getTimestampFromPointer(chart, event)
+        if (ts == null) return
+        onDragMove(ts)
+      }}
+      onPointerUp={(event) => {
+        if (!isDragging) return
+        event.currentTarget.releasePointerCapture?.(event.pointerId)
+        const chart = chartRef.current
+        const ts = getTimestampFromPointer(chart, event)
+        onDragEnd(ts)
+      }}
+      onPointerLeave={(event) => {
+        if (!isDragging) return
+        const chart = chartRef.current
+        const ts = getTimestampFromPointer(chart, event)
+        onDragEnd(ts)
+      }}
+      onDoubleClick={() => onDragEnd(null, true)}
+    >
+      <Line ref={chartRef} data={data} options={options} />
+      {selectionStyle ? (
+        <div
+          className="pointer-events-none absolute top-0 bottom-0 rounded-md border border-[#7dd3fc] bg-[#49d0e2]/12"
+          style={selectionStyle}
+        />
+      ) : null}
+    </div>
+  )
+}
+
 function StabilityCard({ metric }) {
   return (
     <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
@@ -507,6 +605,8 @@ export default function HalfmannTrendingView() {
   const [direction, setDirection] = useState(1)
   const [speed, setSpeed] = useState(1)
   const [playheadTimestampMs, setPlayheadTimestampMs] = useState(null)
+  const [zoomRange, setZoomRange] = useState(null)
+  const [dragState, setDragState] = useState(null)
   const refreshTimerRef = useRef(null)
 
   const loadHistory = async (selectedWindowKey, liveMode) => {
@@ -546,6 +646,70 @@ export default function HalfmannTrendingView() {
   const last24HoursSamples = useMemo(() => getWindowedSamples(samples, 24), [samples])
   const latestTimestampMs = visibleSamples[visibleSamples.length - 1]?.timestampMs ?? null
   const thresholds = historyPayload?.thresholds || {}
+  const zoomBounds = useMemo(() => getZoomBounds(visibleSamples), [visibleSamples])
+  const activeZoomRange = useMemo(() => clampZoomRange(zoomRange, zoomBounds), [zoomBounds, zoomRange])
+
+  useEffect(() => {
+    if (!zoomBounds) {
+      setZoomRange(null)
+      setDragState(null)
+      return
+    }
+    setZoomRange((current) => {
+      if (!current) return null
+      const clamped = clampZoomRange(current, zoomBounds)
+      if (!clamped) return null
+      if (clamped.min === current.min && clamped.max === current.max) return current
+      return clamped
+    })
+  }, [zoomBounds])
+
+  const resetZoom = () => {
+    setZoomRange(null)
+    setDragState(null)
+  }
+
+  const startChartZoom = (timestampMs) => {
+    setDragState({
+      active: true,
+      startTs: timestampMs,
+      currentTs: timestampMs,
+    })
+  }
+
+  const updateChartZoom = (timestampMs) => {
+    setDragState((current) => (current?.active ? { ...current, currentTs: timestampMs } : current))
+  }
+
+  const endChartZoom = (timestampMs, reset = false) => {
+    if (reset) {
+      resetZoom()
+      return
+    }
+
+    const finalState = dragState
+      ? {
+          ...dragState,
+          currentTs: timestampMs ?? dragState.currentTs,
+        }
+      : null
+
+    setDragState(null)
+    if (!finalState || !zoomBounds) return
+
+    const nextRange = clampZoomRange(
+      {
+        min: finalState.startTs,
+        max: finalState.currentTs,
+      },
+      zoomBounds,
+    )
+
+    if (!nextRange) return
+    setZoomRange(nextRange)
+    setIsLiveMode(false)
+    setIsPlaying(false)
+  }
 
   useEffect(() => {
     if (isLiveMode) {
@@ -630,7 +794,9 @@ export default function HalfmannTrendingView() {
     currentTimestampMs: currentSample?.timestampMs,
     yTitle: 'Flow demand (MMSCFD)',
     xTickFormatter,
-  }), [currentSample?.timestampMs])
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
   const wellMatchChartData = useMemo(() => {
     const datasets = WELLS.map((well, index) =>
@@ -658,7 +824,9 @@ export default function HalfmannTrendingView() {
     yMin: 90,
     yMax: 102,
     xTickFormatter,
-  }), [currentSample?.timestampMs])
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
   const chokeChartData = useMemo(() => {
     const datasets = WELLS.map((well, index) =>
@@ -688,7 +856,9 @@ export default function HalfmannTrendingView() {
     yMin: 0,
     yMax: 100,
     xTickFormatter,
-  }), [currentSample?.timestampMs])
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
   const compressorChartData = useMemo(() => {
     const datasets = []
@@ -750,7 +920,9 @@ export default function HalfmannTrendingView() {
     yTitle: 'Flow (MMSCFD)',
     yRightTitle: 'Discharge PSI',
     xTickFormatter,
-  }), [currentSample?.timestampMs])
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
   const pressureChartData = useMemo(() => {
     const datasets = [
@@ -779,7 +951,9 @@ export default function HalfmannTrendingView() {
     currentTimestampMs: currentSample?.timestampMs,
     yTitle: 'Pressure (PSI)',
     xTickFormatter,
-  }), [currentSample?.timestampMs])
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
   const eventChartData = useMemo(() => ({
     datasets: [
@@ -795,11 +969,15 @@ export default function HalfmannTrendingView() {
     ...buildSharedChartOptions({
       currentTimestampMs: currentSample?.timestampMs,
       xTickFormatter,
+      xMin: activeZoomRange?.min,
+      xMax: activeZoomRange?.max,
     }),
     plugins: {
       ...buildSharedChartOptions({
         currentTimestampMs: currentSample?.timestampMs,
         xTickFormatter,
+        xMin: activeZoomRange?.min,
+        xMax: activeZoomRange?.max,
       }).plugins,
       tooltip: {
         backgroundColor: '#0f172a',
@@ -825,6 +1003,8 @@ export default function HalfmannTrendingView() {
     scales: {
       x: {
         type: 'linear',
+        min: activeZoomRange?.min,
+        max: activeZoomRange?.max,
         ticks: {
           color: '#94a3b8',
           maxTicksLimit: 8,
@@ -843,7 +1023,7 @@ export default function HalfmannTrendingView() {
         grid: { color: 'rgba(71, 85, 105, 0.18)' },
       },
     },
-  }), [currentSample?.timestampMs, events])
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs, events])
 
   const recentEvents = useMemo(() => events.slice(-12).reverse(), [events])
   const bufferedSampleCount = samples.length
@@ -936,6 +1116,9 @@ export default function HalfmannTrendingView() {
                 <div className="mt-1 text-[11px] text-[#64748b]">
                   Retained samples: {bufferedSampleCount} | Visible window: {visibleSampleCount} | Mode: {isLiveMode ? 'Live follow' : isPlaying ? 'Playback running' : 'Playback paused'}
                 </div>
+                <div className="mt-1 text-[11px] text-[#64748b]">
+                  Drag across any graph to zoom that time slice. Double-click a graph or use Reset Zoom to return to the full selected window.
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {WINDOWS.map((entry) => (
@@ -947,6 +1130,14 @@ export default function HalfmannTrendingView() {
                     {entry.key}
                   </button>
                 ))}
+                {activeZoomRange ? (
+                  <button
+                    onClick={resetZoom}
+                    className="rounded-full border border-[#49d0e2] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black"
+                  >
+                    Reset Zoom
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -995,35 +1186,70 @@ export default function HalfmannTrendingView() {
             title="Panel Flow Demand Decisions"
             subtitle="Real panel demand lines with markers when compressor flow demand was reduced for discharge pressure or raised for wells below rate"
           >
-            <Line data={flowDecisionChartData} options={flowDecisionChartOptions} />
+            <ZoomableChart
+              data={flowDecisionChartData}
+              options={flowDecisionChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
 
           <ChartPanel
             title="Well Live Match Percent"
             subtitle="Direct MLink live injection match percentage registers for all five wells"
           >
-            <Line data={wellMatchChartData} options={wellMatchChartOptions} />
+            <ZoomableChart
+              data={wellMatchChartData}
+              options={wellMatchChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
 
           <ChartPanel
             title="Well Choke Commands"
             subtitle="Real commanded choke outputs from the panel, with dots on each visible retained sample and markers when a choke jumps by more than 5%"
           >
-            <Line data={chokeChartData} options={chokeChartOptions} />
+            <ZoomableChart
+              data={chokeChartData}
+              options={chokeChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
 
           <ChartPanel
             title="Compressor Commands, Outputs, and Discharge"
             subtitle="Per-compressor desired flow SP vs current flow output, overlaid with site discharge and the configured discharge override thresholds"
           >
-            <Line data={compressorChartData} options={compressorChartOptions} />
+            <ZoomableChart
+              data={compressorChartData}
+              options={compressorChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
 
           <ChartPanel
             title="Suction and Static Pressures"
             subtitle="Site suction overlaid with each well's static pressure so you can line up pressure context with panel decisions"
           >
-            <Line data={pressureChartData} options={pressureChartOptions} />
+            <ZoomableChart
+              data={pressureChartData}
+              options={pressureChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
 
           <ChartPanel
@@ -1031,7 +1257,14 @@ export default function HalfmannTrendingView() {
             subtitle="One event lane for reduce-for-discharge, raise-for-rate, choke moves, compressor shifts, and well online/offline transitions"
             heightClass="h-[280px]"
           >
-            <Line data={eventChartData} options={eventChartOptions} />
+            <ZoomableChart
+              data={eventChartData}
+              options={eventChartOptions}
+              dragState={dragState}
+              onDragStart={startChartZoom}
+              onDragMove={updateChartZoom}
+              onDragEnd={endChartZoom}
+            />
           </ChartPanel>
         </div>
 
