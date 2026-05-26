@@ -657,10 +657,10 @@ export function loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback
     startAt,
     endAt,
     // Lightweight trend rows are safe to read more densely than raw snapshots.
-    cadenceSeconds: 4,
-    multiplier: 1.2,
+    cadenceSeconds: 2,
+    multiplier: 1.12,
     minimum: 600,
-    maximum: 24000,
+    maximum: 120000,
   })
 
   return readJsonLinesTail(TREND_HISTORY_PATH, maxLines)
@@ -697,9 +697,7 @@ export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = 
   const fastSamples = [...fastSamplesByTimestamp.values()].sort((left, right) => left.timestampMs - right.timestampMs)
 
   const needsHistoricalBackfill =
-    !fastSamples.length ||
-    (startMs != null && fastSamples[0].timestampMs > startMs + 60 * 1000) ||
-    (endMs != null && fastSamples[fastSamples.length - 1].timestampMs < endMs - 60 * 1000)
+    !fastSamples.length
 
   let historicalSamples = []
 

@@ -43,6 +43,7 @@ ChartJS.register(playheadPlugin)
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const POLL_INTERVAL_MS = 15000
 const MAX_VISIBLE_POINTS = 720
+const TREND_CACHE_PREFIX = 'halfmann-trending-cache-v1'
 
 const WINDOWS = [
   { key: '1h', hours: 1 },
@@ -97,6 +98,31 @@ async function fetchTrendingHistory(windowHours) {
   const res = await fetch(`${API_BASE}/api/halfmann/trending?hours=${windowHours}&includeFallback=true`)
   if (!res.ok) throw new Error(await readErrorPayload(res))
   return res.json()
+}
+
+function getTrendCacheKey(windowHours) {
+  return `${TREND_CACHE_PREFIX}:${windowHours}`
+}
+
+function readTrendingCache(windowHours) {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(getTrendCacheKey(windowHours))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.samples?.length ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeTrendingCache(windowHours, payload) {
+  if (typeof window === 'undefined' || !payload?.samples?.length) return
+  try {
+    window.sessionStorage.setItem(getTrendCacheKey(windowHours), JSON.stringify(payload))
+  } catch {
+    // Ignore cache write failures.
+  }
 }
 
 function getWindowHours(windowKey) {
@@ -743,8 +769,8 @@ function StabilityCard({ metric }) {
 }
 
 export default function HalfmannTrendingView() {
-  const [historyPayload, setHistoryPayload] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [historyPayload, setHistoryPayload] = useState(() => readTrendingCache(24))
+  const [loading, setLoading] = useState(() => !readTrendingCache(24))
   const [error, setError] = useState('')
   const [windowKey, setWindowKey] = useState('24h')
   const [selectedWindowKey, setSelectedWindowKey] = useState('24h')
@@ -759,10 +785,21 @@ export default function HalfmannTrendingView() {
 
   const loadHistory = async (selectedWindowKey, liveMode) => {
     const requestedHours = Math.max(getWindowHours(selectedWindowKey), 24)
+    const cachedPayload = readTrendingCache(requestedHours)
+    if (cachedPayload?.samples?.length) {
+      setHistoryPayload(cachedPayload)
+      setLoading(false)
+      setError('')
+      if (liveMode) {
+        const cachedLatestTs = cachedPayload.samples[cachedPayload.samples.length - 1]?.timestampMs ?? null
+        if (cachedLatestTs != null) setPlayheadTimestampMs(cachedLatestTs)
+      }
+    }
     const nextPayload = await fetchTrendingHistory(requestedHours)
     setHistoryPayload(nextPayload)
     setLoading(false)
     setError('')
+    writeTrendingCache(requestedHours, nextPayload)
     if (liveMode) {
       const latestTs = nextPayload?.samples?.[nextPayload.samples.length - 1]?.timestampMs ?? null
       if (latestTs != null) setPlayheadTimestampMs(latestTs)
@@ -770,7 +807,8 @@ export default function HalfmannTrendingView() {
   }
 
   useEffect(() => {
-    setLoading(true)
+    const cachedPayload = readTrendingCache(Math.max(getWindowHours(windowKey), 24))
+    setLoading(!cachedPayload?.samples?.length)
     loadHistory(windowKey, isLiveMode).catch((err) => {
       setError(err.message || 'Failed to load Halfmann trending history')
       setLoading(false)
