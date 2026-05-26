@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
+import * as XLSX from 'xlsx'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ScatterController, Tooltip, Legend, Filler)
 
@@ -138,6 +139,30 @@ function formatSignedDelta(value, digits = 3, unit = '') {
   if (!Number.isFinite(value)) return '--'
   const sign = value > 0 ? '+' : ''
   return `${sign}${value.toFixed(digits)}${unit ? ` ${unit}` : ''}`
+}
+
+function formatFileTimestamp(ts = Date.now()) {
+  const date = new Date(ts)
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  const hour = `${date.getHours()}`.padStart(2, '0')
+  const minute = `${date.getMinutes()}`.padStart(2, '0')
+  const second = `${date.getSeconds()}`.padStart(2, '0')
+  return `${year}${month}${day}-${hour}${minute}${second}`
+}
+
+function sanitizeSheetName(value) {
+  return String(value || 'Sheet')
+    .replace(/[\\/*?:[\]]/g, ' ')
+    .slice(0, 31)
+}
+
+function downloadWorkbook({ fileName, sheetName, rows }) {
+  const worksheet = XLSX.utils.json_to_sheet(rows?.length ? rows : [{ Message: 'No rows available for this graph in the selected time window.' }])
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(sheetName))
+  XLSX.writeFile(workbook, fileName)
 }
 
 function downsampleSamples(samples, maxPoints = MAX_VISIBLE_POINTS) {
@@ -492,12 +517,15 @@ function MetricChip({ label, value, helper }) {
   )
 }
 
-function ChartPanel({ title, subtitle, heightClass = 'h-[300px]', children }) {
+function ChartPanel({ title, subtitle, heightClass = 'h-[300px]', action, children }) {
   return (
     <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
-      <div className="mb-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">{title}</div>
-        {subtitle ? <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div> : null}
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">{title}</div>
+          {subtitle ? <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
       </div>
       <div className={heightClass}>{children}</div>
     </div>
@@ -618,6 +646,7 @@ export default function HalfmannTrendingView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [windowKey, setWindowKey] = useState('24h')
+  const [selectedWindowKey, setSelectedWindowKey] = useState('24h')
   const [isLiveMode, setIsLiveMode] = useState(true)
   const [isPlaying, setIsPlaying] = useState(false)
   const [direction, setDirection] = useState(1)
@@ -660,6 +689,11 @@ export default function HalfmannTrendingView() {
   const samples = historyPayload?.samples || []
   const windowHours = getWindowHours(windowKey)
   const visibleSamples = useMemo(() => getWindowedSamples(samples, windowHours), [samples, windowHours])
+  const exportSamples = useMemo(() => (
+    activeZoomRange
+      ? visibleSamples.filter((sample) => sample.timestampMs >= activeZoomRange.min && sample.timestampMs <= activeZoomRange.max)
+      : visibleSamples
+  ), [activeZoomRange, visibleSamples])
   const downsampledVisibleSamples = useMemo(() => downsampleSamples(visibleSamples), [visibleSamples])
   const last24HoursSamples = useMemo(() => getWindowedSamples(samples, 24), [samples])
   const latestTimestampMs = visibleSamples[visibleSamples.length - 1]?.timestampMs ?? null
@@ -685,6 +719,19 @@ export default function HalfmannTrendingView() {
   const resetZoom = () => {
     setZoomRange(null)
     setDragState(null)
+  }
+
+  const generateSelectedWindow = () => {
+    resetZoom()
+    setLoading(true)
+    if (windowKey === selectedWindowKey) {
+      loadHistory(selectedWindowKey, isLiveMode).catch((err) => {
+        setError(err.message || 'Failed to load Halfmann trending history')
+        setLoading(false)
+      })
+      return
+    }
+    setWindowKey(selectedWindowKey)
   }
 
   const startChartZoom = (timestampMs) => {
@@ -1048,6 +1095,104 @@ export default function HalfmannTrendingView() {
   const visibleSampleCount = visibleSamples.length
   const currentTimestampLabel = currentSample ? formatTime(currentSample.timestampMs) : '--'
   const scrubMax = Math.max(visibleSamples.length - 1, 0)
+  const generatePending = selectedWindowKey !== windowKey
+  const exportSuffix = `${windowKey}${activeZoomRange ? '-zoom' : ''}-${formatFileTimestamp()}`
+
+  const exportFlowDecisionChart = () => downloadWorkbook({
+    fileName: `halfmann-panel-flow-decisions-${exportSuffix}.xlsx`,
+    sheetName: 'Panel Flow Decisions',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      PanelCommandedCompressorFlow_MMSCFD: sample.panelCommandedCompressorFlow,
+      TotalDesiredSiteFlow_MMSCFD: sample.totalDesiredSiteFlow,
+      TotalSiteFlow_MMSCFD: sample.totalSiteFlow,
+      SiteDischarge_PSI: sample.siteDischarge,
+      FlowTargetBeingReduced: sample.flowTargetBeingReduced,
+      AnyWellBelowSetpoint: sample.anyWellBelowSetpoint,
+      DischargeOverrideLatch: sample.dischargeOverrideLatch,
+      ReduceForDischargeEvent: events.some((event) => event.type === 'reduceForDischarge' && event.timestampMs === sample.timestampMs),
+      RaiseForRateEvent: events.some((event) => event.type === 'raiseForRate' && event.timestampMs === sample.timestampMs),
+    })),
+  })
+
+  const exportWellMatchChart = () => downloadWorkbook({
+    fileName: `halfmann-well-live-match-${exportSuffix}.xlsx`,
+    sheetName: 'Well Live Match',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      Well214_MatchPct: sample.wells?.[0]?.matchPct,
+      Well444_MatchPct: sample.wells?.[1]?.matchPct,
+      Well334_MatchPct: sample.wells?.[2]?.matchPct,
+      Well213_MatchPct: sample.wells?.[3]?.matchPct,
+      Well333_MatchPct: sample.wells?.[4]?.matchPct,
+    })),
+  })
+
+  const exportChokeChart = () => downloadWorkbook({
+    fileName: `halfmann-well-choke-commands-${exportSuffix}.xlsx`,
+    sheetName: 'Well Choke Commands',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      Well214_ChokePct: getWellChokeValue(sample.wells?.[0]),
+      Well444_ChokePct: getWellChokeValue(sample.wells?.[1]),
+      Well334_ChokePct: getWellChokeValue(sample.wells?.[2]),
+      Well213_ChokePct: getWellChokeValue(sample.wells?.[3]),
+      Well333_ChokePct: getWellChokeValue(sample.wells?.[4]),
+    })),
+  })
+
+  const exportCompressorChart = () => downloadWorkbook({
+    fileName: `halfmann-compressor-commands-discharge-${exportSuffix}.xlsx`,
+    sheetName: 'Compressor Trend',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      Compressor1_SP_MMSCFD: sample.compressors?.[0]?.desiredFlow,
+      Compressor1_Output_MMSCFD: sample.compressors?.[0]?.currentFlow,
+      Compressor2_SP_MMSCFD: sample.compressors?.[1]?.desiredFlow,
+      Compressor2_Output_MMSCFD: sample.compressors?.[1]?.currentFlow,
+      Compressor3_SP_MMSCFD: sample.compressors?.[2]?.desiredFlow,
+      Compressor3_Output_MMSCFD: sample.compressors?.[2]?.currentFlow,
+      Compressor4_SP_MMSCFD: sample.compressors?.[3]?.desiredFlow,
+      Compressor4_Output_MMSCFD: sample.compressors?.[3]?.currentFlow,
+      SiteDischarge_PSI: sample.siteDischarge,
+      DischargeOverrideSetting_PSI: thresholds?.panelDischargeOverridePsi,
+      CompressorSpeedControlSP_PSI: thresholds?.compressorSpeedControlDischargePsi,
+    })),
+  })
+
+  const exportPressureChart = () => downloadWorkbook({
+    fileName: `halfmann-suction-static-pressures-${exportSuffix}.xlsx`,
+    sheetName: 'Pressure Trend',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      SiteSuction_PSI: sample.siteSuction,
+      Well214_Static_PSI: sample.wells?.[0]?.staticPressure,
+      Well444_Static_PSI: sample.wells?.[1]?.staticPressure,
+      Well334_Static_PSI: sample.wells?.[2]?.staticPressure,
+      Well213_Static_PSI: sample.wells?.[3]?.staticPressure,
+      Well333_Static_PSI: sample.wells?.[4]?.staticPressure,
+    })),
+  })
+
+  const exportDecisionTimeline = () => downloadWorkbook({
+    fileName: `halfmann-decision-timeline-${exportSuffix}.xlsx`,
+    sheetName: 'Decision Timeline',
+    rows: events.map((event) => ({
+      Timestamp: formatTime(event.timestampMs),
+      TimestampMs: event.timestampMs,
+      EventType: event.type,
+      EventLane: EVENT_LABELS[event.level] || event.level,
+      Label: event.label,
+      Note: event.note,
+      Value: event.value,
+      WellKey: event.wellKey || '',
+    })),
+  })
 
   return (
     <div className="flex min-h-full flex-col bg-[#080810] text-white">
@@ -1142,12 +1287,19 @@ export default function HalfmannTrendingView() {
                 {WINDOWS.map((entry) => (
                   <button
                     key={entry.key}
-                    onClick={() => setWindowKey(entry.key)}
-                    className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${windowKey === entry.key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
+                    onClick={() => setSelectedWindowKey(entry.key)}
+                    className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${selectedWindowKey === entry.key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
                   >
                     {entry.key}
                   </button>
                 ))}
+                <button
+                  onClick={generateSelectedWindow}
+                  disabled={loading}
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${loading ? 'cursor-wait bg-[#334155] text-[#cbd5e1]' : generatePending ? 'bg-[#49d0e2] text-black' : 'border border-[#49d0e2] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black'}`}
+                >
+                  {loading ? 'Generating...' : 'Generate'}
+                </button>
                 {activeZoomRange ? (
                   <button
                     onClick={resetZoom}
@@ -1203,6 +1355,14 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Panel Flow Demand Decisions"
             subtitle="Real panel demand lines with markers when compressor flow demand was reduced for discharge pressure or raised for wells below rate"
+            action={
+              <button
+                onClick={exportFlowDecisionChart}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={flowDecisionChartData}
@@ -1217,6 +1377,14 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Well Live Match Percent"
             subtitle="Direct MLink live injection match percentage registers for all five wells"
+            action={
+              <button
+                onClick={exportWellMatchChart}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={wellMatchChartData}
@@ -1231,6 +1399,14 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Well Choke Commands"
             subtitle="Real commanded choke outputs from the panel, with dots on each visible retained sample and markers when a choke jumps by more than 5%"
+            action={
+              <button
+                onClick={exportChokeChart}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={chokeChartData}
@@ -1245,6 +1421,14 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Compressor Commands, Outputs, and Discharge"
             subtitle="Per-compressor desired flow SP vs current flow output, overlaid with site discharge and the configured discharge override thresholds"
+            action={
+              <button
+                onClick={exportCompressorChart}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={compressorChartData}
@@ -1259,6 +1443,14 @@ export default function HalfmannTrendingView() {
           <ChartPanel
             title="Suction and Static Pressures"
             subtitle="Site suction overlaid with each well's static pressure so you can line up pressure context with panel decisions"
+            action={
+              <button
+                onClick={exportPressureChart}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={pressureChartData}
@@ -1274,6 +1466,14 @@ export default function HalfmannTrendingView() {
             title="Decision Timeline"
             subtitle="One event lane for reduce-for-discharge, raise-for-rate, choke moves, compressor shifts, and well online/offline transitions"
             heightClass="h-[280px]"
+            action={
+              <button
+                onClick={exportDecisionTimeline}
+                className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+              >
+                Export
+              </button>
+            }
           >
             <ZoomableChart
               data={eventChartData}
