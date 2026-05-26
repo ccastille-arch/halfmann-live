@@ -8,6 +8,7 @@ const DATA_DIR = existsSync('/data') ? '/data' : join(__dirname, '../data')
 const HISTORY_DIR = join(DATA_DIR, 'halfmann-history')
 const RAW_HISTORY_PATH = join(HISTORY_DIR, 'raw-snapshots.ndjson')
 const PANEL_MATCH_HISTORY_PATH = join(HISTORY_DIR, 'panel-match-history.ndjson')
+const TREND_HISTORY_PATH = join(HISTORY_DIR, 'trend-samples.ndjson')
 const SEED_IMPORTED_MARKER_PATH = join(HISTORY_DIR, 'seed-imported.json')
 const SEED_CSV_PATH = join(__dirname, 'seed/halfmann-panel-match-seed.csv')
 const RECENT_TREND_SAMPLE_LIMIT = 1800
@@ -527,11 +528,13 @@ export function recordHalfmannRawSnapshot(record) {
   appendJsonLine(RAW_HISTORY_PATH, record)
   const timestampMs = parseTimestampMs(record?.capturedAt || record?.ts)
   if (timestampMs != null) {
-    pushRecentTrendSample(buildTrendingSample({
+    const trendSample = buildTrendingSample({
       raw: record,
       match: null,
       timestampMs,
-    }))
+    })
+    appendJsonLine(TREND_HISTORY_PATH, trendSample)
+    pushRecentTrendSample(trendSample)
   }
 }
 
@@ -595,22 +598,15 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
   if (!existsSync(RAW_HISTORY_PATH)) return []
-  const rawStats = statSync(RAW_HISTORY_PATH)
-  if (rawStats.size > 5 * 1024 * 1024) {
-    // Raw snapshots are much heavier than panel-match rows. If this file grows
-    // too large, parsing it synchronously at request time can pin the process
-    // long enough to make the whole site look down. Favor availability.
-    return []
-  }
   const maxLines = estimateTailLineBudget({
     startAt,
     endAt,
     // Raw snapshot lines are much heavier than panel-match lines, so do not
     // try to parse every 2-second capture for long windows at request time.
-    cadenceSeconds: 15,
-    multiplier: 1.3,
-    minimum: 240,
-    maximum: 1600,
+    cadenceSeconds: 12,
+    multiplier: 1.15,
+    minimum: 180,
+    maximum: 900,
   })
 
   return readJsonLinesTail(RAW_HISTORY_PATH, maxLines)
@@ -624,6 +620,33 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
     .sort((left, right) => String(left.capturedAt || left.ts).localeCompare(String(right.capturedAt || right.ts)))
 }
 
+export function loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback = false } = {}) {
+  ensureHalfmannHistoryBootstrapped()
+  const startMs = startAt ? new Date(startAt).getTime() : null
+  const endMs = endAt ? new Date(endAt).getTime() : null
+  if (!existsSync(TREND_HISTORY_PATH)) return []
+  const maxLines = estimateTailLineBudget({
+    startAt,
+    endAt,
+    // Lightweight trend rows are safe to read more densely than raw snapshots.
+    cadenceSeconds: 4,
+    multiplier: 1.2,
+    minimum: 600,
+    maximum: 24000,
+  })
+
+  return readJsonLinesTail(TREND_HISTORY_PATH, maxLines)
+    .filter((sample) => {
+      const timestampMs = Number(sample?.timestampMs)
+      if (!Number.isFinite(timestampMs)) return false
+      if (!includeFallback && sample.isFallback) return false
+      if (startMs != null && timestampMs < startMs) return false
+      if (endMs != null && timestampMs > endMs) return false
+      return true
+    })
+    .sort((left, right) => Number(left.timestampMs) - Number(right.timestampMs))
+}
+
 export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = false } = {}) {
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
@@ -634,14 +657,30 @@ export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = 
     if (!includeFallback && sample.isFallback) return false
     return true
   })
-  if (recentSamples.length) return recentSamples
 
-  const rawRecords = loadHalfmannRawHistory({ startAt, endAt })
-  const matchRecords = loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback })
-  const merged = mergeHistoryStreams(rawRecords, matchRecords)
-  return merged
-    .map(buildTrendingSample)
-    .filter((sample) => sample.timestampMs != null)
+  const lightweightHistory = loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback })
+  let historicalSamples = lightweightHistory
+
+  if (!historicalSamples.length) {
+    const rawRecords = loadHalfmannRawHistory({ startAt, endAt })
+    const matchRecords = loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback })
+    const merged = mergeHistoryStreams(rawRecords, matchRecords)
+    historicalSamples = merged
+      .map(buildTrendingSample)
+      .filter((sample) => sample.timestampMs != null)
+  }
+
+  if (!recentSamples.length) return historicalSamples
+  if (!historicalSamples.length) return recentSamples
+
+  const byTimestamp = new Map()
+  for (const sample of historicalSamples) {
+    if (sample?.timestampMs != null) byTimestamp.set(sample.timestampMs, sample)
+  }
+  for (const sample of recentSamples) {
+    if (sample?.timestampMs != null) byTimestamp.set(sample.timestampMs, sample)
+  }
+  return [...byTimestamp.values()].sort((left, right) => left.timestampMs - right.timestampMs)
 }
 
 export function getHalfmannHistoryPaths() {
@@ -650,6 +689,7 @@ export function getHalfmannHistoryPaths() {
     historyDir: HISTORY_DIR,
     rawHistoryPath: RAW_HISTORY_PATH,
     panelMatchHistoryPath: PANEL_MATCH_HISTORY_PATH,
+    trendHistoryPath: TREND_HISTORY_PATH,
     seedImportedMarkerPath: SEED_IMPORTED_MARKER_PATH,
   }
 }
