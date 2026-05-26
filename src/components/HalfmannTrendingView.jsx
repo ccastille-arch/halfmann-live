@@ -85,6 +85,8 @@ const EVENT_LABELS = {
   0: 'Well state',
 }
 
+const SUCTION_SCORE_REFERENCE = 99
+
 async function readErrorPayload(res) {
   const contentType = res.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -357,6 +359,178 @@ function getDemandValue(sample) {
 
 function getWellChokeValue(wellSample) {
   return toNumber(wellSample?.chokeCommand)
+}
+
+function getSuctionControllerScore(compressorSample) {
+  if (!compressorSample) return null
+  const directScore = computePercentMatch(
+    toNumber(compressorSample?.suctionPressure),
+    toNumber(compressorSample?.loadedAutoSp),
+  )
+  if (directScore != null) return directScore
+  return computePercentMatch(
+    toNumber(compressorSample?.currentFlow),
+    toNumber(compressorSample?.desiredFlow),
+  )
+}
+
+function getSuctionControllerScoreMode(compressorSample) {
+  const directScore = computePercentMatch(
+    toNumber(compressorSample?.suctionPressure),
+    toNumber(compressorSample?.loadedAutoSp),
+  )
+  return directScore != null ? 'pressure' : 'flow'
+}
+
+function describeAssociatedParameter(prevSample, currentSample, index) {
+  const prevCompressor = prevSample?.compressors?.[index]
+  const currentCompressor = currentSample?.compressors?.[index]
+  if (!prevCompressor || !currentCompressor) return null
+
+  const candidates = []
+  const pushCandidate = ({ key, label, before, after, unit = '', weight = 1, minDelta = 0 }) => {
+    if (before == null || after == null) return
+    const delta = after - before
+    const magnitude = Math.abs(delta)
+    if (!Number.isFinite(magnitude) || magnitude < minDelta) return
+    candidates.push({
+      key,
+      label,
+      before,
+      after,
+      delta,
+      magnitude,
+      weightedMagnitude: magnitude * weight,
+      unit,
+    })
+  }
+
+  pushCandidate({
+    key: 'loadedAutoSp',
+    label: 'Loaded Auto SP',
+    before: toNumber(prevCompressor.loadedAutoSp),
+    after: toNumber(currentCompressor.loadedAutoSp),
+    unit: 'PSI',
+    weight: 5,
+    minDelta: 0.3,
+  })
+  pushCandidate({
+    key: 'suctionPressure',
+    label: `${currentCompressor.unitLabel} suction pressure`,
+    before: toNumber(prevCompressor.suctionPressure),
+    after: toNumber(currentCompressor.suctionPressure),
+    unit: 'PSI',
+    weight: 4.5,
+    minDelta: 0.3,
+  })
+  pushCandidate({
+    key: 'desiredFlow',
+    label: `${currentCompressor.unitLabel} desired flow SP`,
+    before: toNumber(prevCompressor.desiredFlow),
+    after: toNumber(currentCompressor.desiredFlow),
+    unit: 'MMSCFD',
+    weight: 3.5,
+    minDelta: 0.01,
+  })
+  pushCandidate({
+    key: 'currentFlow',
+    label: `${currentCompressor.unitLabel} current flow output`,
+    before: toNumber(prevCompressor.currentFlow),
+    after: toNumber(currentCompressor.currentFlow),
+    unit: 'MMSCFD',
+    weight: 3,
+    minDelta: 0.01,
+  })
+  pushCandidate({
+    key: 'dischargePressure',
+    label: `${currentCompressor.unitLabel} discharge pressure`,
+    before: toNumber(prevCompressor.dischargePressure),
+    after: toNumber(currentCompressor.dischargePressure),
+    unit: 'PSI',
+    weight: 2.2,
+    minDelta: 1,
+  })
+  pushCandidate({
+    key: 'siteDischarge',
+    label: 'site discharge',
+    before: toNumber(prevSample?.siteDischarge),
+    after: toNumber(currentSample?.siteDischarge),
+    unit: 'PSI',
+    weight: 2,
+    minDelta: 1,
+  })
+  pushCandidate({
+    key: 'siteSuction',
+    label: 'site suction',
+    before: toNumber(prevSample?.siteSuction),
+    after: toNumber(currentSample?.siteSuction),
+    unit: 'PSI',
+    weight: 2.2,
+    minDelta: 0.3,
+  })
+  pushCandidate({
+    key: 'panelCommandedCompressorFlow',
+    label: 'panel commanded compressor flow',
+    before: toNumber(prevSample?.panelCommandedCompressorFlow),
+    after: toNumber(currentSample?.panelCommandedCompressorFlow),
+    unit: 'MMSCFD',
+    weight: 2.4,
+    minDelta: 0.01,
+  })
+  pushCandidate({
+    key: 'totalSiteFlow',
+    label: 'total site flow',
+    before: toNumber(prevSample?.totalSiteFlow),
+    after: toNumber(currentSample?.totalSiteFlow),
+    unit: 'MMSCFD',
+    weight: 1.8,
+    minDelta: 0.01,
+  })
+  pushCandidate({
+    key: 'witchesHatDp',
+    label: `${currentCompressor.unitLabel} witches hat DP`,
+    before: toNumber(prevCompressor.witchesHatDp),
+    after: toNumber(currentCompressor.witchesHatDp),
+    unit: 'PSI',
+    weight: 1.6,
+    minDelta: 0.1,
+  })
+
+  if (!candidates.length) return null
+  candidates.sort((left, right) => right.weightedMagnitude - left.weightedMagnitude)
+  const top = candidates[0]
+  return {
+    ...top,
+    direction: top.delta > 0 ? 'rose' : 'fell',
+    summary: `${top.label} ${top.delta > 0 ? 'rose' : 'fell'} from ${top.before.toFixed(top.unit === 'MMSCFD' ? 3 : 1)} to ${top.after.toFixed(top.unit === 'MMSCFD' ? 3 : 1)} ${top.unit}`.trim(),
+  }
+}
+
+function buildSuctionScoreDropEvents(samples) {
+  const events = []
+  for (let sampleIndex = 1; sampleIndex < samples.length; sampleIndex += 1) {
+    const prevSample = samples[sampleIndex - 1]
+    const currentSample = samples[sampleIndex]
+    COMPRESSORS.forEach((compressor, compressorIndex) => {
+      const previousScore = getSuctionControllerScore(prevSample?.compressors?.[compressorIndex])
+      const currentScore = getSuctionControllerScore(currentSample?.compressors?.[compressorIndex])
+      if (previousScore == null || currentScore == null) return
+      const delta = currentScore - previousScore
+      if (delta > -2) return
+      const associated = describeAssociatedParameter(prevSample, currentSample, compressorIndex)
+      events.push({
+        timestampMs: currentSample.timestampMs,
+        unitKey: compressor.key,
+        unitLabel: compressor.unitLabel,
+        previousScore,
+        currentScore,
+        delta,
+        mode: getSuctionControllerScoreMode(currentSample?.compressors?.[compressorIndex]),
+        associated,
+      })
+    })
+  }
+  return events.sort((left, right) => right.timestampMs - left.timestampMs)
 }
 
 function getCompressorDemandDelta(prev, current) {
@@ -821,6 +995,34 @@ function StabilityCard({ metric }) {
   )
 }
 
+function SuctionScoreEventCard({ event }) {
+  const associatedText = event.associated?.summary || 'No single retained parameter changed enough to confidently associate with the score drop.'
+  return (
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{formatTime(event.timestampMs)}</div>
+          <div className="mt-1 text-[15px] font-bold leading-snug text-white">
+            Unit {event.unitLabel} suction score fell from {event.previousScore.toFixed(0)}% to {event.currentScore.toFixed(0)}%
+          </div>
+        </div>
+        <div className="rounded-full bg-[#171207] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#fbbf24]">
+          {formatSignedDelta(event.delta, 0, 'pts')}
+        </div>
+      </div>
+      <div className="mt-3 text-[12px] leading-relaxed text-[#cbd5e1]">
+        Associated parameter: <span className="font-bold text-white">{event.associated?.label || 'No strong retained signal'}</span>
+      </div>
+      <div className="mt-2 text-[11px] leading-relaxed text-[#94a3b8]">
+        {associatedText}
+      </div>
+      <div className="mt-2 text-[11px] text-[#64748b]">
+        Score mode: {event.mode === 'pressure' ? 'Suction PSI vs loaded auto SP' : 'Current flow output vs desired flow fallback'}
+      </div>
+    </div>
+  )
+}
+
 export default function HalfmannTrendingView() {
   const [historyPayload, setHistoryPayload] = useState(() => readTrendingCache(24))
   const [loading, setLoading] = useState(() => !readTrendingCache(24))
@@ -1006,6 +1208,7 @@ export default function HalfmannTrendingView() {
   }, [currentIndex, direction, isLiveMode, isPlaying, speed, visibleSamples])
 
   const events = useMemo(() => buildDecisionEvents(visibleSamples, thresholds), [thresholds, visibleSamples])
+  const suctionScoreDropEvents = useMemo(() => buildSuctionScoreDropEvents(visibleSamples), [visibleSamples])
   const pressureInvestigations = useMemo(() => buildPressureInvestigations(visibleSamples, thresholds, events), [events, thresholds, visibleSamples])
   const valveStability = useMemo(() => computeValveStability(last24HoursSamples), [last24HoursSamples])
   const colors = getChartColors()
@@ -1214,6 +1417,50 @@ export default function HalfmannTrendingView() {
     xMax: activeZoomRange?.max,
   }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
 
+  const suctionScoreChartData = useMemo(() => {
+    const datasets = COMPRESSORS.map((compressor, index) =>
+      makeLineDataset(
+        `Unit ${compressor.unitLabel} Score`,
+        compressor.color,
+        downsampledVisibleSamples.map((sample) => ({
+          x: sample.timestampMs,
+          y: getSuctionControllerScore(sample.compressors[index]),
+        })),
+      ),
+    )
+
+    datasets.push(
+      makeReferenceDataset(
+        '99% reference',
+        colors.slate,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: SUCTION_SCORE_REFERENCE })),
+      ),
+    )
+
+    if (suctionScoreDropEvents.length) {
+      datasets.push(
+        makeMarkerDataset(
+          'Score drop events',
+          colors.gold,
+          suctionScoreDropEvents.map((event) => ({ x: event.timestampMs, y: event.currentScore })),
+          'triangle',
+        ),
+      )
+    }
+
+    return { datasets }
+  }, [colors.gold, colors.slate, downsampledVisibleSamples, suctionScoreDropEvents])
+
+  const suctionScoreChartOptions = useMemo(() => buildSharedChartOptions({
+    currentTimestampMs: currentSample?.timestampMs,
+    yTitle: 'Suction controller score (%)',
+    yMin: 80,
+    yMax: 101,
+    xTickFormatter,
+    xMin: activeZoomRange?.min,
+    xMax: activeZoomRange?.max,
+  }), [activeZoomRange?.max, activeZoomRange?.min, currentSample?.timestampMs])
+
   const eventChartData = useMemo(() => ({
     datasets: [
       makeMarkerDataset(
@@ -1388,6 +1635,38 @@ export default function HalfmannTrendingView() {
     })),
   })
 
+  const exportSuctionScoreChart = () => downloadWorkbook({
+    fileName: `halfmann-suction-controller-score-${exportSuffix}.xlsx`,
+    sheetName: 'Suction Score',
+    rows: exportSamples.map((sample) => ({
+      Timestamp: formatTime(sample.timestampMs),
+      TimestampMs: sample.timestampMs,
+      Unit2128_ScorePct: getSuctionControllerScore(sample.compressors?.[0]),
+      Unit2128_SuctionPSI: sample.compressors?.[0]?.suctionPressure,
+      Unit2128_LoadedAutoSP: sample.compressors?.[0]?.loadedAutoSp,
+      Unit2128_CurrentFlow: sample.compressors?.[0]?.currentFlow,
+      Unit2128_DesiredFlow: sample.compressors?.[0]?.desiredFlow,
+      Unit2130_ScorePct: getSuctionControllerScore(sample.compressors?.[1]),
+      Unit2130_SuctionPSI: sample.compressors?.[1]?.suctionPressure,
+      Unit2130_LoadedAutoSP: sample.compressors?.[1]?.loadedAutoSp,
+      Unit2130_CurrentFlow: sample.compressors?.[1]?.currentFlow,
+      Unit2130_DesiredFlow: sample.compressors?.[1]?.desiredFlow,
+      Unit2127_ScorePct: getSuctionControllerScore(sample.compressors?.[2]),
+      Unit2127_SuctionPSI: sample.compressors?.[2]?.suctionPressure,
+      Unit2127_LoadedAutoSP: sample.compressors?.[2]?.loadedAutoSp,
+      Unit2127_CurrentFlow: sample.compressors?.[2]?.currentFlow,
+      Unit2127_DesiredFlow: sample.compressors?.[2]?.desiredFlow,
+      Unit2129_ScorePct: getSuctionControllerScore(sample.compressors?.[3]),
+      Unit2129_SuctionPSI: sample.compressors?.[3]?.suctionPressure,
+      Unit2129_LoadedAutoSP: sample.compressors?.[3]?.loadedAutoSp,
+      Unit2129_CurrentFlow: sample.compressors?.[3]?.currentFlow,
+      Unit2129_DesiredFlow: sample.compressors?.[3]?.desiredFlow,
+      SiteSuction_PSI: sample.siteSuction,
+      SiteDischarge_PSI: sample.siteDischarge,
+      PanelCommandedCompressorFlow_MMSCFD: sample.panelCommandedCompressorFlow,
+    })),
+  })
+
   return (
     <div className="flex min-h-full flex-col bg-[#080810] text-white">
       <header className="border-b border-[#1a1a2a] bg-[#0c0c16] px-3 py-3 sm:px-5">
@@ -1546,6 +1825,49 @@ export default function HalfmannTrendingView() {
         </div>
 
         <div className="grid gap-5 min-[1680px]:grid-cols-2">
+          <div className="min-[1680px]:col-span-2 rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Suction Controller Trend Diagnosis</div>
+            <div className="mb-4 text-[12px] leading-relaxed text-[#94a3b8]">
+              Track every retained suction-controller score drop and identify the single strongest parameter change that showed up immediately before the score fell.
+            </div>
+            <div className="grid gap-5 min-[1680px]:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+              <ChartPanel
+                title="Suction Controller Score Timeline"
+                subtitle="Historical suction-controller score for all four running units, with markers each time a retained score drop was detected"
+                action={
+                  <button
+                    onClick={exportSuctionScoreChart}
+                    className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2] hover:text-white"
+                  >
+                    Export
+                  </button>
+                }
+              >
+                <ZoomableChart
+                  data={suctionScoreChartData}
+                  options={suctionScoreChartOptions}
+                  dragState={dragState}
+                  onDragStart={startChartZoom}
+                  onDragMove={updateChartZoom}
+                  onDragEnd={endChartZoom}
+                />
+              </ChartPanel>
+
+              <div className="rounded-2xl border border-[#1f3650] bg-[#0a1220] p-4 lg:p-5">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Associated Parameter Before Drop</div>
+                <div className="grid gap-3">
+                  {suctionScoreDropEvents.length ? suctionScoreDropEvents.slice(0, 8).map((event) => (
+                    <SuctionScoreEventCard key={`${event.unitKey}-${event.timestampMs}`} event={event} />
+                  )) : (
+                    <div className="text-[12px] leading-relaxed text-[#94a3b8]">
+                      No retained suction-controller score drops were detected in the selected time window.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="min-[1680px]:col-span-2 rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
             <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Pressure Event Diagnosis</div>
             <div className="mb-4 text-[12px] leading-relaxed text-[#94a3b8]">

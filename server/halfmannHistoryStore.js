@@ -466,6 +466,12 @@ function buildTrendingSample(recordPair) {
       loadedAutoSp: unitSnapshot
         ? getSnapshotNumberFromMatchers(unitSnapshot, ['401018', 'Loaded Auto Sp', 'Loaded Auto SP'])
         : null,
+      witchesHatDp: unitSnapshot
+        ? getSnapshotNumberFromMatchers(unitSnapshot, ['400990', 'Inlet Diff Pressure Reading', 'Witches Hat DP'])
+        : null,
+      witchesHatDpSetpoint: unitSnapshot
+        ? getSnapshotNumberFromMatchers(unitSnapshot, ['401769', 'Inlet Witches Hat DP Setpoint', 'Witches Hat DP Setpoint'])
+        : null,
     }
   })
 
