@@ -4,6 +4,7 @@ import HalfmannTelemetryView from './components/HalfmannTelemetryView'
 import HalfmannDiagnosticsView from './components/HalfmannDiagnosticsView'
 import HalfmannOptimizationView from './components/HalfmannOptimizationView'
 import HalfmannPerformanceReportView from './components/HalfmannPerformanceReportView'
+import HalfmannTrendingView from './components/HalfmannTrendingView'
 import HalfmannAdminLoginView from './components/HalfmannAdminLoginView'
 import HalfmannDerivedTriggerSettingsAdminView from './components/HalfmannDerivedTriggerSettingsAdminView'
 import HalfmannAlertRulesAdminView from './components/HalfmannAlertRulesAdminView'
@@ -18,6 +19,7 @@ function getPage() {
   if (path.includes('/admin/derived-trigger-settings')) return 'admin-derived-trigger-settings'
   if (path.includes('/admin/login')) return 'admin-login'
   if (path.includes('performance-report') || path.includes('welllogic-performance-report')) return 'performance-report'
+  if (window.location.hash.includes('trending')) return 'trending'
   if (window.location.hash.includes('optimization')) return 'optimization'
   if (window.location.hash.includes('diagnostics')) return 'diagnostics'
   if (window.location.hash.includes('telemetry')) return 'telemetry'
@@ -158,6 +160,7 @@ function AppShell() {
     } else {
       if (window.location.pathname !== '/') window.history.pushState({}, '', '/')
       if (p === 'telemetry') window.location.hash = '#/telemetry'
+      else if (p === 'trending') window.location.hash = '#/trending'
       else if (p === 'diagnostics') window.location.hash = '#/diagnostics'
       else if (p === 'optimization') window.location.hash = '#/optimization'
       else window.location.hash = '#/'
@@ -231,6 +234,9 @@ function AppShell() {
           <NavButton active={page === 'performance-report'} alert={false} onClick={() => goTo('performance-report')} compact={isNarrow}>
             Performance Report
           </NavButton>
+          <NavButton active={page === 'trending'} alert={false} onClick={() => goTo('trending')} compact={isNarrow}>
+            Trending
+          </NavButton>
           <NavButton active={page === 'telemetry'} alert={false} onClick={() => goTo('telemetry')} compact={isNarrow}>
             All Parameters
           </NavButton>
@@ -268,6 +274,8 @@ function AppShell() {
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         {page === 'live'
           ? <HalfmannLiveView />
+          : page === 'trending'
+            ? <HalfmannTrendingView />
           : page === 'telemetry'
             ? <HalfmannTelemetryView />
             : page === 'diagnostics'
