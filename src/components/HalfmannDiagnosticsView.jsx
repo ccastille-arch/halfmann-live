@@ -610,6 +610,9 @@ export default function HalfmannDiagnosticsView() {
     const unitRpm = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.engineSpeed) ?? getNumeric(unitMaps[index], ['RPM', 'Driver Speed', 'Engine Speed', 'ENGINE RPM', 'Engine Speed From EICS']))
     const runningUnits = HALFMANN_UNITS.filter((unit, index) => !unit.standby && unitRpm[index] != null && unitRpm[index] > 100)
+    const runningPrimaryIndexes = HALFMANN_UNITS
+      .map((unit, index) => (!unit.standby && unitRpm[index] != null && unitRpm[index] > 100 ? index : null))
+      .filter((index) => index != null)
     const runningPrimaryCount = runningUnits.length
     const unitDesiredIsDerived = HALFMANN_UNITS.map(() => false)
     const unitDesiredFlows = rawUnitDesiredFlows
@@ -625,8 +628,12 @@ export default function HalfmannDiagnosticsView() {
       compressorMeetingSignals.perCompressor != null &&
       compressorMeetingSignals.broadSummary != null &&
       compressorMeetingSignals.perCompressor !== compressorMeetingSignals.broadSummary
-    const lowestSuction = unitSuction.filter((value) => value != null).reduce((min, value) => Math.min(min, value), null)
-    const highestDischarge = unitDischarge.filter((value) => value != null).reduce((max, value) => Math.max(max, value), null)
+    const runningSuctionValues = runningPrimaryIndexes
+      .map((index) => unitSuction[index])
+      .filter((value) => value != null)
+    const dischargeValues = unitDischarge.filter((value) => value != null)
+    const lowestSuction = runningSuctionValues.length ? runningSuctionValues.reduce((min, value) => Math.min(min, value)) : null
+    const highestDischarge = dischargeValues.length ? dischargeValues.reduce((max, value) => Math.max(max, value)) : null
     const panelOverridePressureReached = highestDischarge != null && highestDischarge >= wellPanelDischargeOverrideSetpointPsi
     const compressorSpeedControlActive = highestDischarge != null && highestDischarge >= compressorSpeedControlDischargeSetpointPsi
     const recyclePressureReached = highestDischarge != null && highestDischarge >= recycleDischargeSetpointPsi
