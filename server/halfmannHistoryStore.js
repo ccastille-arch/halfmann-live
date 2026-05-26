@@ -672,9 +672,23 @@ export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = 
   })
 
   const lightweightHistory = loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback })
-  let historicalSamples = lightweightHistory
+  const fastSamplesByTimestamp = new Map()
+  for (const sample of lightweightHistory) {
+    if (sample?.timestampMs != null) fastSamplesByTimestamp.set(sample.timestampMs, sample)
+  }
+  for (const sample of recentSamples) {
+    if (sample?.timestampMs != null) fastSamplesByTimestamp.set(sample.timestampMs, sample)
+  }
+  const fastSamples = [...fastSamplesByTimestamp.values()].sort((left, right) => left.timestampMs - right.timestampMs)
 
-  if (!historicalSamples.length) {
+  const needsHistoricalBackfill =
+    !fastSamples.length ||
+    (startMs != null && fastSamples[0].timestampMs > startMs + 60 * 1000) ||
+    (endMs != null && fastSamples[fastSamples.length - 1].timestampMs < endMs - 60 * 1000)
+
+  let historicalSamples = []
+
+  if (needsHistoricalBackfill) {
     const rawRecords = loadHalfmannRawHistory({ startAt, endAt })
     const matchRecords = loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback })
     const merged = mergeHistoryStreams(rawRecords, matchRecords)
@@ -682,15 +696,14 @@ export function loadHalfmannTrendingHistory({ startAt, endAt, includeFallback = 
       .map(buildTrendingSample)
       .filter((sample) => sample.timestampMs != null)
   }
-
-  if (!recentSamples.length) return historicalSamples
-  if (!historicalSamples.length) return recentSamples
+  if (!historicalSamples.length) return fastSamples
+  if (!fastSamples.length) return historicalSamples
 
   const byTimestamp = new Map()
   for (const sample of historicalSamples) {
     if (sample?.timestampMs != null) byTimestamp.set(sample.timestampMs, sample)
   }
-  for (const sample of recentSamples) {
+  for (const sample of fastSamples) {
     if (sample?.timestampMs != null) byTimestamp.set(sample.timestampMs, sample)
   }
   return [...byTimestamp.values()].sort((left, right) => left.timestampMs - right.timestampMs)
