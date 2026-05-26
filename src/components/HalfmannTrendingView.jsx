@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -11,8 +11,6 @@ import {
   Tooltip,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
-import { parseLiveDatapoints } from '../engine/liveRegisters'
-import { loadSnapshotsSince, pruneSnapshotsBefore, saveSnapshot } from './halfmannTrendingStorage'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ScatterController, Tooltip, Legend, Filler)
 
@@ -42,24 +40,24 @@ const playheadPlugin = {
 ChartJS.register(playheadPlugin)
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const POLL_INTERVAL_MS = 5000
-const MAX_HISTORY_MS = 7 * 24 * 60 * 60 * 1000
-const WINDOWS = ['1h', '4h', '12h', '24h', '48h', '7d']
+const POLL_INTERVAL_MS = 15000
+const MAX_VISIBLE_POINTS = 720
 
-const HALFMANN_DEVICES = {
-  panel: '2507-501508',
-  unit2130: '2507-500709',
-  unit2127: '2504-504108',
-  unit2129: '2504-504102',
-  unit2128: '2507-500076',
-}
+const WINDOWS = [
+  { key: '1h', hours: 1 },
+  { key: '4h', hours: 4 },
+  { key: '12h', hours: 12 },
+  { key: '24h', hours: 24 },
+  { key: '48h', hours: 48 },
+  { key: '7d', hours: 24 * 7 },
+]
 
 const WELLS = [
-  { key: 'well1', label: 'Well 1', fieldLabel: '214', analogIndex: 1, color: '#22c55e' },
-  { key: 'well2', label: 'Well 2', fieldLabel: '444', analogIndex: 2, color: '#4fc3f7' },
-  { key: 'well3', label: 'Well 3', fieldLabel: '334', analogIndex: 3, color: '#f97316' },
-  { key: 'well4', label: 'Well 4', fieldLabel: '213', analogIndex: 4, color: '#eab308' },
-  { key: 'well5', label: 'Well 5', fieldLabel: '333', analogIndex: 5, color: '#f472b6' },
+  { key: '214', label: 'Well 214', color: '#22c55e' },
+  { key: '444', label: 'Well 444', color: '#4fc3f7' },
+  { key: '334', label: 'Well 334', color: '#f97316' },
+  { key: '213', label: 'Well 213', color: '#eab308' },
+  { key: '333', label: 'Well 333', color: '#f472b6' },
 ]
 
 const COMPRESSORS = [
@@ -70,17 +68,19 @@ const COMPRESSORS = [
 ]
 
 const EVENT_LEVELS = {
-  wellState: 3,
-  choke: 2,
-  compressor: 1,
-  discharge: 0,
+  reduceForDischarge: 4,
+  raiseForRate: 3,
+  chokeMove: 2,
+  compressorShift: 1,
+  wellState: 0,
 }
 
 const EVENT_LABELS = {
-  3: 'Well online/offline',
-  2: 'Choke > 5%',
-  1: 'Compressor SP change',
-  0: 'Discharge shift',
+  4: 'Reduce for discharge',
+  3: 'Raise for rate',
+  2: 'Choke move',
+  1: 'Compressor shift',
+  0: 'Well state',
 }
 
 async function readErrorPayload(res) {
@@ -92,39 +92,19 @@ async function readErrorPayload(res) {
   return (await res.text().catch(() => '')).trim() || res.statusText
 }
 
-async function fetchDeviceFull(deviceId) {
-  try {
-    const res = await fetch(`${API_BASE}/api/mlink/device/full?deviceId=${encodeURIComponent(deviceId)}`)
-    if (!res.ok) return { data: null, error: `device ${deviceId}: ${await readErrorPayload(res)}` }
-    const contentType = res.headers.get('content-type') || ''
-    if (!contentType.includes('application/json')) {
-      return { data: null, error: `device ${deviceId}: API returned ${contentType || 'non-JSON content'}` }
-    }
-    return { data: await res.json(), error: '' }
-  } catch (err) {
-    return { data: null, error: `device ${deviceId}: ${err.message}` }
-  }
+async function fetchTrendingHistory(windowHours) {
+  const res = await fetch(`${API_BASE}/api/halfmann/trending?hours=${windowHours}`)
+  if (!res.ok) throw new Error(await readErrorPayload(res))
+  return res.json()
 }
 
-function resolvePreferredDatapoint(dataMap, labels) {
-  for (const label of labels) {
-    if (dataMap[label] != null) return dataMap[label]
-  }
-  return null
+function getWindowHours(windowKey) {
+  return WINDOWS.find((entry) => entry.key === windowKey)?.hours || 24
 }
 
-function toNumber(raw) {
-  const numeric = Number(raw)
+function toNumber(value) {
+  const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
-}
-
-function getNumeric(dataMap, labels) {
-  return toNumber(resolvePreferredDatapoint(dataMap, labels)?.value)
-}
-
-function getText(dataMap, labels) {
-  const value = resolvePreferredDatapoint(dataMap, labels)?.value
-  return value == null ? null : String(value)
 }
 
 function average(values) {
@@ -133,13 +113,8 @@ function average(values) {
   return valid.reduce((sum, value) => sum + value, 0) / valid.length
 }
 
-function windowToMs(windowKey) {
-  if (windowKey === '1h') return 60 * 60 * 1000
-  if (windowKey === '4h') return 4 * 60 * 60 * 1000
-  if (windowKey === '12h') return 12 * 60 * 60 * 1000
-  if (windowKey === '24h') return 24 * 60 * 60 * 1000
-  if (windowKey === '48h') return 48 * 60 * 60 * 1000
-  return 7 * 24 * 60 * 60 * 1000
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
 }
 
 function formatTime(ts) {
@@ -159,20 +134,13 @@ function formatCompactTime(ts) {
   })
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value))
+function formatSignedDelta(value, digits = 3, unit = '') {
+  if (!Number.isFinite(value)) return '--'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toFixed(digits)}${unit ? ` ${unit}` : ''}`
 }
 
-function normalizeSamples(samples) {
-  const byTimestamp = new Map()
-  for (const sample of samples) {
-    if (sample?.timestampMs == null) continue
-    byTimestamp.set(sample.timestampMs, sample)
-  }
-  return [...byTimestamp.values()].sort((a, b) => a.timestampMs - b.timestampMs)
-}
-
-function downsampleSamples(samples, maxPoints = 360) {
+function downsampleSamples(samples, maxPoints = MAX_VISIBLE_POINTS) {
   if (samples.length <= maxPoints) return samples
   const step = Math.ceil(samples.length / maxPoints)
   const downsampled = []
@@ -194,208 +162,67 @@ function getChartColors(alpha = 1) {
     red: `rgba(255, 90, 98, ${alpha})`,
     pink: `rgba(244, 114, 182, ${alpha})`,
     white: `rgba(255, 255, 255, ${alpha})`,
+    slate: `rgba(148, 163, 184, ${alpha})`,
   }
 }
 
-function parseWellOnline(statusText, flowRunningPct) {
-  if (statusText) {
-    const normalized = statusText.toLowerCase()
-    if (normalized.includes('online') || normalized.includes('running')) return true
-    if (normalized.includes('offline') || normalized.includes('stopped')) return false
-  }
-  if (flowRunningPct != null) return flowRunningPct > 0
-  return null
+function pointRadiusForCount(count) {
+  if (count > 500) return 1.25
+  if (count > 240) return 1.75
+  return 2.25
 }
 
-function buildChokeKeys(well) {
-  return [
-    `Wellhead ${well.fieldLabel} Override Position`,
-    `Wellhead #${well.fieldLabel} Override Position`,
-    `Wellhead ${well.analogIndex} Override Position`,
-    `Wellhead #${well.analogIndex} Override Position`,
-    `Well #${well.fieldLabel} Analog Output ${well.analogIndex}`,
-    `Well #${well.analogIndex} Analog Output ${well.analogIndex}`,
-    `Well ${well.fieldLabel} Choke Position`,
-    `Well ${well.analogIndex} Choke Position`,
-  ]
-}
-
-function buildStaticPressureKeys(well) {
-  return [
-    `Wellhead #${well.analogIndex} Injection Static Pressure From Customer PLC`,
-    `Wellhead #${well.fieldLabel} Injection Static Pressure From Customer PLC`,
-    `Well ${well.analogIndex} Static Pressure`,
-    `Well ${well.fieldLabel} Static Pressure`,
-  ]
-}
-
-function buildRunStatusKeys(well) {
-  return [
-    `WellHead #${well.analogIndex} Running Status`,
-    `WellHead #${well.fieldLabel} Running Status`,
-    `Wellhead #${well.analogIndex} Running Status`,
-    `Wellhead #${well.fieldLabel} Running Status`,
-  ]
-}
-
-function buildFlowRunningPctKeys(well) {
-  return [
-    `Wellhead #${well.analogIndex} Flow Running Status Percent`,
-    `Wellhead #${well.fieldLabel} Flow Running Status Percent`,
-  ]
-}
-
-function buildCompressorDesiredKeys(index) {
-  const compressorNumber = index + 1
-  return [
-    `Compressor #${compressorNumber} Desire Flow SP For PID Murphy`,
-    `Compressor #${compressorNumber} Desired Flow SP For PID Murphy`,
-    `Compressor ${compressorNumber} Desire Flow SP For PID Murphy`,
-    `Compressor ${compressorNumber} Desired Flow SP For PID Murphy`,
-  ]
-}
-
-function buildCompressorCurrentKeys(compressor) {
-  return [
-    `Compressor #${compressor.label.split(' ')[1]} Unit ${compressor.unitLabel} Current Flow Output`,
-    `Compressor ${compressor.label.split(' ')[1]} Unit ${compressor.unitLabel} Current Flow Output`,
-    'Current Flow Output',
-    'Flow Rate',
-    'Flow Rate PID PV',
-  ]
-}
-
-function getTimestampMs(payload) {
-  const ts = Array.isArray(payload?.timestamps) ? payload.timestamps[0] : null
-  if (ts == null) return Date.now()
-  return ts > 1_000_000_000_000 ? ts : ts * 1000
-}
-
-function buildSnapshot(panelPayload, unitPayloads) {
-  const panel = parseLiveDatapoints(panelPayload)
-  const unitMaps = Object.fromEntries(
-    Object.entries(unitPayloads).map(([key, payload]) => [key, parseLiveDatapoints(payload)]),
-  )
-
-  const wellChokes = WELLS.map((well) => getNumeric(panel, buildChokeKeys(well)))
-  const wellStatic = WELLS.map((well) => getNumeric(panel, buildStaticPressureKeys(well)))
-  const wellOnline = WELLS.map((well) =>
-    parseWellOnline(
-      getText(panel, buildRunStatusKeys(well)),
-      getNumeric(panel, buildFlowRunningPctKeys(well)),
-    ),
-  )
-
-  const compressorDesired = COMPRESSORS.map((compressor, index) =>
-    getNumeric(panel, buildCompressorDesiredKeys(index)) ??
-    getNumeric(unitMaps[compressor.key] || {}, [
-      'Desire Flow SP For PID Murphy',
-      'Desired Flow SP For PID Murphy',
-      'Flow Rate PID SP',
-    ]),
-  )
-
-  const compressorCurrent = COMPRESSORS.map((compressor) =>
-    getNumeric(panel, buildCompressorCurrentKeys(compressor)) ??
-    getNumeric(unitMaps[compressor.key] || {}, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']),
-  )
-
-  const compressorSuction = COMPRESSORS.map((compressor) =>
-    getNumeric(unitMaps[compressor.key] || {}, ['Suction Pressure', 'Stage 1 Suction Prs', 'Stage 1 Suction Pressure']),
-  )
-
-  const compressorDischarge = COMPRESSORS.map((compressor) =>
-    getNumeric(unitMaps[compressor.key] || {}, ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Stage 3 Discharge Pressure']),
-  )
-
-  const suctionHeader = getNumeric(panel, ['Suction Header Pressure', 'Suction Pressure', 'Stage 1 Suction Prs'])
-  const siteSuction = suctionHeader != null && suctionHeader > 0 ? suctionHeader : average(compressorSuction)
-  const dischargeValues = compressorDischarge.filter((value) => value != null)
-  const siteDischarge = dischargeValues.length ? dischargeValues.reduce((max, value) => Math.max(max, value)) : null
-
+function makeLineDataset(label, color, points, extra = {}) {
+  const pointRadius = pointRadiusForCount(points.length)
   return {
-    timestampMs: getTimestampMs(panelPayload),
-    wellChokes,
-    wellStatic,
-    wellOnline,
-    compressorDesired,
-    compressorCurrent,
-    compressorSuction,
-    compressorDischarge,
-    siteSuction,
-    siteDischarge,
-    panelTimestampMs: getTimestampMs(panelPayload),
+    label,
+    data: points,
+    borderColor: color,
+    backgroundColor: color,
+    borderWidth: 2,
+    pointRadius,
+    pointHoverRadius: Math.max(pointRadius + 1.5, 3),
+    pointHitRadius: 8,
+    spanGaps: true,
+    tension: 0.12,
+    ...extra,
   }
 }
 
-function buildDecisionEvents(samples) {
-  const events = []
-  for (let index = 1; index < samples.length; index += 1) {
-    const prev = samples[index - 1]
-    const current = samples[index]
-
-    WELLS.forEach((well, wellIndex) => {
-      const prevChoke = prev.wellChokes[wellIndex]
-      const currentChoke = current.wellChokes[wellIndex]
-      if (prevChoke != null && currentChoke != null && Math.abs(currentChoke - prevChoke) > 5) {
-        events.push({
-          timestampMs: current.timestampMs,
-          type: 'choke',
-          level: EVENT_LEVELS.choke,
-          label: `${well.label} choke ${prevChoke.toFixed(1)}% -> ${currentChoke.toFixed(1)}%`,
-          value: currentChoke,
-          seriesIndex: wellIndex,
-        })
-      }
-
-      const prevOnline = prev.wellOnline[wellIndex]
-      const currentOnline = current.wellOnline[wellIndex]
-      if (prevOnline != null && currentOnline != null && prevOnline !== currentOnline) {
-        events.push({
-          timestampMs: current.timestampMs,
-          type: 'wellState',
-          level: EVENT_LEVELS.wellState,
-          label: `${well.label} ${currentOnline ? 'online' : 'offline'}`,
-          value: currentChoke ?? 0,
-          seriesIndex: wellIndex,
-        })
-      }
-    })
-
-    COMPRESSORS.forEach((compressor, compressorIndex) => {
-      const prevDesired = prev.compressorDesired[compressorIndex]
-      const currentDesired = current.compressorDesired[compressorIndex]
-      if (prevDesired != null && currentDesired != null && Math.abs(currentDesired - prevDesired) >= 0.02) {
-        events.push({
-          timestampMs: current.timestampMs,
-          type: 'compressor',
-          level: EVENT_LEVELS.compressor,
-          label: `${compressor.label} command ${prevDesired.toFixed(3)} -> ${currentDesired.toFixed(3)} MMSCFD`,
-          value: currentDesired,
-          seriesIndex: compressorIndex,
-        })
-      }
-    })
-
-    if (
-      prev.siteDischarge != null &&
-      current.siteDischarge != null &&
-      Math.abs(current.siteDischarge - prev.siteDischarge) >= 10
-    ) {
-      events.push({
-        timestampMs: current.timestampMs,
-        type: 'discharge',
-        level: EVENT_LEVELS.discharge,
-        label: `Site discharge ${prev.siteDischarge.toFixed(1)} -> ${current.siteDischarge.toFixed(1)} PSI`,
-        value: current.siteDischarge,
-        seriesIndex: 0,
-      })
-    }
-  }
-  return events
+function makeReferenceDataset(label, color, points, extra = {}) {
+  return makeLineDataset(label, color, points, {
+    borderDash: [6, 4],
+    pointRadius: 0,
+    pointHoverRadius: 0,
+    borderWidth: 1.5,
+    ...extra,
+  })
 }
 
-function buildSharedChartOptions({ currentTimestampMs, yTitle, yRightTitle, yMin = null, yMax = null, xTickFormatter }) {
+function makeMarkerDataset(label, color, points, pointStyle = 'circle', extra = {}) {
+  return {
+    type: 'scatter',
+    label,
+    data: points,
+    borderColor: color,
+    backgroundColor: color,
+    pointRadius: 4.5,
+    pointHoverRadius: 5.5,
+    pointHitRadius: 9,
+    showLine: false,
+    pointStyle,
+    ...extra,
+  }
+}
+
+function buildSharedChartOptions({
+  currentTimestampMs,
+  yTitle,
+  yRightTitle,
+  yMin = null,
+  yMax = null,
+  xTickFormatter,
+}) {
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -427,7 +254,6 @@ function buildSharedChartOptions({ currentTimestampMs, yTitle, yRightTitle, yMin
     scales: {
       x: {
         type: 'linear',
-        min: undefined,
         ticks: {
           color: '#94a3b8',
           maxTicksLimit: 8,
@@ -454,34 +280,169 @@ function buildSharedChartOptions({ currentTimestampMs, yTitle, yRightTitle, yMin
   }
 }
 
-function makeLineDataset(label, color, points, extra = {}) {
-  return {
-    label,
-    data: points,
-    borderColor: color,
-    backgroundColor: color,
-    borderWidth: 2,
-    pointRadius: 0,
-    pointHoverRadius: 3,
-    spanGaps: true,
-    tension: 0.15,
-    ...extra,
-  }
+function getDemandValue(sample) {
+  return sample?.panelCommandedCompressorFlow ?? sample?.totalDesiredSiteFlow ?? null
 }
 
-function makeMarkerDataset(label, color, points, pointStyle = 'triangle', extra = {}) {
-  return {
-    type: 'scatter',
-    label,
-    data: points,
-    borderColor: color,
-    backgroundColor: color,
-    pointRadius: 4,
-    pointHoverRadius: 5,
-    showLine: false,
-    pointStyle,
-    ...extra,
+function getCompressorDemandDelta(prev, current) {
+  const prevValue = getDemandValue(prev)
+  const currentValue = getDemandValue(current)
+  if (prevValue != null && currentValue != null) return currentValue - prevValue
+  const prevSum = average(prev?.compressors?.map((compressor) => compressor.desiredFlow).filter((value) => value != null) || [])
+  const currentSum = average(current?.compressors?.map((compressor) => compressor.desiredFlow).filter((value) => value != null) || [])
+  if (prevSum == null || currentSum == null) return null
+  return currentSum - prevSum
+}
+
+function getCompressorCommandNotes(prev, current) {
+  const notes = []
+  COMPRESSORS.forEach((compressor, index) => {
+    const prevValue = toNumber(prev?.compressors?.[index]?.desiredFlow)
+    const currentValue = toNumber(current?.compressors?.[index]?.desiredFlow)
+    if (prevValue == null || currentValue == null) return
+    const delta = currentValue - prevValue
+    if (Math.abs(delta) >= 0.02) {
+      notes.push(`${compressor.unitLabel} ${prevValue.toFixed(3)} -> ${currentValue.toFixed(3)}`)
+    }
+  })
+  return notes
+}
+
+function buildDecisionEvents(samples, thresholds) {
+  const events = []
+  const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const prev = samples[index - 1]
+    const current = samples[index]
+    const demandDelta = getCompressorDemandDelta(prev, current)
+    const commandNotes = getCompressorCommandNotes(prev, current)
+    const dischargeAtOverride =
+      dischargeThreshold != null &&
+      current.siteDischarge != null &&
+      current.siteDischarge >= dischargeThreshold - 0.5
+
+    if (
+      demandDelta != null &&
+      demandDelta <= -0.01 &&
+      (current.flowTargetBeingReduced || current.dischargeOverrideLatch > 0 || dischargeAtOverride)
+    ) {
+      events.push({
+        timestampMs: current.timestampMs,
+        type: 'reduceForDischarge',
+        level: EVENT_LEVELS.reduceForDischarge,
+        label: `Panel lowered compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because discharge protection was active`,
+        note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Site discharge ${current.siteDischarge?.toFixed(1) ?? '--'} PSI${dischargeThreshold != null ? ` vs override ${dischargeThreshold.toFixed(0)} PSI` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
+        value: toNumber(getDemandValue(current)),
+      })
+    }
+
+    if (
+      demandDelta != null &&
+      demandDelta >= 0.01 &&
+      current.anyWellBelowSetpoint &&
+      !current.flowTargetBeingReduced
+    ) {
+      const shortWells = (current.wells || [])
+        .filter((well) => well.matchPct != null && well.matchPct < 99.95)
+        .map((well) => well.key)
+      events.push({
+        timestampMs: current.timestampMs,
+        type: 'raiseForRate',
+        level: EVENT_LEVELS.raiseForRate,
+        label: `Panel raised compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because wells were not meeting rate`,
+        note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Wells below rate flag = YES${shortWells.length ? ` | Short wells: ${shortWells.join(', ')}` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
+        value: toNumber(getDemandValue(current)),
+      })
+    }
+
+    WELLS.forEach((well, wellIndex) => {
+      const prevCommand = toNumber(prev?.wells?.[wellIndex]?.chokeCommand ?? prev?.wells?.[wellIndex]?.overridePosition)
+      const currentCommand = toNumber(current?.wells?.[wellIndex]?.chokeCommand ?? current?.wells?.[wellIndex]?.overridePosition)
+      if (prevCommand != null && currentCommand != null && Math.abs(currentCommand - prevCommand) >= 5) {
+        events.push({
+          timestampMs: current.timestampMs,
+          type: 'chokeMove',
+          level: EVENT_LEVELS.chokeMove,
+          label: `${well.label} choke command ${prevCommand.toFixed(1)}% -> ${currentCommand.toFixed(1)}%`,
+          note: `Live panel choke output changed by ${(currentCommand - prevCommand).toFixed(1)} percentage points`,
+          value: currentCommand,
+          wellKey: well.key,
+        })
+      }
+
+      const prevOnline = prev?.wells?.[wellIndex]?.online
+      const currentOnline = current?.wells?.[wellIndex]?.online
+      if (prevOnline != null && currentOnline != null && prevOnline !== currentOnline) {
+        events.push({
+          timestampMs: current.timestampMs,
+          type: 'wellState',
+          level: EVENT_LEVELS.wellState,
+          label: `${well.label} ${currentOnline ? 'came online' : 'went offline'}`,
+          note: `Panel running-status bit changed for ${well.label}`,
+          value: currentCommand ?? 0,
+          wellKey: well.key,
+        })
+      }
+    })
+
+    if (commandNotes.length && !events.some((event) => event.timestampMs === current.timestampMs && (event.type === 'reduceForDischarge' || event.type === 'raiseForRate'))) {
+      events.push({
+        timestampMs: current.timestampMs,
+        type: 'compressorShift',
+        level: EVENT_LEVELS.compressorShift,
+        label: `Per-compressor flow SP shift: ${commandNotes.join(', ')}`,
+        note: 'At least one unit flow setpoint moved, even without a clear reduce/raise panel verdict flag.',
+        value: toNumber(getDemandValue(current)),
+      })
+    }
   }
+
+  return events.sort((left, right) => left.timestampMs - right.timestampMs)
+}
+
+function getWindowedSamples(samples, hours) {
+  if (!samples.length) return []
+  const endMs = samples[samples.length - 1].timestampMs
+  const cutoffMs = endMs - hours * 60 * 60 * 1000
+  return samples.filter((sample) => sample.timestampMs >= cutoffMs)
+}
+
+function computeValveStability(samples) {
+  if (!samples.length) return []
+  return WELLS.map((well, wellIndex) => {
+    const points = samples
+      .map((sample) => ({
+        timestampMs: sample.timestampMs,
+        value: toNumber(sample?.wells?.[wellIndex]?.chokeCommand ?? sample?.wells?.[wellIndex]?.overridePosition),
+      }))
+      .filter((point) => point.value != null)
+
+    const positions = points.map((point) => point.value)
+    const deltas = []
+    let totalTravel = 0
+    for (let index = 1; index < points.length; index += 1) {
+      const delta = Math.abs(points[index].value - points[index - 1].value)
+      deltas.push(delta)
+      totalTravel += delta
+    }
+
+    const spanHours = points.length > 1
+      ? Math.max((points[points.length - 1].timestampMs - points[0].timestampMs) / 3600000, 1 / 60)
+      : 1 / 60
+    const travelPerHour = totalTravel / spanHours
+    const avgStepChange = deltas.length ? average(deltas) : 0
+    const stabilityScore = clamp(100 - travelPerHour * 2.6 - avgStepChange * 4, 0, 100)
+
+    return {
+      ...well,
+      avgPosition: average(positions),
+      avgStepChange,
+      travelPerHour,
+      stabilityScore,
+      sampleCount: points.length,
+    }
+  })
 }
 
 function MetricChip({ label, value, helper }) {
@@ -496,20 +457,48 @@ function MetricChip({ label, value, helper }) {
   )
 }
 
-function ChartPanel({ title, subtitle, heightClass = 'h-[280px]', children }) {
+function ChartPanel({ title, subtitle, heightClass = 'h-[300px]', children }) {
   return (
     <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
       <div className="mb-3">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">{title}</div>
-        {subtitle && <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div>}
+        {subtitle ? <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div> : null}
       </div>
       <div className={heightClass}>{children}</div>
     </div>
   )
 }
 
+function StabilityCard({ metric }) {
+  return (
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{metric.label}</div>
+        <div className="text-[18px] font-black text-white" style={{ fontFamily: "'Arial Black', sans-serif" }}>
+          {metric.stabilityScore.toFixed(0)}%
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <div>
+          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Avg Position</div>
+          <div className="mt-1 text-[13px] font-bold text-white">{metric.avgPosition != null ? `${metric.avgPosition.toFixed(1)}%` : '--'}</div>
+        </div>
+        <div>
+          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Travel / Hr</div>
+          <div className="mt-1 text-[13px] font-bold text-white">{metric.travelPerHour != null ? `${metric.travelPerHour.toFixed(1)}%` : '--'}</div>
+        </div>
+        <div>
+          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#64748b]">Avg Step</div>
+          <div className="mt-1 text-[13px] font-bold text-white">{metric.avgStepChange != null ? `${metric.avgStepChange.toFixed(2)}%` : '--'}</div>
+        </div>
+      </div>
+      <div className="mt-2 text-[10px] text-[#64748b]">{metric.sampleCount} retained samples over the last 24 hours</div>
+    </div>
+  )
+}
+
 export default function HalfmannTrendingView() {
-  const [samples, setSamples] = useState([])
+  const [historyPayload, setHistoryPayload] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [windowKey, setWindowKey] = useState('24h')
@@ -520,84 +509,43 @@ export default function HalfmannTrendingView() {
   const [playheadTimestampMs, setPlayheadTimestampMs] = useState(null)
   const refreshTimerRef = useRef(null)
 
-  const loadPersistedHistory = useCallback(async () => {
-    const cutoffMs = Date.now() - MAX_HISTORY_MS
-    const rows = await loadSnapshotsSince(cutoffMs)
-    if (rows.length) {
-      setSamples(normalizeSamples(rows))
-      setPlayheadTimestampMs(rows[rows.length - 1].timestampMs)
-    }
-  }, [])
-
-  const refresh = useCallback(async () => {
-    const [panelResult, ...unitResults] = await Promise.all([
-      fetchDeviceFull(HALFMANN_DEVICES.panel),
-      ...COMPRESSORS.map((compressor) => fetchDeviceFull(HALFMANN_DEVICES[compressor.key])),
-    ])
-
-    const allErrors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
-    if (!panelResult.data) {
-      if (allErrors.length) setError(allErrors.join(' | '))
-      setLoading(false)
-      return
-    }
-
-    const unitPayloads = {}
-    COMPRESSORS.forEach((compressor, index) => {
-      unitPayloads[compressor.key] = unitResults[index].data
-    })
-
-    const snapshot = buildSnapshot(panelResult.data, unitPayloads)
-    setSamples((current) => normalizeSamples([...current, snapshot]).filter((sample) => sample.timestampMs >= Date.now() - MAX_HISTORY_MS))
-    setError(allErrors.join(' | '))
+  const loadHistory = async (selectedWindowKey, liveMode) => {
+    const requestedHours = Math.max(getWindowHours(selectedWindowKey), 24)
+    const nextPayload = await fetchTrendingHistory(requestedHours)
+    setHistoryPayload(nextPayload)
     setLoading(false)
-
-    if (isLiveMode) {
-      setPlayheadTimestampMs(snapshot.timestampMs)
+    setError('')
+    if (liveMode) {
+      const latestTs = nextPayload?.samples?.[nextPayload.samples.length - 1]?.timestampMs ?? null
+      if (latestTs != null) setPlayheadTimestampMs(latestTs)
     }
-
-    saveSnapshot(snapshot).catch(() => {})
-    pruneSnapshotsBefore(Date.now() - MAX_HISTORY_MS).catch(() => {})
-  }, [isLiveMode])
+  }
 
   useEffect(() => {
-    loadPersistedHistory().catch(() => {})
-  }, [loadPersistedHistory])
+    setLoading(true)
+    loadHistory(windowKey, isLiveMode).catch((err) => {
+      setError(err.message || 'Failed to load Halfmann trending history')
+      setLoading(false)
+    })
+  }, [windowKey])
 
   useEffect(() => {
-    refresh().catch(() => {})
     if (!isLiveMode) return undefined
     refreshTimerRef.current = window.setInterval(() => {
-      refresh().catch(() => {})
+      loadHistory(windowKey, true).catch((err) => setError(err.message || 'Failed to refresh Halfmann trending history'))
     }, POLL_INTERVAL_MS)
     return () => {
       if (refreshTimerRef.current) window.clearInterval(refreshTimerRef.current)
     }
-  }, [isLiveMode, refresh])
+  }, [isLiveMode, windowKey])
 
-  const latestTimestampMs = samples[samples.length - 1]?.timestampMs ?? null
-  const filteredSamples = useMemo(() => {
-    if (!samples.length) return []
-    const endMs = latestTimestampMs ?? Date.now()
-    const cutoffMs = endMs - windowToMs(windowKey)
-    return samples.filter((sample) => sample.timestampMs >= cutoffMs)
-  }, [latestTimestampMs, samples, windowKey])
-
-  const currentSample = useMemo(() => {
-    if (!filteredSamples.length) return null
-    if (isLiveMode || playheadTimestampMs == null) return filteredSamples[filteredSamples.length - 1]
-    let best = filteredSamples[0]
-    for (const sample of filteredSamples) {
-      if (sample.timestampMs <= playheadTimestampMs) best = sample
-      else break
-    }
-    return best
-  }, [filteredSamples, isLiveMode, playheadTimestampMs])
-
-  const currentIndex = useMemo(() => {
-    if (!currentSample || !filteredSamples.length) return 0
-    return filteredSamples.findIndex((sample) => sample.timestampMs === currentSample.timestampMs)
-  }, [currentSample, filteredSamples])
+  const samples = historyPayload?.samples || []
+  const windowHours = getWindowHours(windowKey)
+  const visibleSamples = useMemo(() => getWindowedSamples(samples, windowHours), [samples, windowHours])
+  const downsampledVisibleSamples = useMemo(() => downsampleSamples(visibleSamples), [visibleSamples])
+  const last24HoursSamples = useMemo(() => getWindowedSamples(samples, 24), [samples])
+  const latestTimestampMs = visibleSamples[visibleSamples.length - 1]?.timestampMs ?? null
+  const thresholds = historyPayload?.thresholds || {}
 
   useEffect(() => {
     if (isLiveMode) {
@@ -606,110 +554,232 @@ export default function HalfmannTrendingView() {
     }
   }, [isLiveMode])
 
+  const currentSample = useMemo(() => {
+    if (!visibleSamples.length) return null
+    if (isLiveMode || playheadTimestampMs == null) return visibleSamples[visibleSamples.length - 1]
+    let best = visibleSamples[0]
+    for (const sample of visibleSamples) {
+      if (sample.timestampMs <= playheadTimestampMs) best = sample
+      else break
+    }
+    return best
+  }, [visibleSamples, isLiveMode, playheadTimestampMs])
+
+  const currentIndex = useMemo(() => {
+    if (!currentSample || !visibleSamples.length) return 0
+    return visibleSamples.findIndex((sample) => sample.timestampMs === currentSample.timestampMs)
+  }, [currentSample, visibleSamples])
+
   useEffect(() => {
-    if (!isPlaying || isLiveMode || filteredSamples.length < 2 || currentIndex === -1) return undefined
+    if (!isPlaying || isLiveMode || visibleSamples.length < 2 || currentIndex === -1) return undefined
     const delay = Math.max(90, 700 / speed)
     const timer = window.setTimeout(() => {
       const nextIndex = currentIndex + direction
-      if (nextIndex < 0 || nextIndex >= filteredSamples.length) {
+      if (nextIndex < 0 || nextIndex >= visibleSamples.length) {
         setIsPlaying(false)
         return
       }
-      setPlayheadTimestampMs(filteredSamples[nextIndex].timestampMs)
+      setPlayheadTimestampMs(visibleSamples[nextIndex].timestampMs)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [currentIndex, direction, filteredSamples, isLiveMode, isPlaying, speed])
+  }, [currentIndex, direction, isLiveMode, isPlaying, speed, visibleSamples])
 
-  const downsampledSamples = useMemo(() => downsampleSamples(filteredSamples, 360), [filteredSamples])
-  const events = useMemo(() => buildDecisionEvents(filteredSamples), [filteredSamples])
-
+  const events = useMemo(() => buildDecisionEvents(visibleSamples, thresholds), [thresholds, visibleSamples])
+  const valveStability = useMemo(() => computeValveStability(last24HoursSamples), [last24HoursSamples])
   const colors = getChartColors()
-  const xTickFormatter = useCallback((value) => formatCompactTime(value), [])
+  const xTickFormatter = (value) => formatCompactTime(value)
+
+  const flowDecisionChartData = useMemo(() => {
+    const datasets = [
+      makeLineDataset(
+        'Panel Commanded Compressor Flow',
+        colors.cyan,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.panelCommandedCompressorFlow })),
+      ),
+      makeLineDataset(
+        'Total Desired Site Flow',
+        colors.white,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.totalDesiredSiteFlow })),
+        { borderDash: [5, 4] },
+      ),
+      makeLineDataset(
+        'Total Site Flow',
+        colors.green,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.totalSiteFlow })),
+      ),
+    ]
+
+    const reduceEvents = events
+      .filter((event) => event.type === 'reduceForDischarge')
+      .map((event) => ({ x: event.timestampMs, y: event.value }))
+    if (reduceEvents.length) {
+      datasets.push(makeMarkerDataset('Reduced for discharge', colors.red, reduceEvents, 'triangle'))
+    }
+
+    const raiseEvents = events
+      .filter((event) => event.type === 'raiseForRate')
+      .map((event) => ({ x: event.timestampMs, y: event.value }))
+    if (raiseEvents.length) {
+      datasets.push(makeMarkerDataset('Raised for rate', colors.gold, raiseEvents, 'rectRot'))
+    }
+
+    return { datasets }
+  }, [colors.cyan, colors.gold, colors.green, colors.red, colors.white, downsampledVisibleSamples, events])
+
+  const flowDecisionChartOptions = useMemo(() => buildSharedChartOptions({
+    currentTimestampMs: currentSample?.timestampMs,
+    yTitle: 'Flow demand (MMSCFD)',
+    xTickFormatter,
+  }), [currentSample?.timestampMs])
+
+  const wellMatchChartData = useMemo(() => {
+    const datasets = WELLS.map((well, index) =>
+      makeLineDataset(
+        `${well.label} Match`,
+        well.color,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wells[index]?.matchPct })),
+      ),
+    )
+
+    datasets.push(
+      makeReferenceDataset(
+        '100% target',
+        colors.slate,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: 100 })),
+      ),
+    )
+
+    return { datasets }
+  }, [colors.slate, downsampledVisibleSamples])
+
+  const wellMatchChartOptions = useMemo(() => buildSharedChartOptions({
+    currentTimestampMs: currentSample?.timestampMs,
+    yTitle: 'Live injection match (%)',
+    yMin: 90,
+    yMax: 102,
+    xTickFormatter,
+  }), [currentSample?.timestampMs])
 
   const chokeChartData = useMemo(() => {
     const datasets = WELLS.map((well, index) =>
       makeLineDataset(
         `${well.label} Choke`,
         well.color,
-        downsampledSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wellChokes[index] })),
+        downsampledVisibleSamples.map((sample) => ({
+          x: sample.timestampMs,
+          y: sample.wells[index]?.chokeCommand ?? sample.wells[index]?.overridePosition,
+        })),
       ),
     )
 
-    const chokeEvents = events.filter((event) => event.type === 'choke').map((event) => ({ x: event.timestampMs, y: event.value }))
-    if (chokeEvents.length) datasets.push(makeMarkerDataset('Choke > 5%', colors.red, chokeEvents, 'triangle'))
-
-    const wellStateEvents = events.filter((event) => event.type === 'wellState').map((event) => ({ x: event.timestampMs, y: event.value }))
-    if (wellStateEvents.length) datasets.push(makeMarkerDataset('Well online/offline', colors.gold, wellStateEvents, 'rectRot'))
+    const chokeEvents = events
+      .filter((event) => event.type === 'chokeMove')
+      .map((event) => ({ x: event.timestampMs, y: event.value }))
+    if (chokeEvents.length) {
+      datasets.push(makeMarkerDataset('Choke move > 5%', colors.red, chokeEvents, 'triangle'))
+    }
 
     return { datasets }
-  }, [colors.gold, colors.red, downsampledSamples, events])
+  }, [colors.red, downsampledVisibleSamples, events])
 
   const chokeChartOptions = useMemo(() => buildSharedChartOptions({
     currentTimestampMs: currentSample?.timestampMs,
-    yTitle: 'Choke command (%)',
+    yTitle: 'Choke output (%)',
     yMin: 0,
     yMax: 100,
     xTickFormatter,
-  }), [currentSample?.timestampMs, xTickFormatter])
+  }), [currentSample?.timestampMs])
 
   const compressorChartData = useMemo(() => {
-    const datasets = COMPRESSORS.map((compressor, index) =>
+    const datasets = []
+
+    COMPRESSORS.forEach((compressor, index) => {
+      datasets.push(
+        makeLineDataset(
+          `${compressor.label} SP`,
+          compressor.color,
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.compressors[index]?.desiredFlow })),
+        ),
+      )
+      datasets.push(
+        makeLineDataset(
+          `${compressor.label} Output`,
+          compressor.color,
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.compressors[index]?.currentFlow })),
+          { borderDash: [4, 4], borderWidth: 1.5 },
+        ),
+      )
+    })
+
+    datasets.push(
       makeLineDataset(
-        `${compressor.label} Flow SP`,
-        compressor.color,
-        downsampledSamples.map((sample) => ({ x: sample.timestampMs, y: sample.compressorDesired[index] })),
+        'Site Discharge',
+        colors.red,
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.siteDischarge })),
+        { yAxisID: 'y1' },
       ),
     )
 
-    datasets.push(makeLineDataset(
-      'Site Discharge',
-      colors.red,
-      downsampledSamples.map((sample) => ({ x: sample.timestampMs, y: sample.siteDischarge })),
-      { yAxisID: 'y1', borderDash: [8, 4] },
-    ))
+    if (thresholds?.panelDischargeOverridePsi != null) {
+      datasets.push(
+        makeReferenceDataset(
+          'Discharge Override Setting',
+          colors.gold,
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: thresholds.panelDischargeOverridePsi })),
+          { yAxisID: 'y1' },
+        ),
+      )
+    }
 
-    const compressorEvents = events.filter((event) => event.type === 'compressor').map((event) => ({ x: event.timestampMs, y: event.value }))
-    if (compressorEvents.length) datasets.push(makeMarkerDataset('SP change', colors.white, compressorEvents, 'triangle'))
-
-    const dischargeEvents = events.filter((event) => event.type === 'discharge').map((event) => ({ x: event.timestampMs, y: event.value }))
-    if (dischargeEvents.length) datasets.push(makeMarkerDataset('Discharge shift', colors.gold, dischargeEvents, 'circle', { yAxisID: 'y1' }))
+    if (thresholds?.compressorSpeedControlDischargePsi != null) {
+      datasets.push(
+        makeReferenceDataset(
+          'Compressor Speed-Control SP',
+          colors.white,
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: thresholds.compressorSpeedControlDischargePsi })),
+          { yAxisID: 'y1' },
+        ),
+      )
+    }
 
     return { datasets }
-  }, [colors.gold, colors.red, colors.white, downsampledSamples, events])
+  }, [colors.gold, colors.red, colors.white, downsampledVisibleSamples, thresholds?.compressorSpeedControlDischargePsi, thresholds?.panelDischargeOverridePsi])
 
   const compressorChartOptions = useMemo(() => buildSharedChartOptions({
     currentTimestampMs: currentSample?.timestampMs,
-    yTitle: 'Flow command (MMSCFD)',
+    yTitle: 'Flow (MMSCFD)',
     yRightTitle: 'Discharge PSI',
     xTickFormatter,
-  }), [currentSample?.timestampMs, xTickFormatter])
+  }), [currentSample?.timestampMs])
 
   const pressureChartData = useMemo(() => {
     const datasets = [
       makeLineDataset(
         'Site Suction',
         colors.cyan,
-        downsampledSamples.map((sample) => ({ x: sample.timestampMs, y: sample.siteSuction })),
+        downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.siteSuction })),
       ),
     ]
 
     WELLS.forEach((well, index) => {
-      datasets.push(makeLineDataset(
-        `${well.label} Static`,
-        well.color,
-        downsampledSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wellStatic[index] })),
-        { borderDash: [5, 5] },
-      ))
+      datasets.push(
+        makeLineDataset(
+          `${well.label} Static`,
+          well.color,
+          downsampledVisibleSamples.map((sample) => ({ x: sample.timestampMs, y: sample.wells[index]?.staticPressure })),
+          { borderDash: [5, 5], borderWidth: 1.5 },
+        ),
+      )
     })
 
     return { datasets }
-  }, [colors.cyan, downsampledSamples])
+  }, [colors.cyan, downsampledVisibleSamples])
 
   const pressureChartOptions = useMemo(() => buildSharedChartOptions({
     currentTimestampMs: currentSample?.timestampMs,
     yTitle: 'Pressure (PSI)',
     xTickFormatter,
-  }), [currentSample?.timestampMs, xTickFormatter])
+  }), [currentSample?.timestampMs])
 
   const eventChartData = useMemo(() => ({
     datasets: [
@@ -717,7 +787,6 @@ export default function HalfmannTrendingView() {
         'Decision events',
         colors.red,
         events.map((event) => ({ x: event.timestampMs, y: event.level })),
-        'circle',
       ),
     ],
   }), [colors.red, events])
@@ -725,7 +794,6 @@ export default function HalfmannTrendingView() {
   const eventChartOptions = useMemo(() => ({
     ...buildSharedChartOptions({
       currentTimestampMs: currentSample?.timestampMs,
-      yTitle: '',
       xTickFormatter,
     }),
     plugins: {
@@ -745,6 +813,10 @@ export default function HalfmannTrendingView() {
             const matched = events.find((event) => event.timestampMs === context.parsed.x && event.level === context.parsed.y)
             return matched?.label || EVENT_LABELS[context.parsed.y] || 'Event'
           },
+          afterLabel: (context) => {
+            const matched = events.find((event) => event.timestampMs === context.parsed.x && event.level === context.parsed.y)
+            return matched?.note || ''
+          },
         },
       },
       legend: { display: false },
@@ -762,7 +834,7 @@ export default function HalfmannTrendingView() {
       },
       y: {
         min: -0.5,
-        max: 3.5,
+        max: 4.5,
         ticks: {
           color: '#94a3b8',
           stepSize: 1,
@@ -771,17 +843,13 @@ export default function HalfmannTrendingView() {
         grid: { color: 'rgba(71, 85, 105, 0.18)' },
       },
     },
-  }), [currentSample?.timestampMs, events, xTickFormatter])
+  }), [currentSample?.timestampMs, events])
 
-  const recentEvents = useMemo(() => {
-    if (!currentSample) return []
-    const end = currentSample.timestampMs
-    const start = end - 60 * 60 * 1000
-    return events.filter((event) => event.timestampMs >= start && event.timestampMs <= end).slice(-8).reverse()
-  }, [currentSample, events])
-
+  const recentEvents = useMemo(() => events.slice(-12).reverse(), [events])
+  const bufferedSampleCount = samples.length
+  const visibleSampleCount = visibleSamples.length
   const currentTimestampLabel = currentSample ? formatTime(currentSample.timestampMs) : '--'
-  const scrubMax = Math.max(filteredSamples.length - 1, 0)
+  const scrubMax = Math.max(visibleSamples.length - 1, 0)
 
   return (
     <div className="flex min-h-full flex-col bg-[#080810] text-white">
@@ -794,7 +862,7 @@ export default function HalfmannTrendingView() {
                 Trending and Playback - Halfmann 1214
               </div>
               <div className="text-[10px] text-[#64748b]">
-                Real panel decisions, synchronized trends, and buffered playback
+                Real panel decisions, synchronized trends, and retained playback history
               </div>
             </div>
           </div>
@@ -820,7 +888,7 @@ export default function HalfmannTrendingView() {
             <button
               onClick={() => {
                 setIsLiveMode(false)
-                setDirection(direction === -1 ? 1 : -1)
+                setDirection(-1)
                 setIsPlaying(true)
               }}
               className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2]"
@@ -851,11 +919,11 @@ export default function HalfmannTrendingView() {
       </header>
 
       <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-5 sm:px-5 sm:py-6">
-        {error && (
+        {error ? (
           <div className="rounded-xl border border-[#7a1a1a] bg-[#1b0d0d] px-4 py-3 text-[11px] text-[#fecaca]">
             {error}
           </div>
-        )}
+        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
@@ -866,17 +934,17 @@ export default function HalfmannTrendingView() {
                   Current timestamp: <span className="font-bold text-white">{currentTimestampLabel}</span>
                 </div>
                 <div className="mt-1 text-[11px] text-[#64748b]">
-                  Buffered samples: {samples.length} | Visible window: {filteredSamples.length} | Mode: {isLiveMode ? 'Live follow' : isPlaying ? 'Playback running' : 'Playback paused'}
+                  Retained samples: {bufferedSampleCount} | Visible window: {visibleSampleCount} | Mode: {isLiveMode ? 'Live follow' : isPlaying ? 'Playback running' : 'Playback paused'}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                {WINDOWS.map((key) => (
+                {WINDOWS.map((entry) => (
                   <button
-                    key={key}
-                    onClick={() => setWindowKey(key)}
-                    className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${windowKey === key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
+                    key={entry.key}
+                    onClick={() => setWindowKey(entry.key)}
+                    className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${windowKey === entry.key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
                   >
-                    {key}
+                    {entry.key}
                   </button>
                 ))}
               </div>
@@ -892,7 +960,7 @@ export default function HalfmannTrendingView() {
                 const nextIndex = clamp(Number(event.target.value), 0, scrubMax)
                 setIsLiveMode(false)
                 setIsPlaying(false)
-                if (filteredSamples[nextIndex]) setPlayheadTimestampMs(filteredSamples[nextIndex].timestampMs)
+                if (visibleSamples[nextIndex]) setPlayheadTimestampMs(visibleSamples[nextIndex].timestampMs)
               }}
               className="h-3 w-full cursor-pointer accent-[#49d0e2]"
             />
@@ -902,7 +970,7 @@ export default function HalfmannTrendingView() {
             <MetricChip
               label="Site Discharge"
               value={currentSample?.siteDischarge != null ? `${currentSample.siteDischarge.toFixed(1)} PSI` : '--'}
-              helper="Max compressor discharge at the current playhead"
+              helper={`Max compressor discharge at the current playhead${thresholds?.panelDischargeOverridePsi != null ? ` | override ${thresholds.panelDischargeOverridePsi.toFixed(0)} PSI` : ''}`}
             />
             <MetricChip
               label="Site Suction"
@@ -910,47 +978,70 @@ export default function HalfmannTrendingView() {
               helper="Header suction, falling back to avg unit suction when needed"
             />
             <MetricChip
-              label="Well Decision Events"
-              value={`${events.filter((event) => event.type === 'choke' || event.type === 'wellState').length}`}
-              helper="Choke swings >5% and online/offline transitions in the visible window"
+              label="Discharge-Reduce Events"
+              value={`${events.filter((event) => event.type === 'reduceForDischarge').length}`}
+              helper="Times the panel lowered compressor demand while pressure protection was active"
             />
             <MetricChip
-              label="Compressor Decision Events"
-              value={`${events.filter((event) => event.type === 'compressor' || event.type === 'discharge').length}`}
-              helper="Command setpoint changes and significant discharge shifts"
+              label="Rate-Recovery Events"
+              value={`${events.filter((event) => event.type === 'raiseForRate').length}`}
+              helper="Times the panel raised compressor demand because wells were below rate"
             />
           </div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
           <ChartPanel
-            title="Well Choke Command"
-            subtitle="Five wells over the same time axis, with markers when panel decisions jump by more than 5%"
+            title="Panel Flow Demand Decisions"
+            subtitle="Real panel demand lines with markers when compressor flow demand was reduced for discharge pressure or raised for wells below rate"
+          >
+            <Line data={flowDecisionChartData} options={flowDecisionChartOptions} />
+          </ChartPanel>
+
+          <ChartPanel
+            title="Well Live Match Percent"
+            subtitle="Direct MLink live injection match percentage registers for all five wells"
+          >
+            <Line data={wellMatchChartData} options={wellMatchChartOptions} />
+          </ChartPanel>
+
+          <ChartPanel
+            title="Well Choke Commands"
+            subtitle="Real commanded choke outputs from the panel, with dots on each visible retained sample and markers when a choke jumps by more than 5%"
           >
             <Line data={chokeChartData} options={chokeChartOptions} />
           </ChartPanel>
 
           <ChartPanel
-            title="Compressor Commands and Discharge"
-            subtitle="Compressor 1-4 flow SPs with site discharge on the same timeline"
+            title="Compressor Commands, Outputs, and Discharge"
+            subtitle="Per-compressor desired flow SP vs current flow output, overlaid with site discharge and the configured discharge override thresholds"
           >
             <Line data={compressorChartData} options={compressorChartOptions} />
           </ChartPanel>
 
           <ChartPanel
             title="Suction and Static Pressures"
-            subtitle="Site suction overlaid with each well's static pressure"
+            subtitle="Site suction overlaid with each well's static pressure so you can line up pressure context with panel decisions"
           >
             <Line data={pressureChartData} options={pressureChartOptions} />
           </ChartPanel>
 
           <ChartPanel
-            title="Decision Visualization"
-            subtitle="Timeline markers for choke jumps, compressor SP changes, discharge moves, and well online/offline changes"
-            heightClass="h-[260px]"
+            title="Decision Timeline"
+            subtitle="One event lane for reduce-for-discharge, raise-for-rate, choke moves, compressor shifts, and well online/offline transitions"
+            heightClass="h-[280px]"
           >
             <Line data={eventChartData} options={eventChartOptions} />
           </ChartPanel>
+        </div>
+
+        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">24h Valve Stability</div>
+          <div className="grid gap-3 lg:grid-cols-5">
+            {valveStability.map((metric) => (
+              <StabilityCard key={metric.key} metric={metric} />
+            ))}
+          </div>
         </div>
 
         <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
@@ -960,11 +1051,12 @@ export default function HalfmannTrendingView() {
               <div key={`${event.type}-${event.timestampMs}-${event.label}`} className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
                 <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{EVENT_LABELS[event.level]}</div>
                 <div className="mt-1 text-[12px] font-bold text-white">{event.label}</div>
+                <div className="mt-1 text-[11px] text-[#cbd5e1]">{event.note}</div>
                 <div className="mt-1 text-[10px] text-[#64748b]">{formatTime(event.timestampMs)}</div>
               </div>
             )) : (
               <div className="text-[12px] text-[#94a3b8]">
-                No decision markers are available yet in the selected time window. Leave the page in live mode to keep buffering.
+                No retained decision markers are available yet in the selected time window. Leave the page in live mode to let the server continue building the history.
               </div>
             )}
           </div>
@@ -972,7 +1064,7 @@ export default function HalfmannTrendingView() {
 
         {loading && !samples.length ? (
           <div className="rounded-xl border border-[#1f3650] bg-[#0d1726] px-4 py-3 text-[11px] text-[#cbd5e1]">
-            Loading first Halfmann trend sample...
+            Loading retained Halfmann history...
           </div>
         ) : null}
       </main>

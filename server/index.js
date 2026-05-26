@@ -5,7 +5,7 @@ import { dirname, join } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import { ensureScheduledPerformanceArchives, generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
-import { ensureHalfmannHistoryBootstrapped, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
+import { ensureHalfmannHistoryBootstrapped, loadHalfmannTrendingHistory, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
 import { listArchivedPerformanceReports, resolveArchivedPerformanceReportPath } from './halfmannReportArchive.js'
 import {
   exportDerivedTriggerSettingsPayload,
@@ -852,6 +852,56 @@ function getPerformanceReportConfig() {
   }
 }
 
+function hasMeaningfulTrendingTransition(prev, current) {
+  if (!prev || !current) return false
+  if (prev.flowTargetBeingReduced !== current.flowTargetBeingReduced) return true
+  if (prev.anyWellBelowSetpoint !== current.anyWellBelowSetpoint) return true
+  if (prev.allWellsMeetingFlow !== current.allWellsMeetingFlow) return true
+
+  const prevDemand = prev.panelCommandedCompressorFlow ?? prev.totalDesiredSiteFlow ?? null
+  const currentDemand = current.panelCommandedCompressorFlow ?? current.totalDesiredSiteFlow ?? null
+  if (prevDemand != null && currentDemand != null && Math.abs(currentDemand - prevDemand) >= 0.01) return true
+
+  const prevChokes = Array.isArray(prev.wells) ? prev.wells : []
+  const currentChokes = Array.isArray(current.wells) ? current.wells : []
+  for (let index = 0; index < Math.min(prevChokes.length, currentChokes.length); index += 1) {
+    const prevValue = prevChokes[index]?.chokeCommand ?? prevChokes[index]?.overridePosition
+    const currentValue = currentChokes[index]?.chokeCommand ?? currentChokes[index]?.overridePosition
+    if (prevValue != null && currentValue != null && Math.abs(currentValue - prevValue) >= 5) return true
+  }
+
+  const prevCompressors = Array.isArray(prev.compressors) ? prev.compressors : []
+  const currentCompressors = Array.isArray(current.compressors) ? current.compressors : []
+  for (let index = 0; index < Math.min(prevCompressors.length, currentCompressors.length); index += 1) {
+    const prevValue = prevCompressors[index]?.desiredFlow
+    const currentValue = currentCompressors[index]?.desiredFlow
+    if (prevValue != null && currentValue != null && Math.abs(currentValue - prevValue) >= 0.02) return true
+  }
+
+  return false
+}
+
+function reduceTrendingSamples(samples, maxPoints) {
+  if (samples.length <= maxPoints) return samples
+  const keep = new Set([0, samples.length - 1])
+  const step = Math.ceil(samples.length / maxPoints)
+
+  for (let index = 0; index < samples.length; index += step) {
+    keep.add(index)
+  }
+
+  for (let index = 1; index < samples.length; index += 1) {
+    if (hasMeaningfulTrendingTransition(samples[index - 1], samples[index])) {
+      keep.add(index - 1)
+      keep.add(index)
+    }
+  }
+
+  return [...keep]
+    .sort((left, right) => left - right)
+    .map((index) => samples[index])
+}
+
 app.get('/api/performance-report/meta', async (req, res) => {
   try {
     const report = await getPerformanceReportMeta({
@@ -948,6 +998,48 @@ app.get('/api/optimization-history', async (req, res) => {
   } catch (err) {
     res.status(err.status || 502).json({
       error: err.message || 'Failed to load optimization history',
+      details: err.payload || null,
+    })
+  }
+})
+
+app.get('/api/halfmann/trending', async (req, res) => {
+  try {
+    const hours = Number(req.query.hours) > 0 ? Number(req.query.hours) : 24
+    const includeFallback = String(req.query.includeFallback || '').toLowerCase() === 'true'
+    const endAt = new Date()
+    const startAt = new Date(endAt.getTime() - hours * 60 * 60 * 1000)
+    const settingsState = loadDerivedTriggerSettingsState().derivedTriggerSettings
+    const samples = loadHalfmannTrendingHistory({
+      startAt,
+      endAt,
+      includeFallback,
+    })
+    const maxPoints =
+      hours <= 4 ? 1800
+      : hours <= 12 ? 2400
+      : hours <= 24 ? 3000
+      : hours <= 48 ? 3600
+      : 4200
+    const reducedSamples = reduceTrendingSamples(samples, maxPoints)
+
+    res.json({
+      fetchedAt: new Date().toISOString(),
+      windowHours: hours,
+      startAt: startAt.toISOString(),
+      endAt: endAt.toISOString(),
+      thresholds: {
+        panelDischargeOverridePsi: settingsState?.pressureProtection?.panelDischargeOverridePsi ?? null,
+        compressorSpeedControlDischargePsi: settingsState?.pressureProtection?.compressorSpeedControlDischargePsi ?? null,
+        stationRecycleTriggerPsi: settingsState?.recyclePressure?.stationRecycleDischargePsi ?? null,
+      },
+      sampleCount: reducedSamples.length,
+      rawSampleCount: samples.length,
+      samples: reducedSamples,
+    })
+  } catch (err) {
+    res.status(err.status || 500).json({
+      error: err.message || 'Failed to load Halfmann trending history',
       details: err.payload || null,
     })
   }
