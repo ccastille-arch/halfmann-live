@@ -184,6 +184,31 @@ function formatPct(value, decimals = 1) {
   return value != null && Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '--'
 }
 
+function getWitchesHatAlarm(currentDp, setpointDp) {
+  if (currentDp == null || setpointDp == null) return null
+  if (currentDp >= setpointDp) {
+    return {
+      level: 'critical',
+      label: 'Witches hat needs cleaning',
+      color: '#f87171',
+      border: 'rgba(248, 113, 113, 0.45)',
+      background: 'rgba(69, 10, 10, 0.9)',
+      animation: 'witches-hat-critical-pulse 1s ease-in-out infinite',
+    }
+  }
+  if (currentDp >= setpointDp - 1) {
+    return {
+      level: 'warning',
+      label: 'Witches hat getting clogged needs scheduled',
+      color: '#fbbf24',
+      border: 'rgba(251, 191, 36, 0.42)',
+      background: 'rgba(66, 32, 6, 0.9)',
+      animation: 'witches-hat-warning-pulse 1.2s ease-in-out infinite',
+    }
+  }
+  return null
+}
+
 function useIsNarrowViewport(breakpoint = 760) {
   const [isNarrow, setIsNarrow] = useState(() => (
     typeof window !== 'undefined' ? window.innerWidth <= breakpoint : false
@@ -247,7 +272,18 @@ function SuctionControllerCard({ score, units, tone = 'neutral', isNarrow = fals
       {units?.length ? (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 140 : 180}px, 1fr))`, gap: 10 }}>
           {units.map((unit) => (
-            <div key={unit.key} style={{ border: '1px solid #1f3650', background: '#0a1220', borderRadius: 12, padding: '10px 12px' }}>
+            <div
+              key={unit.key}
+              style={{
+                border: `1px solid ${unit.witchesHatAlarm?.border || '#1f3650'}`,
+                background: '#0a1220',
+                borderRadius: 12,
+                padding: '10px 12px',
+                boxShadow: unit.witchesHatAlarm
+                  ? `0 0 0 1px ${unit.witchesHatAlarm.border}, 0 0 18px ${unit.witchesHatAlarm.border}`
+                  : 'none',
+              }}
+            >
               <div style={{ fontSize: 9, color: '#7dd3fc', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
                 {unit.label}
               </div>
@@ -259,6 +295,25 @@ function SuctionControllerCard({ score, units, tone = 'neutral', isNarrow = fals
                   ? unit.displayLines.join('\n')
                   : 'Suction controller data not visible on current feed'}
               </div>
+              {unit.witchesHatAlarm ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    borderRadius: 10,
+                    border: `1px solid ${unit.witchesHatAlarm.border}`,
+                    background: unit.witchesHatAlarm.background,
+                    color: unit.witchesHatAlarm.color,
+                    padding: '8px 10px',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    animation: unit.witchesHatAlarm.animation,
+                  }}
+                >
+                  {unit.witchesHatAlarm.label}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -605,6 +660,16 @@ export default function HalfmannDiagnosticsView() {
         'Loaded Auto Sp',
         'Loaded Auto SP',
       ]))
+    const unitWitchesHatDp = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.witchesHatDp) ?? getNumeric(unitMaps[index], [
+        'Inlet Diff Pressure Reading',
+        'Witches Hat DP',
+      ]))
+    const unitWitchesHatDpSetpoint = HALFMANN_UNITS.map((unit, index) =>
+      getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.witchesHatDpSetpoint) ?? getNumeric(unitMaps[index], [
+        'Inlet Witches Hat DP Setpoint',
+        'Witches Hat DP Setpoint',
+      ]))
     const unitDischarge = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.dischargePressure) ?? getNumeric(unitMaps[index], ['Discharge Pressure', 'Stage 3 Discharge Prs', 'Discharge Pressure SP']))
     const unitRpm = HALFMANN_UNITS.map((unit, index) =>
@@ -677,6 +742,8 @@ export default function HalfmannDiagnosticsView() {
         const desiredFlow = unitDesiredFlows[index]
         const panelCurrentFlow = panelUnitCurrentFlowOutputs[index]
         const actualFlow = panelCurrentFlow ?? unitActualFlows[index]
+        const witchesHatDp = unitWitchesHatDp[index]
+        const witchesHatDpSetpoint = unitWitchesHatDpSetpoint[index]
         const directScore = computePercentMatch(actual, target)
         const fallbackScore = computePercentMatch(actualFlow, desiredFlow)
         const score = directScore ?? fallbackScore
@@ -687,12 +754,18 @@ export default function HalfmannDiagnosticsView() {
         } else if (actualFlow != null && desiredFlow != null) {
           displayLines.push(`${formatValue(actualFlow, 2)} actual / ${formatValue(desiredFlow, 2)} command MMSCFD`)
         }
+        if (witchesHatDp != null || witchesHatDpSetpoint != null) {
+          displayLines.push(`Witches Hat DP ${formatValue(witchesHatDp, 1)} / ${formatValue(witchesHatDpSetpoint, 1)} PSI`)
+        }
         return {
           key: unit.key,
           label: unit.label,
           actual,
           target,
           score,
+          witchesHatDp,
+          witchesHatDpSetpoint,
+          witchesHatAlarm: getWitchesHatAlarm(witchesHatDp, witchesHatDpSetpoint),
           displayLines,
         }
       })
@@ -754,6 +827,16 @@ export default function HalfmannDiagnosticsView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 48px)', background: '#080810' }}>
+      <style>{`
+        @keyframes witches-hat-warning-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
+          50% { opacity: 0.55; box-shadow: 0 0 18px rgba(251, 191, 36, 0.45); }
+        }
+        @keyframes witches-hat-critical-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 0 0 rgba(248, 113, 113, 0); }
+          50% { opacity: 0.45; box-shadow: 0 0 20px rgba(248, 113, 113, 0.55); }
+        }
+      `}</style>
       <header style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'stretch' : 'center', justifyContent: 'space-between', gap: 12, padding: isNarrow ? '12px 14px' : '14px 20px', borderBottom: '1px solid #1a1a2a', background: '#0c0c16' }}>
         <div>
           <div style={{ fontSize: 14, color: '#fff', fontWeight: 900, fontFamily: "'Arial Black', sans-serif" }}>Diagnostics - Halfmann 1214</div>

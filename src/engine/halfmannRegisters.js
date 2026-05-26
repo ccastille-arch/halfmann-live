@@ -27,6 +27,8 @@ export const UNIT_ADDRESSES = {
   suctionPressure: ['400505'],
   dischargePressure: ['400510'],
   loadedAutoSp: ['401018'],
+  witchesHatDp: ['400990'],
+  witchesHatDpSetpoint: ['401769'],
   engineSpeed: ['0x01000000', '16777216'],
 }
 
