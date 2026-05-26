@@ -491,7 +491,16 @@ export function loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback 
   ensureHalfmannHistoryBootstrapped()
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
-  const maxLines = estimateTailLineBudget({ startAt, endAt, cadenceSeconds: 2, multiplier: 1.35, minimum: 1500, maximum: 350000 })
+  const maxLines = estimateTailLineBudget({
+    startAt,
+    endAt,
+    // Request-time trending does not need every 2-second point to stay usable.
+    // Keep this bounded so one trending request cannot stall the whole server.
+    cadenceSeconds: 10,
+    multiplier: 1.2,
+    minimum: 360,
+    maximum: 12000,
+  })
 
   return readJsonLinesTail(PANEL_MATCH_HISTORY_PATH, maxLines)
     .filter((record) => {
@@ -509,6 +518,14 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
   ensureHalfmannHistoryBootstrapped()
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
+  if (!existsSync(RAW_HISTORY_PATH)) return []
+  const rawStats = statSync(RAW_HISTORY_PATH)
+  if (rawStats.size > 5 * 1024 * 1024) {
+    // Raw snapshots are much heavier than panel-match rows. If this file grows
+    // too large, parsing it synchronously at request time can pin the process
+    // long enough to make the whole site look down. Favor availability.
+    return []
+  }
   const maxLines = estimateTailLineBudget({
     startAt,
     endAt,
