@@ -610,9 +610,9 @@ function computeValveStability(samples) {
 
 function MetricChip({ label, value, helper }) {
   return (
-    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
+    <div className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3 sm:p-3.5">
       <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{label}</div>
-      <div className="mt-2 text-[18px] font-black text-white" style={{ fontFamily: "'Arial Black', sans-serif" }}>
+      <div className="mt-2 text-[22px] font-black text-white sm:text-[18px]" style={{ fontFamily: "'Arial Black', sans-serif" }}>
         {value}
       </div>
       <div className="mt-1 text-[11px] leading-relaxed text-[#94a3b8]">{helper}</div>
@@ -644,15 +644,15 @@ function InvestigationCard({ item }) {
   )
 }
 
-function ChartPanel({ title, subtitle, heightClass = 'h-[300px]', action, children }) {
+function ChartPanel({ title, subtitle, heightClass = 'h-[360px] sm:h-[320px] lg:h-[300px]', action, children }) {
   return (
-    <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-3.5 sm:p-4">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">{title}</div>
           {subtitle ? <div className="mt-1 text-[11px] text-[#94a3b8]">{subtitle}</div> : null}
         </div>
-        {action ? <div className="shrink-0">{action}</div> : null}
+        {action ? <div className="shrink-0 self-start">{action}</div> : null}
       </div>
       <div className={heightClass}>{children}</div>
     </div>
@@ -694,45 +694,47 @@ function ZoomableChart({ data, options, dragState, onDragStart, onDragMove, onDr
   }, [dragState, isDragging])
 
   return (
-    <div
-      className="relative h-full"
-      onPointerDown={(event) => {
-        if (event.button !== 0) return
-        const chart = chartRef.current
-        const ts = getTimestampFromPointer(chart, event)
-        if (ts == null) return
-        event.currentTarget.setPointerCapture?.(event.pointerId)
-        onDragStart(ts)
-      }}
-      onPointerMove={(event) => {
-        if (!isDragging) return
-        const chart = chartRef.current
-        const ts = getTimestampFromPointer(chart, event)
-        if (ts == null) return
-        onDragMove(ts)
-      }}
-      onPointerUp={(event) => {
-        if (!isDragging) return
-        event.currentTarget.releasePointerCapture?.(event.pointerId)
-        const chart = chartRef.current
-        const ts = getTimestampFromPointer(chart, event)
-        onDragEnd(ts)
-      }}
-      onPointerLeave={(event) => {
-        if (!isDragging) return
-        const chart = chartRef.current
-        const ts = getTimestampFromPointer(chart, event)
-        onDragEnd(ts)
-      }}
-      onDoubleClick={() => onDragEnd(null, true)}
-    >
-      <Line ref={chartRef} data={data} options={options} />
-      {selectionStyle ? (
-        <div
-          className="pointer-events-none absolute top-0 bottom-0 rounded-md border border-[#7dd3fc] bg-[#49d0e2]/12"
-          style={selectionStyle}
-        />
-      ) : null}
+    <div className="h-full overflow-x-auto overscroll-x-contain">
+      <div
+        className="relative h-full min-w-[760px] sm:min-w-0"
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          const chart = chartRef.current
+          const ts = getTimestampFromPointer(chart, event)
+          if (ts == null) return
+          event.currentTarget.setPointerCapture?.(event.pointerId)
+          onDragStart(ts)
+        }}
+        onPointerMove={(event) => {
+          if (!isDragging) return
+          const chart = chartRef.current
+          const ts = getTimestampFromPointer(chart, event)
+          if (ts == null) return
+          onDragMove(ts)
+        }}
+        onPointerUp={(event) => {
+          if (!isDragging) return
+          event.currentTarget.releasePointerCapture?.(event.pointerId)
+          const chart = chartRef.current
+          const ts = getTimestampFromPointer(chart, event)
+          onDragEnd(ts)
+        }}
+        onPointerLeave={(event) => {
+          if (!isDragging) return
+          const chart = chartRef.current
+          const ts = getTimestampFromPointer(chart, event)
+          onDragEnd(ts)
+        }}
+        onDoubleClick={() => onDragEnd(null, true)}
+      >
+        <Line ref={chartRef} data={data} options={options} />
+        {selectionStyle ? (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 rounded-md border border-[#7dd3fc] bg-[#49d0e2]/12"
+            style={selectionStyle}
+          />
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -1337,12 +1339,12 @@ export default function HalfmannTrendingView() {
 
   return (
     <div className="flex min-h-full flex-col bg-[#080810] text-white">
-      <header className="border-b border-[#1a1a2a] bg-[#0c0c16] px-4 py-3 sm:px-5">
+      <header className="border-b border-[#1a1a2a] bg-[#0c0c16] px-3 py-3 sm:px-5">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3 sm:items-center">
             <div className={`h-2.5 w-2.5 rounded-full ${isLiveMode ? 'bg-[#22c55e] shadow-lg shadow-[#22c55e]/60' : 'bg-[#f97316] shadow-lg shadow-[#f97316]/60'}`} />
             <div>
-              <div className="text-[13px] font-bold" style={{ fontFamily: "'Arial Black', sans-serif" }}>
+              <div className="text-[12px] font-bold sm:text-[13px]" style={{ fontFamily: "'Arial Black', sans-serif" }}>
                 Trending and Playback - Halfmann 1214
               </div>
               <div className="text-[10px] text-[#64748b]">
@@ -1350,12 +1352,12 @@ export default function HalfmannTrendingView() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
             <button
               onClick={() => {
                 window.location.hash = '#/'
               }}
-              className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc] hover:border-[#49d0e2] hover:text-white"
+              className="shrink-0 rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc] hover:border-[#49d0e2] hover:text-white"
             >
               Live View
             </button>
@@ -1365,7 +1367,7 @@ export default function HalfmannTrendingView() {
                 setIsPlaying(false)
                 if (latestTimestampMs != null) setPlayheadTimestampMs(latestTimestampMs)
               }}
-              className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${isLiveMode ? 'bg-[#22c55e] text-black' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${isLiveMode ? 'bg-[#22c55e] text-black' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
             >
               Live
             </button>
@@ -1375,7 +1377,7 @@ export default function HalfmannTrendingView() {
                 setDirection(-1)
                 setIsPlaying(true)
               }}
-              className="rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2]"
+              className="shrink-0 rounded-full border border-[#1f3650] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#cbd5e1] hover:border-[#49d0e2]"
             >
               Reverse
             </button>
@@ -1385,7 +1387,7 @@ export default function HalfmannTrendingView() {
                 setDirection(1)
                 setIsPlaying((current) => !current)
               }}
-              className="rounded-full bg-[#49d0e2] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-black"
+              className="shrink-0 rounded-full bg-[#49d0e2] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-black"
             >
               {isPlaying && !isLiveMode ? 'Pause' : 'Play'}
             </button>
@@ -1393,7 +1395,7 @@ export default function HalfmannTrendingView() {
               <button
                 key={multiplier}
                 onClick={() => setSpeed(multiplier)}
-                className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${speed === multiplier ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${speed === multiplier ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
               >
                 {multiplier}x
               </button>
@@ -1402,7 +1404,7 @@ export default function HalfmannTrendingView() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-5 sm:px-5 sm:py-6">
+      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-3 py-4 sm:px-5 sm:py-6">
         {error ? (
           <div className="rounded-xl border border-[#7a1a1a] bg-[#1b0d0d] px-4 py-3 text-[11px] text-[#fecaca]">
             {error}
@@ -1410,11 +1412,11 @@ export default function HalfmannTrendingView() {
         ) : null}
 
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+          <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-3.5 sm:p-4">
             <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Playback Controls</div>
-                <div className="mt-1 text-[12px] text-[#cbd5e1]">
+                <div className="mt-1 text-[12px] leading-relaxed text-[#cbd5e1]">
                   Current timestamp: <span className="font-bold text-white">{currentTimestampLabel}</span>
                 </div>
                 <div className="mt-1 text-[11px] text-[#64748b]">
@@ -1424,12 +1426,12 @@ export default function HalfmannTrendingView() {
                   Drag across any graph to zoom that time slice. Double-click a graph or use Reset Zoom to return to the full selected window.
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
                 {WINDOWS.map((entry) => (
                   <button
                     key={entry.key}
                     onClick={() => setSelectedWindowKey(entry.key)}
-                    className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${selectedWindowKey === entry.key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${selectedWindowKey === entry.key ? 'bg-[#ff5a62] text-white' : 'border border-[#1f3650] text-[#cbd5e1]'}`}
                   >
                     {entry.key}
                   </button>
@@ -1437,14 +1439,14 @@ export default function HalfmannTrendingView() {
                 <button
                   onClick={generateSelectedWindow}
                   disabled={loading}
-                  className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${loading ? 'cursor-wait bg-[#334155] text-[#cbd5e1]' : generatePending ? 'bg-[#49d0e2] text-black' : 'border border-[#49d0e2] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black'}`}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${loading ? 'cursor-wait bg-[#334155] text-[#cbd5e1]' : generatePending ? 'bg-[#49d0e2] text-black' : 'border border-[#49d0e2] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black'}`}
                 >
                   {loading ? 'Generating...' : 'Generate'}
                 </button>
                 {activeZoomRange ? (
                   <button
                     onClick={resetZoom}
-                    className="rounded-full border border-[#49d0e2] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black"
+                    className="shrink-0 rounded-full border border-[#49d0e2] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc] hover:bg-[#49d0e2] hover:text-black"
                   >
                     Reset Zoom
                   </button>
