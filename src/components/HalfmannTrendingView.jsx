@@ -689,17 +689,17 @@ export default function HalfmannTrendingView() {
   const samples = historyPayload?.samples || []
   const windowHours = getWindowHours(windowKey)
   const visibleSamples = useMemo(() => getWindowedSamples(samples, windowHours), [samples, windowHours])
-  const exportSamples = useMemo(() => (
-    activeZoomRange
-      ? visibleSamples.filter((sample) => sample.timestampMs >= activeZoomRange.min && sample.timestampMs <= activeZoomRange.max)
-      : visibleSamples
-  ), [activeZoomRange, visibleSamples])
   const downsampledVisibleSamples = useMemo(() => downsampleSamples(visibleSamples), [visibleSamples])
   const last24HoursSamples = useMemo(() => getWindowedSamples(samples, 24), [samples])
   const latestTimestampMs = visibleSamples[visibleSamples.length - 1]?.timestampMs ?? null
   const thresholds = historyPayload?.thresholds || {}
   const zoomBounds = useMemo(() => getZoomBounds(visibleSamples), [visibleSamples])
   const activeZoomRange = useMemo(() => clampZoomRange(zoomRange, zoomBounds), [zoomBounds, zoomRange])
+  const exportSamples = useMemo(() => (
+    activeZoomRange
+      ? visibleSamples.filter((sample) => sample.timestampMs >= activeZoomRange.min && sample.timestampMs <= activeZoomRange.max)
+      : visibleSamples
+  ), [activeZoomRange, visibleSamples])
 
   useEffect(() => {
     if (!zoomBounds) {
