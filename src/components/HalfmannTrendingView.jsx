@@ -331,6 +331,11 @@ function buildDecisionEvents(samples, thresholds) {
         timestampMs: current.timestampMs,
         type: 'reduceForDischarge',
         level: EVENT_LEVELS.reduceForDischarge,
+        direction: 'lowered',
+        deltaAmount: Math.abs(demandDelta),
+        reasonShort: dischargeThreshold != null
+          ? `Discharge pressure reached ${dischargeThreshold.toFixed(0)} PSI override`
+          : 'Discharge protection was active',
         label: `Panel lowered compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because discharge protection was active`,
         note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Site discharge ${current.siteDischarge?.toFixed(1) ?? '--'} PSI${dischargeThreshold != null ? ` vs override ${dischargeThreshold.toFixed(0)} PSI` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
         value: toNumber(getDemandValue(current)),
@@ -350,6 +355,9 @@ function buildDecisionEvents(samples, thresholds) {
         timestampMs: current.timestampMs,
         type: 'raiseForRate',
         level: EVENT_LEVELS.raiseForRate,
+        direction: 'raised',
+        deltaAmount: Math.abs(demandDelta),
+        reasonShort: 'Wells were not meeting rate',
         label: `Panel raised compressor demand ${formatSignedDelta(demandDelta, 3, 'MMSCFD')} because wells were not meeting rate`,
         note: `Demand ${toNumber(getDemandValue(prev))?.toFixed(3) ?? '--'} -> ${toNumber(getDemandValue(current))?.toFixed(3) ?? '--'} MMSCFD | Wells below rate flag = YES${shortWells.length ? ` | Short wells: ${shortWells.join(', ')}` : ''}${commandNotes.length ? ` | Unit SPs: ${commandNotes.join(', ')}` : ''}`,
         value: toNumber(getDemandValue(current)),
@@ -399,6 +407,58 @@ function buildDecisionEvents(samples, thresholds) {
   }
 
   return events.sort((left, right) => left.timestampMs - right.timestampMs)
+}
+
+function DecisionHistoryRow({ event }) {
+  const tone = event.type === 'reduceForDischarge'
+    ? {
+        border: 'rgba(249, 115, 22, 0.28)',
+        bg: 'rgba(36, 20, 8, 0.88)',
+        badgeBg: 'rgba(249, 115, 22, 0.18)',
+        badgeText: '#fdba74',
+      }
+    : {
+        border: 'rgba(34, 197, 94, 0.28)',
+        bg: 'rgba(8, 28, 18, 0.88)',
+        badgeBg: 'rgba(34, 197, 94, 0.16)',
+        badgeText: '#86efac',
+      }
+
+  return (
+    <div
+      className="rounded-xl border p-3"
+      style={{
+        borderColor: tone.border,
+        background: tone.bg,
+      }}
+    >
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">
+            {formatTime(event.timestampMs)}
+          </div>
+          <div className="mt-1 text-[13px] font-bold text-white">
+            Well panel {event.direction} compressor demand by {event.deltaAmount?.toFixed(3) ?? '--'} MMSCFD
+          </div>
+          <div className="mt-1 text-[12px] text-[#dbeafe]">
+            {event.reasonShort}
+          </div>
+          <div className="mt-2 text-[11px] leading-relaxed text-[#94a3b8]">
+            {event.note}
+          </div>
+        </div>
+        <div
+          className="shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
+          style={{
+            background: tone.badgeBg,
+            color: tone.badgeText,
+          }}
+        >
+          {event.direction === 'lowered' ? 'Lowered' : 'Raised'}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function getWindowedSamples(samples, hours) {
@@ -846,6 +906,13 @@ export default function HalfmannTrendingView() {
   }), [currentSample?.timestampMs, events])
 
   const recentEvents = useMemo(() => events.slice(-12).reverse(), [events])
+  const decisionHistory = useMemo(
+    () => events
+      .filter((event) => event.type === 'reduceForDischarge' || event.type === 'raiseForRate')
+      .slice(-20)
+      .reverse(),
+    [events],
+  )
   const bufferedSampleCount = samples.length
   const visibleSampleCount = visibleSamples.length
   const currentTimestampLabel = currentSample ? formatTime(currentSample.timestampMs) : '--'
@@ -1045,7 +1112,20 @@ export default function HalfmannTrendingView() {
         </div>
 
         <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
-          <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Recent Decision Notes</div>
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Decision History</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {decisionHistory.length ? decisionHistory.map((event) => (
+              <DecisionHistoryRow key={`${event.type}-${event.timestampMs}-${event.label}`} event={event} />
+            )) : (
+              <div className="text-[12px] text-[#94a3b8]">
+                No panel raise/lower compressor-demand decisions are available yet in the selected time window.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[#1f3650] bg-[#0d1726] p-4">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#49d0e2]">Recent Supporting Events</div>
           <div className="grid gap-3 md:grid-cols-2">
             {recentEvents.length ? recentEvents.map((event) => (
               <div key={`${event.type}-${event.timestampMs}-${event.label}`} className="rounded-xl border border-[#1f3650] bg-[#0a1220] p-3">
@@ -1056,7 +1136,7 @@ export default function HalfmannTrendingView() {
               </div>
             )) : (
               <div className="text-[12px] text-[#94a3b8]">
-                No retained decision markers are available yet in the selected time window. Leave the page in live mode to let the server continue building the history.
+                No retained panel or choke events are available yet in the selected time window.
               </div>
             )}
           </div>
