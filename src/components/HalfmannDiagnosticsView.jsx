@@ -45,6 +45,14 @@ const WELL_SETPOINT_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Well ${n} Setpoint`,
 ])
 
+const WELL_MATCH_KEYS = [
+  ['Wellhead #214 Live Injection Match Percentage', 'Wellhead 214 Live Injection Match Percentage'],
+  ['Wellhead #444 Live Injection Match Percentage', 'Wellhead 444 Live Injection Match Percentage'],
+  ['Wellhead #334 Live Injection Match Percentage', 'Wellhead 334 Live Injection Match Percentage'],
+  ['Wellhead #213 Live Injection Match Percentage', 'Wellhead 213 Live Injection Match Percentage'],
+  ['Wellhead #333 Live Injection Match Percentage', 'Wellhead 333 Live Injection Match Percentage'],
+]
+
 const WELL_CALCULATED_DESIRED_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Wellhead #${n} Calculated Desired Flow`,
   `Well ${n} Calculated Desired Flow`,
@@ -87,6 +95,16 @@ function resolveDatapoint(dataMap, labels) {
 
 function parseNumeric(value) {
   const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function parsePercentNumeric(value) {
+  if (value == null) return null
+  const direct = Number(value)
+  if (Number.isFinite(direct)) return direct
+  const match = String(value).match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const numeric = Number(match[0])
   return Number.isFinite(numeric) ? numeric : null
 }
 
@@ -182,6 +200,14 @@ function formatValue(value, decimals = 3) {
 
 function formatPct(value, decimals = 1) {
   return value != null && Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '--'
+}
+
+function parseLeadingCount(value) {
+  if (value == null) return null
+  const match = String(value).match(/-?\d+/)
+  if (!match) return null
+  const numeric = Number(match[0])
+  return Number.isFinite(numeric) ? numeric : null
 }
 
 function getWitchesHatAlarm(currentDp, setpointDp) {
@@ -605,6 +631,10 @@ export default function HalfmannDiagnosticsView() {
       const wellNumber = index + 1
       const desiredDatapoint = resolveDatapointByAddress(panelData, [WELL_SETPOINT_ADDRESSES[index]]) ?? resolveDatapoint(panel, WELL_SETPOINT_KEYS[index])
       const desired = parseNumeric(desiredDatapoint?.value) ?? null
+      const liveInjectionMatchPct = parsePercentNumeric(
+        resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]])?.value
+          ?? resolveDatapoint(panel, WELL_MATCH_KEYS[index])?.value,
+      )
       const calculatedDesired = getNumericByAddress(panelData, [WELL_CALCULATED_DESIRED_ADDRESSES[index]]) ?? getNumeric(panel, WELL_CALCULATED_DESIRED_KEYS[index])
       const actual = getNumericByAddress(panelData, [WELL_FLOW_ADDRESSES[index]]) ?? getNumeric(panel, flowKeys)
       const staticPressure = getNumericByAddress(panelData, [WELL_STATIC_ADDRESSES[index]]) ?? getNumeric(panel, WELL_STATIC_KEYS[index])
@@ -613,10 +643,13 @@ export default function HalfmannDiagnosticsView() {
         wellNumber,
         actual,
         desired,
+        matchPct: liveInjectionMatchPct,
         calculatedDesired,
         staticPressure,
         shortfall,
-        atTarget: meetingState.wells[String(wellNumber)] ?? isWellMeetingTarget(actual, desired, wellTargetPct),
+        atTarget: liveInjectionMatchPct != null
+          ? liveInjectionMatchPct >= (100 - wellTargetPct)
+          : meetingState.wells[String(wellNumber)] ?? isWellMeetingTarget(actual, desired, wellTargetPct),
         overshoot: isWellOvershoot(actual, desired, wellTargetPct),
       }
     })
@@ -693,6 +726,18 @@ export default function HalfmannDiagnosticsView() {
       compressorMeetingSignals.perCompressor != null &&
       compressorMeetingSignals.broadSummary != null &&
       compressorMeetingSignals.perCompressor !== compressorMeetingSignals.broadSummary
+    const panelAllWellsMeetingFlow = parsePanelBooleanValue(
+      resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.allWellsMeetingFlow])?.value
+        ?? resolveDatapoint(panel, ['All Wells Meeting Flow?'])?.value,
+    )
+    const panelAnyWellBelowSetpoint = parsePanelBooleanValue(
+      resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.anyWellBelowSetpoint])?.value
+        ?? resolveDatapoint(panel, ['Any Well Below Setpoint'])?.value,
+    )
+    const panelWellsMeetingRateCount = parseLeadingCount(
+      resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellsMeetingRate])?.value
+        ?? resolveDatapoint(panel, ['Wells Meeting Rate'])?.value,
+    )
     const runningSuctionValues = runningPrimaryIndexes
       .map((index) => unitSuction[index])
       .filter((value) => value != null)
@@ -704,9 +749,15 @@ export default function HalfmannDiagnosticsView() {
     const recyclePressureReached = highestDischarge != null && highestDischarge >= recycleDischargeSetpointPsi
 
     const wellsWithTarget = wells.filter((well) => well.actual != null && well.desired != null)
-    const wellsMeetingCount = wellsWithTarget.filter((well) => well.atTarget).length
-    const allOnTarget = wellsWithTarget.length > 0 ? wellsMeetingCount === wellsWithTarget.length : null
-    const wellsShort = wellsWithTarget.filter((well) => !well.atTarget)
+    const wellsWithMatchPct = wells.filter((well) => well.matchPct != null)
+    const fallbackWellsMeetingCount = wellsWithMatchPct.length
+      ? wellsWithMatchPct.filter((well) => well.atTarget).length
+      : wellsWithTarget.filter((well) => well.atTarget).length
+    const wellsMeetingCount = panelWellsMeetingRateCount ?? fallbackWellsMeetingCount
+    const allOnTarget = panelAllWellsMeetingFlow ?? (wellsWithTarget.length > 0 ? fallbackWellsMeetingCount === wellsWithTarget.length : null)
+    const wellsShort = panelAllWellsMeetingFlow === true
+      ? []
+      : (wellsWithMatchPct.length ? wellsWithMatchPct.filter((well) => !well.atTarget) : wellsWithTarget.filter((well) => !well.atTarget))
     const sacrificedWells = wellsWithTarget.filter((well) =>
       well.calculatedDesired != null && well.calculatedDesired < well.desired
     )
@@ -795,6 +846,7 @@ export default function HalfmannDiagnosticsView() {
       recycleOpen,
       recycleDischargeSetpointPsi,
       recyclePressureReached,
+      panelAnyWellBelowSetpoint,
       wellheadControlOverride,
       wellheadControlOverrideCompSpeedSp,
       speedSuctionPressAutoSp,
@@ -909,7 +961,9 @@ export default function HalfmannDiagnosticsView() {
             <SummaryCard
               label="Wells Meeting"
               value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
-              sub={`Only flagged low if more than ${TARGET_TOLERANCE_PCT}% below target`}
+              sub={derived.panelAnyWellBelowSetpoint != null
+                ? `Direct MLink well status | Any well below setpoint: ${derived.panelAnyWellBelowSetpoint ? 'YES' : 'NO'}`
+                : `Only flagged low if more than ${TARGET_TOLERANCE_PCT}% below target`}
               tone={derived.allOnTarget ? 'good' : derived.wellsShort.length > 0 ? 'warn' : 'neutral'}
             />
             <SummaryCard
