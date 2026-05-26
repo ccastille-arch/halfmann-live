@@ -58,12 +58,17 @@ function NavButton({ active, alert, children, onClick, compact = false }) {
     <button
       onClick={onClick}
       style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         padding: compact ? '0 12px' : '0 20px',
         height: compact ? 40 : 48,
         fontSize: compact ? 10 : 11,
         fontWeight: 800,
         letterSpacing: '0.12em',
         textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+        flex: '0 0 auto',
         cursor: 'pointer',
         background: 'none',
         border: 'none',
@@ -77,6 +82,8 @@ function NavButton({ active, alert, children, onClick, compact = false }) {
         marginBottom: -2,
         animation: alert ? 'diagnostics-alert-pulse 1s ease-in-out infinite' : 'none',
         textShadow: alert ? '0 0 10px rgba(255, 77, 77, 0.5)' : 'none',
+        position: 'relative',
+        zIndex: 2,
       }}
     >
       {children}
@@ -193,19 +200,22 @@ function AppShell() {
       `}</style>
       <nav style={{
         display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'stretch',
+        flexDirection: isNarrow ? 'column' : 'row',
+        alignItems: isNarrow ? 'stretch' : 'center',
+        justifyContent: isNarrow ? 'flex-start' : 'space-between',
         background: '#05050f',
         borderBottom: '2px solid #1a1a2a',
         padding: isNarrow ? '8px 10px 6px' : '0 16px',
         minHeight: isNarrow ? 0 : 48,
         flexShrink: 0,
-        gap: isNarrow ? 8 : 0,
+        gap: isNarrow ? 8 : 12,
       }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           gap: 4,
+          flex: isNarrow ? '0 0 auto' : '1 1 auto',
+          minWidth: 0,
           overflowX: 'auto',
           scrollbarWidth: 'none',
         }}>
@@ -230,8 +240,9 @@ function AppShell() {
           alignItems: 'center',
           justifyContent: isNarrow ? 'space-between' : 'flex-end',
           flexWrap: 'wrap',
+          flex: '0 0 auto',
           gap: 10,
-          marginTop: isNarrow ? 0 : -40,
+          marginTop: 0,
         }}>
           <div style={{ fontSize: 9, color: '#3a3a55', letterSpacing: '0.15em', textTransform: 'uppercase', order: isNarrow ? 0 : 1 }}>
             Halfmann 1214
