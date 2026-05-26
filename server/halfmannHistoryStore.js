@@ -509,7 +509,16 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
   ensureHalfmannHistoryBootstrapped()
   const startMs = startAt ? new Date(startAt).getTime() : null
   const endMs = endAt ? new Date(endAt).getTime() : null
-  const maxLines = estimateTailLineBudget({ startAt, endAt, cadenceSeconds: 2, multiplier: 1.6, minimum: 2500, maximum: 450000 })
+  const maxLines = estimateTailLineBudget({
+    startAt,
+    endAt,
+    // Raw snapshot lines are much heavier than panel-match lines, so do not
+    // try to parse every 2-second capture for long windows at request time.
+    cadenceSeconds: 15,
+    multiplier: 1.3,
+    minimum: 240,
+    maximum: 1600,
+  })
 
   return readJsonLinesTail(RAW_HISTORY_PATH, maxLines)
     .filter((record) => {
