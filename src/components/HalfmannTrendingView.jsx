@@ -304,6 +304,10 @@ function getDemandValue(sample) {
   return sample?.panelCommandedCompressorFlow ?? sample?.totalDesiredSiteFlow ?? null
 }
 
+function getWellChokeValue(wellSample) {
+  return toNumber(wellSample?.chokeCommand)
+}
+
 function getCompressorDemandDelta(prev, current) {
   const prevValue = getDemandValue(prev)
   const currentValue = getDemandValue(current)
@@ -377,8 +381,8 @@ function buildDecisionEvents(samples, thresholds) {
     }
 
     WELLS.forEach((well, wellIndex) => {
-      const prevCommand = toNumber(prev?.wells?.[wellIndex]?.chokeCommand ?? prev?.wells?.[wellIndex]?.overridePosition)
-      const currentCommand = toNumber(current?.wells?.[wellIndex]?.chokeCommand ?? current?.wells?.[wellIndex]?.overridePosition)
+      const prevCommand = getWellChokeValue(prev?.wells?.[wellIndex])
+      const currentCommand = getWellChokeValue(current?.wells?.[wellIndex])
       if (prevCommand != null && currentCommand != null && Math.abs(currentCommand - prevCommand) >= 5) {
         events.push({
           timestampMs: current.timestampMs,
@@ -434,9 +438,20 @@ function computeValveStability(samples) {
     const points = samples
       .map((sample) => ({
         timestampMs: sample.timestampMs,
-        value: toNumber(sample?.wells?.[wellIndex]?.chokeCommand ?? sample?.wells?.[wellIndex]?.overridePosition),
+        value: getWellChokeValue(sample?.wells?.[wellIndex]),
       }))
       .filter((point) => point.value != null)
+
+    if (!points.length) {
+      return {
+        ...well,
+        avgPosition: null,
+        avgStepChange: null,
+        travelPerHour: null,
+        stabilityScore: null,
+        sampleCount: 0,
+      }
+    }
 
     const positions = points.map((point) => point.value)
     const deltas = []
@@ -573,7 +588,7 @@ function StabilityCard({ metric }) {
       <div className="flex items-center justify-between gap-3">
         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#7dd3fc]">{metric.label}</div>
         <div className="text-[18px] font-black text-white" style={{ fontFamily: "'Arial Black', sans-serif" }}>
-          {metric.stabilityScore.toFixed(0)}%
+          {metric.stabilityScore != null ? `${metric.stabilityScore.toFixed(0)}%` : '--'}
         </div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -591,6 +606,9 @@ function StabilityCard({ metric }) {
         </div>
       </div>
       <div className="mt-2 text-[10px] text-[#64748b]">{metric.sampleCount} retained samples over the last 24 hours</div>
+      {metric.sampleCount === 0 ? (
+        <div className="mt-2 text-[10px] text-[#fca5a5]">No retained choke-command history available for this well yet.</div>
+      ) : null}
     </div>
   )
 }
@@ -835,7 +853,7 @@ export default function HalfmannTrendingView() {
         well.color,
         downsampledVisibleSamples.map((sample) => ({
           x: sample.timestampMs,
-          y: sample.wells[index]?.chokeCommand ?? sample.wells[index]?.overridePosition,
+          y: getWellChokeValue(sample.wells[index]),
         })),
       ),
     )
