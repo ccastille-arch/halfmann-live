@@ -357,6 +357,20 @@ function getCompressorCommandNotes(prev, current) {
   return notes
 }
 
+function getCompressorOutputNotes(prev, current) {
+  const notes = []
+  COMPRESSORS.forEach((compressor, index) => {
+    const prevValue = toNumber(prev?.compressors?.[index]?.currentFlow)
+    const currentValue = toNumber(current?.compressors?.[index]?.currentFlow)
+    if (prevValue == null || currentValue == null) return
+    const delta = currentValue - prevValue
+    if (Math.abs(delta) >= 0.02) {
+      notes.push(`${compressor.unitLabel} ${prevValue.toFixed(3)} -> ${currentValue.toFixed(3)}`)
+    }
+  })
+  return notes
+}
+
 function buildDecisionEvents(samples, thresholds) {
   const events = []
   const dischargeThreshold = toNumber(thresholds?.panelDischargeOverridePsi)
@@ -366,6 +380,10 @@ function buildDecisionEvents(samples, thresholds) {
     const current = samples[index]
     const demandDelta = getCompressorDemandDelta(prev, current)
     const commandNotes = getCompressorCommandNotes(prev, current)
+    const outputNotes = getCompressorOutputNotes(prev, current)
+    const prevDischarge = toNumber(prev?.siteDischarge)
+    const currentDischarge = toNumber(current?.siteDischarge)
+    const dischargeDelta = prevDischarge != null && currentDischarge != null ? currentDischarge - prevDischarge : null
     const dischargeAtOverride =
       dischargeThreshold != null &&
       current.siteDischarge != null &&
@@ -443,6 +461,27 @@ function buildDecisionEvents(samples, thresholds) {
         label: `Per-compressor flow SP shift: ${commandNotes.join(', ')}`,
         note: 'At least one unit flow setpoint moved, even without a clear reduce/raise panel verdict flag.',
         value: toNumber(getDemandValue(current)),
+      })
+    }
+
+    if (
+      (outputNotes.length || (dischargeDelta != null && Math.abs(dischargeDelta) >= 5)) &&
+      !events.some((event) => event.timestampMs === current.timestampMs && event.type === 'compressorShift')
+    ) {
+      const details = []
+      if (outputNotes.length) details.push(`Outputs: ${outputNotes.join(', ')}`)
+      if (dischargeDelta != null && Math.abs(dischargeDelta) >= 5) {
+        details.push(`Site discharge ${prevDischarge?.toFixed(0) ?? '--'} -> ${currentDischarge?.toFixed(0) ?? '--'} PSI (${formatSignedDelta(dischargeDelta, 0, 'PSI')})`)
+      }
+      events.push({
+        timestampMs: current.timestampMs,
+        type: 'compressorShift',
+        level: EVENT_LEVELS.compressorShift,
+        label: outputNotes.length
+          ? `Compressor outputs shifted${dischargeDelta != null && Math.abs(dischargeDelta) >= 5 ? ' with a site discharge move' : ''}`
+          : `Site discharge moved ${formatSignedDelta(dischargeDelta, 0, 'PSI')}`,
+        note: details.join(' | '),
+        value: currentDischarge ?? toNumber(getDemandValue(current)),
       })
     }
   }
