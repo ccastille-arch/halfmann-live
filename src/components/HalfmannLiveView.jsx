@@ -488,17 +488,20 @@ function RefreshCountdown({ secondsLeft, loading, onRefresh }) {
 }
 
 function CommsIndicator({ commsStatus }) {
-  const isHolding = commsStatus?.isHolding
+  const isDown = commsStatus?.siteDown
+  const isHolding = !isDown && commsStatus?.isHolding
   const isLimited = !isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   return (
     <span className={`rounded-full border px-2.5 py-1 text-[8px] uppercase tracking-[0.18em] ${
-      isHolding
+      isDown
+        ? 'border-[#7a1a1a] bg-[#1c0e0e] text-[#f87171]'
+        : isHolding
         ? 'border-[#8a5b10] bg-[#171107] text-[#fbbf24]'
         : isLimited
           ? 'border-[#5d4b12] bg-[#17140a] text-[#facc15]'
         : 'border-[#1d6c3d] bg-[#0a1410] text-[#4ade80]'
     }`}>
-      {isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
+      {isDown ? 'Site Status Unproven' : isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
     </span>
   )
 }
@@ -539,6 +542,7 @@ export default function HalfmannLiveView() {
   const wellTargetPct = siteSettings.wellTargetPct ?? 5
   const compressorCommandTolerancePct = Number(siteSettings?.derivedTriggerSettings?.compressorDispatch?.compressorCommandMatchTolerancePct) || 5
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
+  const feedStaleOrDown = Boolean(commsStatus?.siteDown || commsStatus?.allHeld || commsStatus?.isStale)
 
   useEffect(() => {
     fetch(`${API_BASE}/api/public/pad-visibility`)
@@ -654,11 +658,11 @@ export default function HalfmannLiveView() {
   )
   const displayedWellMeetingCount = panelWellsMeetingRateCount ?? wellsAtTargetCount
   const displayedWellMeetingTotal = liveWellPerformance.length || 5
-  const topWellStatusGood = panelAllWellsMeetingFlow
+  const topWellStatusGood = feedStaleOrDown ? null : panelAllWellsMeetingFlow
 
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints may still be missing, but the site total can still be valid.
-  const siteOnTarget = totalDesiredSite != null && totalDesiredSite > 0
+  const siteOnTarget = feedStaleOrDown ? null : totalDesiredSite != null && totalDesiredSite > 0
     ? Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite <= 0.05
     : wellsWithBoth.length > 0 && totalDesiredFromWells > 0
       ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
@@ -685,7 +689,9 @@ export default function HalfmannLiveView() {
   const panelCompressorMeetingTotal = compressorMeetingSignals.directFlags.length || null
   const displayedCompressorMeetingCount = panelCompressorMeetingCount ?? compressorsMeetingCount
   const displayedCompressorMeetingTotal = panelCompressorMeetingTotal ?? compressorCommandScores.length
-  const allCompressorsMeetingCommands = panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
+  const allCompressorsMeetingCommands = feedStaleOrDown
+    ? null
+    : panelCompressorsMeetingFlow ?? (compressorCommandScores.length > 0 ? compressorsMeetingCount === compressorCommandScores.length : null)
   const compressorCommandScore = compressorCommandScores.length > 0
     ? compressorCommandScores.reduce((sum, score) => sum + score, 0) / compressorCommandScores.length
     : null
@@ -726,7 +732,9 @@ export default function HalfmannLiveView() {
       <header className="flex items-center justify-between px-5 py-3 bg-[#0c0c16] border-b border-[#1a1a2a] shrink-0">
         <div className="flex items-center gap-3">
           <div className={`w-2.5 h-2.5 rounded-full shadow-lg animate-pulse ${
-            commsStatus?.isHolding
+            commsStatus?.siteDown
+              ? 'bg-[#ef4444] shadow-[#ef4444]/60'
+              : commsStatus?.isHolding
               ? 'bg-[#f59e0b] shadow-[#f59e0b]/60'
               : feedLimited
                 ? 'bg-[#facc15] shadow-[#facc15]/60'
@@ -767,7 +775,9 @@ export default function HalfmannLiveView() {
               )}
               {commsStatus?.message && (
                 <div className={`mb-4 rounded-lg px-4 py-3 text-[11px] ${
-                  commsStatus?.isHolding
+                  commsStatus?.siteDown
+                    ? 'border border-[#7a1a1a] bg-[#1c0e0e] text-[#fecaca]'
+                    : commsStatus?.isHolding
                     ? 'border border-[#8a5b10] bg-[#171107] text-[#fef3c7]'
                     : 'border border-[#5d4b12] bg-[#17140a] text-[#fde68a]'
                 }`}>
@@ -780,14 +790,20 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all wells meeting target flow rate?"
                   good={topWellStatusGood}
-                  detail={panelAllWellsMeetingFlow != null
+                  value={feedStaleOrDown ? 'STALE' : undefined}
+                  detail={feedStaleOrDown
+                    ? `Showing cached/held data from ${lastRefresh ? lastRefresh.toLocaleTimeString() : 'an earlier refresh'}. Current well-meeting status is not proven.`
+                    : panelAllWellsMeetingFlow != null
                     ? `Direct MLink register${panelWellsMeetingRateCount != null ? ` | ${displayedWellMeetingCount} of ${displayedWellMeetingTotal} wells meeting rate` : ''}${panelAnyWellBelowSetpoint != null ? ` | Any well below setpoint: ${panelAnyWellBelowSetpoint ? 'YES' : 'NO'}` : ''}`
                     : 'All Wells Meeting Flow? register not visible on current feed'}
                 />
                 <StatusCard
                   question="Is site injection on target?"
                   good={siteOnTarget}
-                  detail={totalDesiredSite != null
+                  value={feedStaleOrDown ? 'STALE' : undefined}
+                  detail={feedStaleOrDown
+                    ? `Latest good totals are ${totalActualFlow.toFixed(3)} actual${totalDesiredSite != null ? ` vs ${totalDesiredSite.toFixed(3)} MMSCFD desired` : ''}, but live site health is not proven while the feed is stale/down.`
+                    : totalDesiredSite != null
                     ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredSite.toFixed(3)} MMSCFD site total`
                     : wellsWithBoth.length > 0
                       ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
@@ -798,7 +814,10 @@ export default function HalfmannLiveView() {
                 <StatusCard
                   question="Are all compressors meeting flow commands?"
                   good={allCompressorsMeetingCommands}
-                  detail={panelCompressorsMeetingFlow != null
+                  value={feedStaleOrDown ? 'STALE' : undefined}
+                  detail={feedStaleOrDown
+                    ? 'Compressor command compliance is not being judged while the site is on held/stale data.'
+                    : panelCompressorsMeetingFlow != null
                     ? `${compressorSignalSummary.join(' | ')}${compressorCommandScore != null ? `${compressorSignalSummary.length ? ' | ' : ''}${displayedCompressorMeetingCount} of ${displayedCompressorMeetingTotal} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score` : ''}`
                     : compressorCommandScore != null
                     ? `${compressorsMeetingCount} of ${compressorCommandScores.length} compressors within ${compressorCommandTolerancePct}% | ${compressorCommandScore.toFixed(1)}% avg command score`

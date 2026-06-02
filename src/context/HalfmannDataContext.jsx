@@ -289,6 +289,9 @@ export function HalfmannDataProvider({ children }) {
   const [commsStatus, setCommsStatus] = useState({
     isHolding: false,
     allHeld: false,
+    isStale: false,
+    staleAgeMs: null,
+    siteDown: false,
     heldDevices: [],
     limitedDevices: [],
     healthyDevices: [],
@@ -298,9 +301,11 @@ export function HalfmannDataProvider({ children }) {
   const decisionRef = useRef({ wells: {}, compressors: {} })
   const panelRef = useRef(panelData)
   const unitDataRef = useRef(unitDataRaw)
+  const lastRefreshRef = useRef(cachedState?.lastRefresh ?? null)
 
   useEffect(() => { panelRef.current = panelData }, [panelData])
   useEffect(() => { unitDataRef.current = unitDataRaw }, [unitDataRaw])
+  useEffect(() => { lastRefreshRef.current = lastRefresh }, [lastRefresh])
 
   const reloadSettings = useCallback(async () => {
     try {
@@ -333,6 +338,7 @@ export function HalfmannDataProvider({ children }) {
       fetchDeviceFull(HALFMANN_DEVICES.panel),
       ...HALFMANN_UNITS.map((unit) => fetchDeviceFull(unit.deviceId)),
     ])
+    const attemptTime = new Date()
 
     const heldDevices = []
     const limitedDevices = []
@@ -372,16 +378,24 @@ export function HalfmannDataProvider({ children }) {
 
     const acceptedAny = panelUsable || unitResults.some((result, index) => isUsableDeviceSnapshot(HALFMANN_UNITS[index].key, result.data))
     if (acceptedAny) {
-      const acceptedAt = new Date()
+      const acceptedAt = attemptTime
       setLastRefresh(acceptedAt)
+      lastRefreshRef.current = acceptedAt
       saveCachedState(nextPanel, nextUnits, acceptedAt)
     }
 
     const errors = [panelResult.error, ...unitResults.map((result) => result.error)].filter(Boolean)
     const allHeld = heldDevices.length === HALFMANN_UNITS.length + (previousPanel ? 1 : 0) && heldDevices.length > 0
     const hasCachedData = !!nextPanel || Object.values(nextUnits).some(Boolean)
+    const lastGoodRefresh = acceptedAny ? attemptTime : lastRefreshRef.current
+    const staleAgeMs = lastGoodRefresh ? Math.max(0, attemptTime.getTime() - lastGoodRefresh.getTime()) : null
+    const isStale = staleAgeMs != null && staleAgeMs >= 30000
+    const siteDown = allHeld || ((!acceptedAny || heldDevices.length > 0) && healthyDevices.length === 0 && hasCachedData && isStale)
     let message = ''
-    if (heldDevices.length > 0) {
+    if (siteDown) {
+      const staleSeconds = staleAgeMs != null ? Math.round(staleAgeMs / 1000) : null
+      message = `Halfmann live feeds are down or stale. Showing cached readings from ${lastGoodRefresh ? lastGoodRefresh.toLocaleTimeString() : 'an earlier refresh'}${staleSeconds != null ? ` (${staleSeconds}s old)` : ''}, so current site status is not proven.`
+    } else if (heldDevices.length > 0) {
       message = `Last refresh returned invalid data for ${heldDevices.join(', ')}. Showing last known good readings until the next successful refresh.`
     } else if (limitedDevices.length > 0) {
       message = `Latest refresh succeeded, but ${limitedDevices.join(', ')} returned a limited tag set. Preserving previously seen values where newer tags were missing.`
@@ -390,10 +404,13 @@ export function HalfmannDataProvider({ children }) {
     setCommsStatus({
       isHolding: heldDevices.length > 0,
       allHeld,
+      isStale,
+      staleAgeMs,
+      siteDown,
       heldDevices,
       limitedDevices,
       healthyDevices,
-      lastAttemptAt: new Date(),
+      lastAttemptAt: attemptTime,
       message,
     })
 

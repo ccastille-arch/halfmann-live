@@ -176,7 +176,7 @@ function AppShell() {
     const anyCompressorNotMeeting = parseSignalBoolean(
       panelData?.datapoints?.find((dp) => String(dp.addressStr || dp.address) === String(PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow))?.value,
     )
-    const feedIssue = Boolean(liveError) || Boolean(commsStatus?.isHolding)
+    const feedIssue = Boolean(liveError) || Boolean(commsStatus?.isHolding) || Boolean(commsStatus?.siteDown) || Boolean(commsStatus?.isStale)
     const compressorFlowDiagnostic = wellShortActive && (compressorShortActive || anyCompressorNotMeeting === true)
     return wellShortActive || compressorFlowDiagnostic || overrideActive || recycleActive || feedIssue
   }, [panelData, meetingState, liveError, commsStatus])

@@ -431,13 +431,14 @@ function UnitRow({ unit, actualFlow, desiredFlow, suctionActual, suctionTarget, 
 }
 
 function CommsIndicator({ commsStatus }) {
-  const isHolding = commsStatus?.isHolding
+  const isDown = commsStatus?.siteDown
+  const isHolding = !isDown && commsStatus?.isHolding
   const isLimited = !isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   return (
     <div style={{
-      border: `1px solid ${isHolding ? '#8a5b10' : isLimited ? '#5d4b12' : '#1d6c3d'}`,
-      background: isHolding ? '#171207' : isLimited ? '#17140a' : '#0b1a12',
-      color: isHolding ? '#fbbf24' : isLimited ? '#facc15' : '#4ade80',
+      border: `1px solid ${isDown ? '#7a1a1a' : isHolding ? '#8a5b10' : isLimited ? '#5d4b12' : '#1d6c3d'}`,
+      background: isDown ? '#1c0e0e' : isHolding ? '#171207' : isLimited ? '#17140a' : '#0b1a12',
+      color: isDown ? '#f87171' : isHolding ? '#fbbf24' : isLimited ? '#facc15' : '#4ade80',
       borderRadius: 999,
       padding: '6px 10px',
       fontSize: 9,
@@ -446,12 +447,14 @@ function CommsIndicator({ commsStatus }) {
       textTransform: 'uppercase',
       whiteSpace: 'nowrap',
     }}>
-      {isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
+      {isDown ? 'Site Status Unproven' : isHolding ? 'Holding Last Good Data' : isLimited ? 'Feed Limited' : 'MLink Refresh OK'}
     </div>
   )
 }
 
 function buildDiagnosis({
+  feedStaleOrDown,
+  staleAgeMs,
   allOnTarget,
   wellsShort,
   sacrificedWells,
@@ -477,6 +480,17 @@ function buildDiagnosis({
   panelCompressorsMeetingFlow,
   panelCompressorSignalMismatch,
 }) {
+  if (feedStaleOrDown) {
+    const staleSeconds = staleAgeMs != null ? Math.round(staleAgeMs / 1000) : null
+    return {
+      tone: 'bad',
+      headline: 'Current site status is not proven because live Halfmann data is stale or down',
+      reason: 'This page is showing held cached values, so it should not claim the pad is healthy or that wells are meeting rate right now.',
+      evidence: `Last good Halfmann refresh was ${staleSeconds != null ? `${staleSeconds}s` : 'an unknown amount of time'} ago. Any displayed totals or pressures may be old cached readings rather than current site conditions.`,
+      action: 'Treat this as a communications outage first. Restore live panel/unit data before trusting any operational conclusion on this page.',
+    }
+  }
+
   if (allOnTarget) {
     return {
       tone: 'good',
@@ -614,6 +628,7 @@ export default function HalfmannDiagnosticsView() {
     refresh,
   } = useHalfmannData()
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
+  const feedStaleOrDown = Boolean(commsStatus?.siteDown || commsStatus?.allHeld || commsStatus?.isStale)
   const [viewMode, setViewMode] = useState('operations')
   const isNarrow = useIsNarrowViewport()
 
@@ -863,9 +878,14 @@ export default function HalfmannDiagnosticsView() {
     }
   }, [panelData, unitDataRaw, siteSettings.wellTargetPct, siteSettings?.derivedTriggerSettings, meetingState.wells])
 
-  const diagnosis = buildDiagnosis(derived)
+  const diagnosis = buildDiagnosis({
+    ...derived,
+    feedStaleOrDown,
+    staleAgeMs: commsStatus?.staleAgeMs ?? null,
+  })
   const pageTime = derived.timestamp ?? lastRefresh
   const diagnosisNeeded = Boolean(
+    feedStaleOrDown ||
     derived.wellsShort.length > 0 ||
     derived.recycleOpen === true ||
     derived.recyclePressureReached === true ||
@@ -944,12 +964,12 @@ export default function HalfmannDiagnosticsView() {
           {commsStatus?.message && (
             <div style={{
               marginBottom: 16,
-              border: `1px solid ${commsStatus?.isHolding ? '#8a5b10' : '#5d4b12'}`,
-              background: commsStatus?.isHolding ? '#171207' : '#17140a',
+              border: `1px solid ${commsStatus?.siteDown ? '#7a1a1a' : commsStatus?.isHolding ? '#8a5b10' : '#5d4b12'}`,
+              background: commsStatus?.siteDown ? '#1c0e0e' : commsStatus?.isHolding ? '#171207' : '#17140a',
               borderRadius: 14,
               padding: '12px 14px',
               fontSize: 11,
-              color: commsStatus?.isHolding ? '#fef3c7' : '#fde68a',
+              color: commsStatus?.siteDown ? '#fecaca' : commsStatus?.isHolding ? '#fef3c7' : '#fde68a',
             }}>
               {commsStatus.message}
             </div>
@@ -960,17 +980,23 @@ export default function HalfmannDiagnosticsView() {
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 160 : 220}px, 1fr))`, gap: 14, marginBottom: 20 }}>
             <SummaryCard
               label="Wells Meeting"
-              value={`${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
-              sub={derived.panelAnyWellBelowSetpoint != null
-                ? `Direct MLink well status | Any well below setpoint: ${derived.panelAnyWellBelowSetpoint ? 'YES' : 'NO'}`
+              value={feedStaleOrDown ? 'STALE' : `${derived.wellsMeetingCount}/${derived.wellsWithTarget.length || derived.wells.length}`}
+              sub={feedStaleOrDown
+                ? 'Held/cached well status only. Current well compliance is not proven.'
+                : derived.panelAnyWellBelowSetpoint != null
+                ? feedStaleOrDown
+                  ? 'Held/cached well status only. Current well compliance is not proven.'
+                  : `Direct MLink well status | Any well below setpoint: ${derived.panelAnyWellBelowSetpoint ? 'YES' : 'NO'}`
                 : `Only flagged low if more than ${TARGET_TOLERANCE_PCT}% below target`}
-              tone={derived.allOnTarget ? 'good' : derived.wellsShort.length > 0 ? 'warn' : 'neutral'}
+              tone={feedStaleOrDown ? 'bad' : derived.allOnTarget ? 'good' : derived.wellsShort.length > 0 ? 'warn' : 'neutral'}
             />
             <SummaryCard
               label="Total Actual Flow"
               value={`${formatValue(derived.totalActual)} MMSCFD`}
-              sub={derived.totalDesired != null ? `${formatPct(derived.siteMatchPct)} of desired` : 'Desired total not visible'}
-              tone={derived.siteMatchPct != null && derived.siteMatchPct >= 95 ? 'good' : derived.siteMatchPct != null ? 'warn' : 'neutral'}
+              sub={feedStaleOrDown
+                ? 'Displayed total is from held cached data while the site feed is stale/down.'
+                : derived.totalDesired != null ? `${formatPct(derived.siteMatchPct)} of desired` : 'Desired total not visible'}
+              tone={feedStaleOrDown ? 'neutral' : derived.siteMatchPct != null && derived.siteMatchPct >= 95 ? 'good' : derived.siteMatchPct != null ? 'warn' : 'neutral'}
             />
             <SummaryCard
               label="Total Desired Flow"
@@ -1018,15 +1044,17 @@ export default function HalfmannDiagnosticsView() {
             />
             <SummaryCard
               label="Compressors Meeting Flow"
-              value={derived.panelCompressorsMeetingFlow == null ? '--' : derived.panelCompressorsMeetingFlow ? 'YES' : 'NO'}
+              value={feedStaleOrDown ? 'STALE' : derived.panelCompressorsMeetingFlow == null ? '--' : derived.panelCompressorsMeetingFlow ? 'YES' : 'NO'}
               sub={derived.panelCompressorsMeetingFlow == null
                 ? 'Compressors Meeting Flow Demand not visible'
+                : feedStaleOrDown
+                  ? 'Held/cached compressor compliance only. Current compressor status is not proven.'
                 : derived.wellsShort.length === 0 && derived.panelCompressorsMeetingFlow === false
                   ? 'Panel says NO, but no wells are short, so this is monitor-only for now'
                 : derived.panelCompressorSignalMismatch
                   ? 'Direct compressor bits say YES, but one panel summary bit says NO'
                   : 'Direct panel signal from M-Link'}
-              tone={derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : derived.wellsShort.length > 0 ? 'bad' : 'neutral'}
+              tone={feedStaleOrDown ? 'neutral' : derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : derived.wellsShort.length > 0 ? 'bad' : 'neutral'}
             />
           </div>
 

@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, statfsSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import * as XLSX from 'xlsx'
@@ -13,6 +13,13 @@ const SEED_IMPORTED_MARKER_PATH = join(HISTORY_DIR, 'seed-imported.json')
 const SEED_CSV_PATH = join(__dirname, 'seed/halfmann-panel-match-seed.csv')
 const RECENT_TREND_SAMPLE_LIMIT = 1800
 const RECENT_TREND_SAMPLES = []
+const STORAGE_PRUNE_TRIGGER_RATIO = 0.8
+const STORAGE_PRUNE_TARGET_RATIO = 0.68
+const HISTORY_RETENTION_LIMITS = {
+  raw: 9000,
+  panel: 30000,
+  trend: 90000,
+}
 
 const WELL_HEADERS = {
   '214': ['Wellhead #214 Live Injection Match Percentage', 'Wellhead 214 Live Injection Match Percentage', 'Wellhead #1 Live Injection Match Percentage'],
@@ -129,6 +136,19 @@ function ensureHistoryDir() {
   if (!existsSync(HISTORY_DIR)) mkdirSync(HISTORY_DIR, { recursive: true })
 }
 
+function getFilesystemUsageRatio(path) {
+  try {
+    const stats = statfsSync(path)
+    const totalBlocks = Number(stats.blocks)
+    const availableBlocks = Number(stats.bavail ?? stats.bfree)
+    if (!Number.isFinite(totalBlocks) || totalBlocks <= 0) return null
+    const usedBlocks = totalBlocks - Math.max(0, availableBlocks)
+    return usedBlocks / totalBlocks
+  } catch {
+    return null
+  }
+}
+
 function normalizeAddress(value) {
   return String(value ?? '').trim().toLowerCase()
 }
@@ -169,7 +189,64 @@ function parseBoolean(value) {
 
 function appendJsonLine(filePath, payload) {
   ensureHistoryDir()
+  pruneStoredHistoryIfNeeded()
   appendFileSync(filePath, `${JSON.stringify(payload)}\n`, 'utf8')
+}
+
+function overwriteWithRecentLines(filePath, keepLines) {
+  if (!existsSync(filePath) || !Number.isFinite(keepLines) || keepLines <= 0) return false
+  const recent = readJsonLinesTail(filePath, keepLines)
+  writeFileSync(filePath, recent.length ? `${recent.map((row) => JSON.stringify(row)).join('\n')}\n` : '', 'utf8')
+  return true
+}
+
+function pruneOldReportArchives() {
+  const reportsDir = join(HISTORY_DIR, 'reports')
+  if (!existsSync(reportsDir)) return false
+  const reportFiles = readdirSync(reportsDir)
+    .map((name) => {
+      const path = join(reportsDir, name)
+      try {
+        const stats = statSync(path)
+        if (!stats.isFile()) return null
+        return { path, mtimeMs: stats.mtimeMs }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs)
+
+  if (!reportFiles.length) return false
+
+  const deleteCount = Math.max(1, Math.ceil(reportFiles.length * 0.25))
+  for (const file of reportFiles.slice(0, deleteCount)) {
+    try {
+      unlinkSync(file.path)
+    } catch {}
+  }
+  return true
+}
+
+function pruneStoredHistoryIfNeeded() {
+  const usageRatio = getFilesystemUsageRatio(DATA_DIR)
+  if (usageRatio == null || usageRatio < STORAGE_PRUNE_TRIGGER_RATIO) return
+
+  overwriteWithRecentLines(RAW_HISTORY_PATH, HISTORY_RETENTION_LIMITS.raw)
+  overwriteWithRecentLines(PANEL_MATCH_HISTORY_PATH, HISTORY_RETENTION_LIMITS.panel)
+  overwriteWithRecentLines(TREND_HISTORY_PATH, HISTORY_RETENTION_LIMITS.trend)
+
+  let nextUsageRatio = getFilesystemUsageRatio(DATA_DIR)
+  if (nextUsageRatio != null && nextUsageRatio > STORAGE_PRUNE_TARGET_RATIO) {
+    pruneOldReportArchives()
+    nextUsageRatio = getFilesystemUsageRatio(DATA_DIR)
+  }
+
+  if (nextUsageRatio != null && nextUsageRatio > STORAGE_PRUNE_TARGET_RATIO) {
+    overwriteWithRecentLines(RAW_HISTORY_PATH, Math.max(1200, Math.floor(HISTORY_RETENTION_LIMITS.raw * 0.4)))
+    overwriteWithRecentLines(PANEL_MATCH_HISTORY_PATH, Math.max(3600, Math.floor(HISTORY_RETENTION_LIMITS.panel * 0.4)))
+    overwriteWithRecentLines(TREND_HISTORY_PATH, Math.max(12000, Math.floor(HISTORY_RETENTION_LIMITS.trend * 0.4)))
+  }
 }
 
 function readJsonLines(filePath) {
