@@ -15,11 +15,15 @@ const RECENT_TREND_SAMPLE_LIMIT = 1800
 const RECENT_TREND_SAMPLES = []
 const STORAGE_PRUNE_TRIGGER_RATIO = 0.8
 const STORAGE_PRUNE_TARGET_RATIO = 0.68
+const STORAGE_CHECK_INTERVAL_MS = 60 * 1000
+const STORAGE_PRUNE_INTERVAL_MS = 15 * 60 * 1000
 const HISTORY_RETENTION_LIMITS = {
   raw: 9000,
   panel: 30000,
   trend: 90000,
 }
+let lastStorageCheckAtMs = 0
+let lastStoragePruneAtMs = 0
 
 const WELL_HEADERS = {
   '214': ['Wellhead #214 Live Injection Match Percentage', 'Wellhead 214 Live Injection Match Percentage', 'Wellhead #1 Live Injection Match Percentage'],
@@ -189,7 +193,7 @@ function parseBoolean(value) {
 
 function appendJsonLine(filePath, payload) {
   ensureHistoryDir()
-  pruneStoredHistoryIfNeeded()
+  scheduleHistoryPruneIfNeeded()
   appendFileSync(filePath, `${JSON.stringify(payload)}\n`, 'utf8')
 }
 
@@ -228,9 +232,9 @@ function pruneOldReportArchives() {
   return true
 }
 
-function pruneStoredHistoryIfNeeded() {
+function pruneStoredHistoryNow() {
   const usageRatio = getFilesystemUsageRatio(DATA_DIR)
-  if (usageRatio == null || usageRatio < STORAGE_PRUNE_TRIGGER_RATIO) return
+  if (usageRatio == null || usageRatio < STORAGE_PRUNE_TRIGGER_RATIO) return false
 
   overwriteWithRecentLines(RAW_HISTORY_PATH, HISTORY_RETENTION_LIMITS.raw)
   overwriteWithRecentLines(PANEL_MATCH_HISTORY_PATH, HISTORY_RETENTION_LIMITS.panel)
@@ -247,6 +251,22 @@ function pruneStoredHistoryIfNeeded() {
     overwriteWithRecentLines(PANEL_MATCH_HISTORY_PATH, Math.max(3600, Math.floor(HISTORY_RETENTION_LIMITS.panel * 0.4)))
     overwriteWithRecentLines(TREND_HISTORY_PATH, Math.max(12000, Math.floor(HISTORY_RETENTION_LIMITS.trend * 0.4)))
   }
+  return true
+}
+
+function scheduleHistoryPruneIfNeeded() {
+  const nowMs = Date.now()
+  if (nowMs - lastStorageCheckAtMs < STORAGE_CHECK_INTERVAL_MS) return
+  lastStorageCheckAtMs = nowMs
+
+  const usageRatio = getFilesystemUsageRatio(DATA_DIR)
+  if (usageRatio == null || usageRatio < STORAGE_PRUNE_TRIGGER_RATIO) return
+  if (nowMs - lastStoragePruneAtMs < STORAGE_PRUNE_INTERVAL_MS) return
+
+  lastStoragePruneAtMs = nowMs
+  try {
+    pruneStoredHistoryNow()
+  } catch {}
 }
 
 function readJsonLines(filePath) {
