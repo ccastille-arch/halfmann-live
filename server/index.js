@@ -1052,8 +1052,12 @@ ensureHalfmannHistoryBootstrapped()
 
 app.listen(PORT, () => {
   console.log(`halfmann-live running on port ${PORT}`)
-  captureHalfmannRuntimeHistory()
+  setTimeout(() => {
+    Promise.resolve(captureHalfmannRuntimeHistory()).catch(() => {})
+  }, 1500)
   setInterval(captureHalfmannRuntimeHistory, 2000)
-  materializeMonthToDatePerformanceReport()
+  setTimeout(() => {
+    Promise.resolve(materializeMonthToDatePerformanceReport()).catch(() => {})
+  }, 30000)
   setInterval(materializeMonthToDatePerformanceReport, 15 * 60 * 1000)
 })
