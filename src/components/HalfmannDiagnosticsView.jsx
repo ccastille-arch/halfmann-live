@@ -38,6 +38,56 @@ const WELL_CALCULATED_DESIRED_ADDRESSES = PANEL_ADDRESSES.wellCalculatedDesiredF
 const WELL_STATIC_ADDRESSES = PANEL_ADDRESSES.wellStaticPressure
 const UNIT_DESIRED_FLOW_ADDRESSES = PANEL_ADDRESSES.unitDesiredFlowSetpoints
 const UNIT_CURRENT_FLOW_OUTPUT_ADDRESSES = ['460364', '460384', '460404', '460424']
+const AO_COMMAND_TOLERANCE_PCT = 2
+const AO_COMMAND_DEBOUNCE_MS = 30000
+
+const AO_COMMAND_CHECKS = [
+  {
+    key: 'ao1',
+    tab: 'AO1',
+    label: 'Well 214 AO1',
+    sentName: 'FUXA_Sent_Write_Cmd_AO1',
+    sentAddress: '461200',
+    outputName: 'Well #1 Analog Output 1',
+    outputAddress: '400260',
+  },
+  {
+    key: 'ao2',
+    tab: 'AO2',
+    label: 'Well 444 AO2',
+    sentName: 'FUXA_Sent_Write_Cmd_AO2',
+    sentAddress: '461202',
+    outputName: 'Well #1 Analog Output 2',
+    outputAddress: '400261',
+  },
+  {
+    key: 'ao3',
+    tab: 'AO3',
+    label: 'Well 334 AO3',
+    sentName: 'FUXA_Sent_Write_Cmd_AO3',
+    sentAddress: '461204',
+    outputName: 'Well #1 Analog Output 3',
+    outputAddress: '400262',
+  },
+  {
+    key: 'ao4',
+    tab: 'AO4',
+    label: 'Well 213 AO4',
+    sentName: 'FUXA_Sent_Write_Cmd_AO4',
+    sentAddress: '461206',
+    outputName: 'Well #1 Analog Output 4',
+    outputAddress: '400263',
+  },
+  {
+    key: 'ao5',
+    tab: 'AO5',
+    label: 'Well 333 AO5',
+    sentName: 'FUXA_Sent_Write_Cmd_AO5',
+    sentAddress: '461208',
+    outputName: 'Well #1 Analog Output 5',
+    outputAddress: '400264',
+  },
+]
 
 const WELL_SETPOINT_KEYS = [1, 2, 3, 4, 5].map((n) => [
   `Wellhead #${n} Setpoint From Customer PLC`,
@@ -274,6 +324,20 @@ function computePercentMatch(actual, target) {
   return Math.max(0, 100 - (Math.abs(actual - target) / target) * 100)
 }
 
+function computeAoCommandDifference(sentCommand, analogOutput) {
+  if (sentCommand == null || analogOutput == null) {
+    return { diff: null, diffPct: null, mismatch: false }
+  }
+  const diff = Math.abs(sentCommand - analogOutput)
+  const denominator = Math.max(Math.abs(sentCommand), 1)
+  const diffPct = (diff / denominator) * 100
+  return {
+    diff,
+    diffPct,
+    mismatch: diffPct > AO_COMMAND_TOLERANCE_PCT,
+  }
+}
+
 function SummaryCard({ label, value, sub, tone = 'neutral' }) {
   const c = statusColors(tone)
   return (
@@ -348,6 +412,92 @@ function SuctionControllerCard({ score, units, tone = 'neutral', isNarrow = fals
           Suction controller data not visible on current feed
         </div>
       )}
+    </div>
+  )
+}
+
+function AoCommandAlarmTabs({ checks, activeTab, onTabChange, isNarrow = false }) {
+  const visibleChecks = activeTab === 'all' ? checks : checks.filter((check) => check.key === activeTab)
+  const alarmCount = checks.filter((check) => check.debouncedAlarm).length
+  const watchingCount = checks.filter((check) => check.mismatch && !check.debouncedAlarm).length
+  const missingCount = checks.filter((check) => !check.visible).length
+  const tone = alarmCount > 0 ? 'bad' : watchingCount > 0 ? 'warn' : missingCount === checks.length ? 'neutral' : 'good'
+  const c = statusColors(tone)
+
+  return (
+    <section style={{ border: `1px solid ${c.border}`, background: c.bg, borderRadius: 18, padding: '16px 18px', marginBottom: 20 }}>
+      <div style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', justifyContent: 'space-between', gap: 12, alignItems: isNarrow ? 'stretch' : 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 10, color: '#7dd3fc', fontWeight: 900, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 8 }}>
+            AO Command Tracking Alarms
+          </div>
+          <div style={{ fontSize: 13, color: c.text, lineHeight: 1.6 }}>
+            Compares each FUXA sent write command register to the matching live AO output. Alarm rule: more than {AO_COMMAND_TOLERANCE_PCT}% different for {Math.round(AO_COMMAND_DEBOUNCE_MS / 1000)} seconds.
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {[{ key: 'all', tab: 'All' }, ...checks].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => onTabChange(tab.key)}
+              style={{
+                border: `1px solid ${activeTab === tab.key ? 'rgba(73,208,226,0.5)' : '#24324a'}`,
+                background: activeTab === tab.key ? 'rgba(73,208,226,0.16)' : '#0a1220',
+                color: activeTab === tab.key ? '#7dd3fc' : '#bfdbfe',
+                borderRadius: 999,
+                padding: '8px 11px',
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+              }}
+            >
+              {tab.tab}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${isNarrow ? 220 : 260}px, 1fr))`, gap: 12, marginTop: 14 }}>
+        {visibleChecks.map((check) => <AoCommandAlarmCard key={check.key} check={check} />)}
+      </div>
+    </section>
+  )
+}
+
+function AoCommandAlarmCard({ check }) {
+  const tone = !check.visible ? 'neutral' : check.debouncedAlarm ? 'bad' : check.mismatch ? 'warn' : 'good'
+  const c = statusColors(tone)
+  const status = !check.visible
+    ? 'Waiting for both registers'
+    : check.debouncedAlarm
+      ? 'Alarm active'
+      : check.mismatch
+        ? `Mismatch watching ${Math.floor(check.mismatchElapsedMs / 1000)}s / ${Math.round(AO_COMMAND_DEBOUNCE_MS / 1000)}s`
+        : 'Matched'
+
+  return (
+    <div style={{ border: `1px solid ${c.border}`, background: '#0a1220', borderRadius: 14, padding: '13px 14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 13, color: '#fff', fontWeight: 900 }}>{check.label}</div>
+        <div style={{ fontSize: 9, color: c.title, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{status}</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 9, color: '#64748b', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{check.sentName}</div>
+          <div style={{ fontSize: 18, color: '#7dd3fc', fontWeight: 900 }}>{formatValue(check.sentCommand, 2)}</div>
+          <div style={{ fontSize: 9, color: '#64748b' }}>Register {check.sentAddress}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: '#64748b', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{check.outputName}</div>
+          <div style={{ fontSize: 18, color: '#7dd3fc', fontWeight: 900 }}>{formatValue(check.analogOutput, 0)}</div>
+          <div style={{ fontSize: 9, color: '#64748b' }}>Register {check.outputAddress}</div>
+        </div>
+      </div>
+      <div style={{ borderTop: '1px solid rgba(138,183,232,0.12)', paddingTop: 9, fontSize: 11, color: c.text, lineHeight: 1.55 }}>
+        Difference {formatValue(check.diff, 2)} AO points | {formatPct(check.diffPct, 2)}. Whole-number AO output is allowed; this only flags when the live difference is over {AO_COMMAND_TOLERANCE_PCT}%.
+      </div>
     </div>
   )
 }
@@ -630,6 +780,8 @@ export default function HalfmannDiagnosticsView() {
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   const feedStaleOrDown = Boolean(commsStatus?.siteDown || commsStatus?.allHeld || commsStatus?.isStale)
   const [viewMode, setViewMode] = useState('operations')
+  const [aoAlarmTab, setAoAlarmTab] = useState('all')
+  const [aoMismatchStartedAt, setAoMismatchStartedAt] = useState({})
   const isNarrow = useIsNarrowViewport()
 
   const derived = useMemo(() => {
@@ -835,6 +987,24 @@ export default function HalfmannDiagnosticsView() {
           displayLines,
         }
       })
+    const aoCommandChecks = AO_COMMAND_CHECKS.map((check) => {
+      const sentDatapoint = resolveDatapointByAddress(panelData, [check.sentAddress])
+      const outputDatapoint = resolveDatapointByAddress(panelData, [check.outputAddress])
+      const sentCommand = parseNumeric(sentDatapoint?.value)
+      const analogOutput = parseNumeric(outputDatapoint?.value)
+      const { diff, diffPct, mismatch } = computeAoCommandDifference(sentCommand, analogOutput)
+      return {
+        ...check,
+        sentCommand,
+        analogOutput,
+        diff,
+        diffPct,
+        mismatch,
+        visible: sentCommand != null && analogOutput != null,
+        sentTimestamp: sentDatapoint?.timestampIdx != null ? panelData?.timestamps?.[sentDatapoint.timestampIdx] : null,
+        outputTimestamp: outputDatapoint?.timestampIdx != null ? panelData?.timestamps?.[outputDatapoint.timestampIdx] : null,
+      }
+    })
     return {
       timestamp: getTimestamp(panelData),
       wells,
@@ -873,10 +1043,38 @@ export default function HalfmannDiagnosticsView() {
       commandMatchAvg,
       suctionMatchAvg,
       suctionControllerUnits,
+      aoCommandChecks,
+      aoCommandMismatchCount,
+      aoCommandVisibleCount,
       panelCompressorsMeetingFlow,
       panelCompressorSignalMismatch,
     }
   }, [panelData, unitDataRaw, siteSettings.wellTargetPct, siteSettings?.derivedTriggerSettings, meetingState.wells])
+
+  useEffect(() => {
+    const now = Date.now()
+    setAoMismatchStartedAt((previous) => {
+      const next = {}
+      for (const check of derived.aoCommandChecks || []) {
+        if (check.mismatch) next[check.key] = previous[check.key] || now
+      }
+      return next
+    })
+  }, [derived.aoCommandChecks])
+
+  const aoCommandChecksWithDebounce = useMemo(() => {
+    const now = Date.now()
+    return (derived.aoCommandChecks || []).map((check) => {
+      const startedAt = aoMismatchStartedAt[check.key] || null
+      const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0
+      return {
+        ...check,
+        mismatchStartedAt: startedAt,
+        mismatchElapsedMs: elapsedMs,
+        debouncedAlarm: check.mismatch && elapsedMs >= AO_COMMAND_DEBOUNCE_MS,
+      }
+    })
+  }, [derived.aoCommandChecks, aoMismatchStartedAt])
 
   const diagnosis = buildDiagnosis({
     ...derived,
@@ -1057,6 +1255,13 @@ export default function HalfmannDiagnosticsView() {
               tone={feedStaleOrDown ? 'neutral' : derived.panelCompressorsMeetingFlow == null ? 'neutral' : derived.panelCompressorsMeetingFlow ? 'good' : derived.wellsShort.length > 0 ? 'bad' : 'neutral'}
             />
           </div>
+
+          <AoCommandAlarmTabs
+            checks={aoCommandChecksWithDebounce}
+            activeTab={aoAlarmTab}
+            onTabChange={setAoAlarmTab}
+            isNarrow={isNarrow}
+          />
 
           {!diagnosisNeeded && viewMode === 'operations' ? (
             <div style={{ marginTop: 4, border: '1px solid #1d6c3d', background: '#0b1a12', borderRadius: 18, padding: '18px 20px' }}>
