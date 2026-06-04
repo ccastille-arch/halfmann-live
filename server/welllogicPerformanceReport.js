@@ -1,4 +1,4 @@
-import { getHalfmannHistoryPaths, loadHalfmannPanelMatchHistory } from './halfmannHistoryStore.js'
+import { getHalfmannHistoryPaths, loadHalfmannPanelMatchHistory, loadHalfmannTrendSampleHistory } from './halfmannHistoryStore.js'
 import {
   archivePerformanceReport,
   clampHalfmannHistoryStart,
@@ -369,7 +369,7 @@ function summarizePrioritization(records, reportEndAt, priorityProtectionToleran
       const bucket = perWell[well.key]
       return {
         wellName: bucket.wellName,
-        priorityRank: bucket.priorityRank,
+        priorityRank: well.priority,
         protectedPctDuringConstraint: bucket.constrainedValidHours > 0
           ? (bucket.constrainedProtectedHours / bucket.constrainedValidHours) * 100
           : null,
@@ -380,13 +380,78 @@ function summarizePrioritization(records, reportEndAt, priorityProtectionToleran
   }
 }
 
+function trendSampleToPerformanceRecord(sample) {
+  const timestampMs = Number(sample?.timestampMs)
+  if (!Number.isFinite(timestampMs)) return null
+  const matches = Object.fromEntries(
+    WELL_CONFIG.map((well) => {
+      const trendWell = (sample.wells || []).find((entry) => String(entry?.key) === String(well.key))
+      const match = Number(trendWell?.matchPct)
+      return [well.key, Number.isFinite(match) ? match : null]
+    }),
+  )
+  const hasAnyMatch = Object.values(matches).some((value) => value != null)
+  if (!hasAnyMatch) return null
+
+  return {
+    ts: new Date(timestampMs).toISOString(),
+    source: sample.source || 'trend-samples',
+    isFallback: Boolean(sample.isFallback),
+    matches,
+    priorities: Object.fromEntries(WELL_CONFIG.map((well) => [well.key, well.priority])),
+    runningCompressors: sample.runningCompressors ?? null,
+    compressorLimited: sample.compressorLimited ?? null,
+    flowTargetBeingReduced: sample.flowTargetBeingReduced ?? null,
+    anyWellBelowSetpoint: sample.anyWellBelowSetpoint ?? null,
+    compressorsMeetingFlowDemand: sample.compressorsMeetingFlowDemand ?? null,
+    anyCompressorNotMeetingDesiredFlow: sample.anyCompressorNotMeetingDesiredFlow ?? null,
+    recycleValvePosition: sample.recycleValvePosition ?? null,
+    dischargeOverrideLatch: sample.dischargeOverrideLatch ?? null,
+    totalDesiredSiteFlow: sample.totalDesiredSiteFlow ?? null,
+    totalAscCompressorFlow: sample.totalAscCompressorFlow ?? null,
+    totalSiteFlow: sample.totalSiteFlow ?? null,
+  }
+}
+
+function loadPerformanceHistoryRecords(range) {
+  const panelRecords = loadHalfmannPanelMatchHistory({
+    startAt: range.startAt,
+    endAt: range.endAt,
+    includeFallback: false,
+  })
+  if (panelRecords.length) {
+    return {
+      records: panelRecords,
+      source: 'panel-match-history',
+      sourceNote: 'Panel match history records used for performance scoring.',
+    }
+  }
+
+  const trendRecords = loadHalfmannTrendSampleHistory({
+    startAt: range.startAt,
+    endAt: range.endAt,
+    includeFallback: false,
+  })
+    .map(trendSampleToPerformanceRecord)
+    .filter(Boolean)
+
+  return {
+    records: trendRecords,
+    source: trendRecords.length ? 'trend-samples-fallback' : 'panel-match-history-empty',
+    sourceNote: trendRecords.length
+      ? 'No panel-match rows existed for this window, so current trend samples were used for performance scoring.'
+      : 'No panel-match rows or trend samples existed for this window.',
+  }
+}
+
 function buildReportSnapshot(range) {
   const derivedSettings = loadDerivedTriggerSettingsState().derivedTriggerSettings
   const runtimeTolerancePct = Number(derivedSettings?.eventHistory?.runtimeReportTolerancePct) || 98
   const monthlyKpiTolerancePct = Number(derivedSettings?.eventHistory?.monthlyKpiComplianceTolerancePct) || runtimeTolerancePct
   const effectiveRuntimeTolerancePct = range.preset === 'current-month' ? monthlyKpiTolerancePct : runtimeTolerancePct
   const priorityProtectionTolerancePct = Number(derivedSettings?.eventHistory?.priorityProtectionTolerancePct) || effectiveRuntimeTolerancePct
-  const records = loadHalfmannPanelMatchHistory({ startAt: range.startAt, endAt: range.endAt, includeFallback: false })
+  const history = loadPerformanceHistoryRecords(range)
+  const records = history.records
   const runtime = summarizeWellRuntime(records, range.endAt, effectiveRuntimeTolerancePct)
   const prioritization = summarizePrioritization(records, range.endAt, priorityProtectionTolerancePct)
   const firstRecord = records[0] || null
@@ -424,7 +489,8 @@ function buildReportSnapshot(range) {
       lastSampleAt: lastRecord?.ts || null,
       validCoveragePct,
       fallbackExcluded: true,
-      source: 'volume-history-plus-seeded-csv',
+      source: history.source,
+      sourceNote: history.sourceNote,
     },
     calendar: getCalendarContext(new Date()),
     historyFloor: getHalfmannHistoryFloor(),
