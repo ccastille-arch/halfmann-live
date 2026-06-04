@@ -12,6 +12,8 @@ import {
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import * as XLSX from 'xlsx'
+import { useHalfmannData } from '../context/HalfmannDataContext'
+import { PANEL_ADDRESSES, UNIT_ADDRESSES, getNumericByAddress, resolveDatapointByAddress } from '../engine/halfmannRegisters'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ScatterController, Tooltip, Legend, Filler)
 
@@ -86,6 +88,8 @@ const EVENT_LABELS = {
 }
 
 const SUCTION_SCORE_REFERENCE = 99
+const PANEL_COMPRESSOR_CURRENT_FLOW_ADDRESSES = ['460364', '460384', '460404', '460424']
+const TREND_COMPRESSOR_UNIT_KEYS = ['unit2128', 'unit2130', 'unit2127', 'unit2129']
 
 async function readErrorPayload(res) {
   const contentType = res.headers.get('content-type') || ''
@@ -134,6 +138,103 @@ function getWindowHours(windowKey) {
 function toNumber(value) {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
+}
+
+function parsePanelBoolean(raw) {
+  if (raw == null) return null
+  const normalized = String(raw).trim().toLowerCase()
+  if (['yes', 'yes (1)', 'yes (2)', '1', '2', 'true', 'running', 'running (1)', 'online', 'online (1)'].includes(normalized)) return true
+  if (['no', 'no (0)', '0', 'false', 'stopped', 'stopped (0)', 'offline', 'offline (0)'].includes(normalized)) return false
+  return null
+}
+
+function getBooleanByAddress(data, addresses) {
+  return parsePanelBoolean(resolveDatapointByAddress(data, Array.isArray(addresses) ? addresses : [addresses])?.value)
+}
+
+function getLatestTimestampMs(panelData, unitDataRaw, fallbackDate) {
+  const timestamps = [
+    ...(panelData?.timestamps || []),
+    ...Object.values(unitDataRaw || {}).flatMap((unitData) => unitData?.timestamps || []),
+  ]
+    .map((timestamp) => Number(timestamp) * 1000)
+    .filter((timestampMs) => Number.isFinite(timestampMs) && timestampMs > 0)
+
+  if (timestamps.length) return Math.max(...timestamps)
+  const fallbackMs = fallbackDate ? new Date(fallbackDate).getTime() : Date.now()
+  return Number.isFinite(fallbackMs) ? fallbackMs : Date.now()
+}
+
+function buildImmediateLiveSample({ panelData, unitDataRaw, meetingState, lastRefresh }) {
+  if (!panelData?.datapoints?.length && !Object.values(unitDataRaw || {}).some((unit) => unit?.datapoints?.length)) return null
+
+  const timestampMs = getLatestTimestampMs(panelData, unitDataRaw, lastRefresh)
+  const wells = WELLS.map((well, index) => ({
+    key: well.key,
+    label: well.label,
+    matchPct: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]]),
+    chokeCommand: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellChokePosition[index]]),
+    overridePosition: null,
+    actualFlow: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellFlow[index]]),
+    targetFlow: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellSetpoint[index]]),
+    staticPressure: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellStaticPressure[index]]),
+    differentialPressure: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellDifferentialPressure[index]]),
+    online: meetingState?.wells?.[String(index + 1)] ?? null,
+    flowRunningPct: null,
+  }))
+
+  const compressors = COMPRESSORS.map((compressor, index) => {
+    const unitData = unitDataRaw?.[TREND_COMPRESSOR_UNIT_KEYS[index]] || null
+    return {
+      key: compressor.key,
+      label: compressor.label,
+      unitLabel: compressor.unitLabel,
+      desiredFlow: getNumericByAddress(panelData, [PANEL_ADDRESSES.unitDesiredFlowSetpoints[index]]),
+      currentFlow: getNumericByAddress(panelData, [PANEL_COMPRESSOR_CURRENT_FLOW_ADDRESSES[index]]) ?? getNumericByAddress(unitData, UNIT_ADDRESSES.actualFlow),
+      meetingFlow: meetingState?.compressors?.[String(index + 1)] ?? null,
+      suctionPressure: getNumericByAddress(unitData, UNIT_ADDRESSES.suctionPressure),
+      dischargePressure: getNumericByAddress(unitData, UNIT_ADDRESSES.dischargePressure),
+      loadedAutoSp: getNumericByAddress(unitData, UNIT_ADDRESSES.loadedAutoSp),
+      witchesHatDp: getNumericByAddress(unitData, UNIT_ADDRESSES.witchesHatDp),
+      witchesHatDpSetpoint: getNumericByAddress(unitData, UNIT_ADDRESSES.witchesHatDpSetpoint),
+    }
+  })
+
+  return {
+    timestampMs,
+    source: 'live-context-immediate',
+    isFallback: false,
+    allWellsMeetingFlow: getBooleanByAddress(panelData, PANEL_ADDRESSES.allWellsMeetingFlow),
+    anyWellBelowSetpoint: getBooleanByAddress(panelData, PANEL_ADDRESSES.anyWellBelowSetpoint),
+    wellsMeetingRate: getNumericByAddress(panelData, [PANEL_ADDRESSES.wellsMeetingRate]),
+    runningCompressors: compressors.filter((compressor) => toNumber(compressor.currentFlow) > 0.01).length || null,
+    compressorLimited: getBooleanByAddress(panelData, '420024'),
+    flowTargetBeingReduced: getBooleanByAddress(panelData, '420034'),
+    compressorsMeetingFlowDemand: getBooleanByAddress(panelData, PANEL_ADDRESSES.compressorsMeetingFlowDemand),
+    anyCompressorNotMeetingDesiredFlow: getBooleanByAddress(panelData, PANEL_ADDRESSES.anyCompressorNotMeetingDesiredFlow),
+    recycleValvePosition: getNumericByAddress(panelData, PANEL_ADDRESSES.recycleValvePosition),
+    dischargeOverrideLatch: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideLatch]),
+    dischargeOverrideCompSpeedSp: getNumericByAddress(panelData, [PANEL_ADDRESSES.de4000OverrideCompSpeedSp]),
+    totalDesiredSiteFlow: getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]),
+    totalAscCompressorFlow: getNumericByAddress(panelData, ['420012']),
+    totalSiteFlow: getNumericByAddress(panelData, ['420005']),
+    panelCommandedCompressorFlow: getNumericByAddress(panelData, ['420042']),
+    siteDischarge: average(compressors.map((compressor) => compressor.dischargePressure)) == null
+      ? null
+      : Math.max(...compressors.map((compressor) => compressor.dischargePressure).filter((value) => value != null)),
+    siteSuction: average(compressors.map((compressor) => compressor.suctionPressure)),
+    wells,
+    compressors,
+  }
+}
+
+function mergeSamplesByTimestamp(samples) {
+  return [...new Map(
+    samples
+      .filter((sample) => Number.isFinite(Number(sample?.timestampMs)))
+      .sort((left, right) => Number(left.timestampMs) - Number(right.timestampMs))
+      .map((sample) => [Number(sample.timestampMs), sample]),
+  ).values()]
 }
 
 function average(values) {
@@ -339,6 +440,13 @@ function buildSharedChartOptions({
 
 function getZoomBounds(samples) {
   if (!samples.length) return null
+  if (samples.length === 1) {
+    const center = samples[0].timestampMs
+    return {
+      min: center - 5 * 60 * 1000,
+      max: center + 5 * 60 * 1000,
+    }
+  }
   return {
     min: samples[0].timestampMs,
     max: samples[samples.length - 1].timestampMs,
@@ -1024,6 +1132,7 @@ function SuctionScoreEventCard({ event }) {
 }
 
 export default function HalfmannTrendingView() {
+  const { panelData, unitDataRaw, meetingState, lastRefresh } = useHalfmannData()
   const [historyPayload, setHistoryPayload] = useState(() => readTrendingCache(24))
   const [loading, setLoading] = useState(() => !readTrendingCache(24))
   const [error, setError] = useState('')
@@ -1037,6 +1146,12 @@ export default function HalfmannTrendingView() {
   const [zoomRange, setZoomRange] = useState(null)
   const [dragState, setDragState] = useState(null)
   const refreshTimerRef = useRef(null)
+  const liveSeedSample = useMemo(() => buildImmediateLiveSample({
+    panelData,
+    unitDataRaw,
+    meetingState,
+    lastRefresh,
+  }), [lastRefresh, meetingState, panelData, unitDataRaw])
 
   const loadHistory = async (selectedWindowKey, liveMode) => {
     const requestedHours = Math.max(getWindowHours(selectedWindowKey), 24)
@@ -1080,7 +1195,11 @@ export default function HalfmannTrendingView() {
     }
   }, [isLiveMode, windowKey])
 
-  const samples = historyPayload?.samples || []
+  const retainedSamples = historyPayload?.samples || []
+  const samples = useMemo(() => mergeSamplesByTimestamp([
+    ...retainedSamples,
+    liveSeedSample,
+  ]), [liveSeedSample, retainedSamples])
   const windowHours = getWindowHours(windowKey)
   const visibleSamples = useMemo(() => getWindowedSamples(samples, windowHours), [samples, windowHours])
   const downsampledVisibleSamples = useMemo(() => downsampleSamples(visibleSamples), [visibleSamples])
@@ -1094,6 +1213,15 @@ export default function HalfmannTrendingView() {
       ? visibleSamples.filter((sample) => sample.timestampMs >= activeZoomRange.min && sample.timestampMs <= activeZoomRange.max)
       : visibleSamples
   ), [activeZoomRange, visibleSamples])
+
+  useEffect(() => {
+    if (!isLiveMode || playheadTimestampMs != null || liveSeedSample?.timestampMs == null) return
+    setPlayheadTimestampMs(liveSeedSample.timestampMs)
+  }, [isLiveMode, liveSeedSample, playheadTimestampMs])
+
+  useEffect(() => {
+    if (liveSeedSample && loading) setLoading(false)
+  }, [liveSeedSample, loading])
 
   useEffect(() => {
     if (!zoomBounds) {
