@@ -24,6 +24,7 @@ const HISTORY_RETENTION_LIMITS = {
 }
 let lastStorageCheckAtMs = 0
 let lastStoragePruneAtMs = 0
+let storagePruneTimer = null
 
 const WELL_HEADERS = {
   '214': ['Wellhead #214 Live Injection Match Percentage', 'Wellhead 214 Live Injection Match Percentage', 'Wellhead #1 Live Injection Match Percentage'],
@@ -262,11 +263,18 @@ function scheduleHistoryPruneIfNeeded() {
   const usageRatio = getFilesystemUsageRatio(DATA_DIR)
   if (usageRatio == null || usageRatio < STORAGE_PRUNE_TRIGGER_RATIO) return
   if (nowMs - lastStoragePruneAtMs < STORAGE_PRUNE_INTERVAL_MS) return
+  if (storagePruneTimer) return
 
   lastStoragePruneAtMs = nowMs
-  try {
-    pruneStoredHistoryNow()
-  } catch {}
+  storagePruneTimer = setTimeout(() => {
+    storagePruneTimer = null
+    try {
+      pruneStoredHistoryNow()
+    } catch (err) {
+      console.error('Halfmann history storage prune failed:', err.message)
+    }
+  }, 30000)
+  if (typeof storagePruneTimer.unref === 'function') storagePruneTimer.unref()
 }
 
 function readJsonLines(filePath) {

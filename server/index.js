@@ -40,6 +40,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3000
 const app = express()
 
+function parseEnvFlag(name, defaultValue = false) {
+  const raw = process.env[name]
+  if (raw == null || raw === '') return defaultValue
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase())
+}
+
+function parseEnvIntervalMs(name, fallbackMs, minimumMs) {
+  const parsed = Number(process.env[name])
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallbackMs
+  return Math.max(minimumMs, parsed)
+}
+
+const HALFMANN_BACKGROUND_JOBS_ENABLED = parseEnvFlag('HALFMANN_BACKGROUND_JOBS_ENABLED', false)
+const HALFMANN_HISTORY_CAPTURE_INTERVAL_MS = parseEnvIntervalMs('HALFMANN_HISTORY_CAPTURE_INTERVAL_MS', 30000, 10000)
+const HALFMANN_HISTORY_CAPTURE_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_HISTORY_CAPTURE_START_DELAY_MS', 60000, 10000)
+const HALFMANN_REPORT_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_REPORT_START_DELAY_MS', 120000, 30000)
+
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 
@@ -1052,12 +1069,18 @@ ensureHalfmannHistoryBootstrapped()
 
 app.listen(PORT, () => {
   console.log(`halfmann-live running on port ${PORT}`)
+
+  if (!HALFMANN_BACKGROUND_JOBS_ENABLED) {
+    console.log('Halfmann background history jobs disabled; serving live requests only')
+    return
+  }
+
   setTimeout(() => {
     Promise.resolve(captureHalfmannRuntimeHistory()).catch(() => {})
-  }, 1500)
-  setInterval(captureHalfmannRuntimeHistory, 2000)
+  }, HALFMANN_HISTORY_CAPTURE_START_DELAY_MS)
+  setInterval(captureHalfmannRuntimeHistory, HALFMANN_HISTORY_CAPTURE_INTERVAL_MS)
   setTimeout(() => {
     Promise.resolve(materializeMonthToDatePerformanceReport()).catch(() => {})
-  }, 30000)
+  }, HALFMANN_REPORT_START_DELAY_MS)
   setInterval(materializeMonthToDatePerformanceReport, 15 * 60 * 1000)
 })
