@@ -83,6 +83,87 @@ function PageCrashFallback({ page, onReturnLive }) {
   )
 }
 
+function HalfmannTrendingSafeView({ onReturnLive, onOpenFullTrending }) {
+  return (
+    <div style={{
+      minHeight: 'calc(100vh - 50px)',
+      background: 'radial-gradient(circle at top left, rgba(73,208,226,0.08), transparent 28%), #080810',
+      color: '#fff',
+      padding: 24,
+    }}>
+      <div style={{
+        maxWidth: 980,
+        margin: '42px auto',
+        border: '1px solid #1f3650',
+        borderRadius: 22,
+        background: 'linear-gradient(180deg, rgba(13,23,38,0.98) 0%, rgba(8,13,22,0.98) 100%)',
+        padding: '26px 28px',
+        boxShadow: '0 20px 70px rgba(0,0,0,0.34)',
+      }}>
+        <div style={{ color: '#49d0e2', fontSize: 11, fontWeight: 900, letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: 10 }}>
+          Trending Safe Mode
+        </div>
+        <h1 style={{ margin: '0 0 10px', fontSize: 30, lineHeight: 1.15 }}>
+          Full trending charts are temporarily isolated.
+        </h1>
+        <p style={{ margin: '0 0 18px', color: '#cbd5e1', fontSize: 15, lineHeight: 1.65 }}>
+          The chart page has been causing browser freezes, so this tab now opens in safe mode to keep the customer Live View reliable. Live data, Diagnostics, Optimization, Performance Report, and All Parameters remain available.
+        </p>
+        <div style={{
+          border: '1px solid rgba(250,204,21,0.35)',
+          borderRadius: 16,
+          background: 'rgba(66,32,6,0.45)',
+          color: '#fde68a',
+          padding: '13px 15px',
+          fontSize: 13,
+          lineHeight: 1.55,
+          marginBottom: 20,
+        }}>
+          Full Trending can still be opened for troubleshooting, but it may freeze the browser until the chart component is repaired.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <button
+            type="button"
+            onClick={onReturnLive}
+            style={{
+              border: '1px solid rgba(34,197,94,0.55)',
+              borderRadius: 999,
+              background: 'rgba(34,197,94,0.14)',
+              color: '#86efac',
+              cursor: 'pointer',
+              fontSize: 11,
+              fontWeight: 900,
+              letterSpacing: '0.14em',
+              padding: '11px 16px',
+              textTransform: 'uppercase',
+            }}
+          >
+            Return to Live View
+          </button>
+          <button
+            type="button"
+            onClick={onOpenFullTrending}
+            style={{
+              border: '1px solid rgba(250,204,21,0.5)',
+              borderRadius: 999,
+              background: 'rgba(250,204,21,0.1)',
+              color: '#fde68a',
+              cursor: 'pointer',
+              fontSize: 11,
+              fontWeight: 900,
+              letterSpacing: '0.14em',
+              padding: '11px 16px',
+              textTransform: 'uppercase',
+            }}
+          >
+            Open Full Trending Diagnostic
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 class PageErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -218,6 +299,7 @@ function UtilityButton({ children, onClick, active = false }) {
 function AppShell() {
   const [page, setPage] = useState(getPage)
   const [adminAuthenticated, setAdminAuthenticated] = useState(false)
+  const [fullTrendingRequested, setFullTrendingRequested] = useState(() => window.location.search.includes('fullTrending=1'))
   const { panelData, meetingState, liveError, commsStatus } = useHalfmannData()
   const isNarrow = useIsNarrowViewport()
 
@@ -247,6 +329,7 @@ function AppShell() {
   }, [page])
 
   function goTo(p) {
+    if (p !== 'trending') setFullTrendingRequested(false)
     if (p === 'performance-report') {
       window.history.pushState({}, '', '/performance-report')
     } else if (p === 'admin-alert-rules') {
@@ -375,7 +458,9 @@ function AppShell() {
             {page === 'live'
               ? <HalfmannLiveView />
               : page === 'trending'
-                ? <HalfmannTrendingView />
+                ? fullTrendingRequested
+                  ? <HalfmannTrendingView />
+                  : <HalfmannTrendingSafeView onReturnLive={() => goTo('live')} onOpenFullTrending={() => setFullTrendingRequested(true)} />
               : page === 'telemetry'
                 ? <HalfmannTelemetryView />
                 : page === 'diagnostics'
