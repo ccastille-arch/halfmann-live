@@ -768,10 +768,12 @@ export function loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback
     startAt,
     endAt,
     // Lightweight trend rows are safe to read more densely than raw snapshots.
-    cadenceSeconds: 2,
-    multiplier: 1.12,
+    // Still keep request-time parsing bounded so opening Trending cannot block
+    // Live View/static requests on Railway's single Node event loop.
+    cadenceSeconds: 5,
+    multiplier: 1.08,
     minimum: 600,
-    maximum: 120000,
+    maximum: 24000,
   })
 
   return readJsonLinesTail(TREND_HISTORY_PATH, maxLines)

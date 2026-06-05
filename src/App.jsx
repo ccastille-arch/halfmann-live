@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Component, Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import HalfmannLiveView from './components/HalfmannLiveView'
 import HalfmannTelemetryView from './components/HalfmannTelemetryView'
 import HalfmannDiagnosticsView from './components/HalfmannDiagnosticsView'
 import HalfmannOptimizationView from './components/HalfmannOptimizationView'
 import HalfmannPerformanceReportView from './components/HalfmannPerformanceReportView'
-import HalfmannTrendingView from './components/HalfmannTrendingView'
 import HalfmannAdminLoginView from './components/HalfmannAdminLoginView'
 import HalfmannDerivedTriggerSettingsAdminView from './components/HalfmannDerivedTriggerSettingsAdminView'
 import HalfmannAlertRulesAdminView from './components/HalfmannAlertRulesAdminView'
@@ -12,6 +11,105 @@ import { HalfmannDataProvider, useHalfmannData } from './context/HalfmannDataCon
 import { PANEL_ADDRESSES, getNumericByAddress } from './engine/halfmannRegisters'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
+const HalfmannTrendingView = lazy(() => import('./components/HalfmannTrendingView'))
+
+function PageLoadingFallback({ label = 'Halfmann page' }) {
+  return (
+    <div style={{
+      minHeight: 'calc(100vh - 50px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#080810',
+      color: '#8bdcff',
+      fontSize: 12,
+      fontWeight: 900,
+      letterSpacing: '0.14em',
+      textTransform: 'uppercase',
+    }}>
+      Loading {label}...
+    </div>
+  )
+}
+
+function PageCrashFallback({ page, onReturnLive }) {
+  return (
+    <div style={{
+      minHeight: 'calc(100vh - 50px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#080810',
+      padding: 24,
+    }}>
+      <div style={{
+        width: 'min(680px, 100%)',
+        border: '1px solid #7f1d1d',
+        borderRadius: 18,
+        background: 'linear-gradient(180deg, rgba(43,12,12,0.96) 0%, rgba(11,17,29,0.96) 100%)',
+        padding: '22px 24px',
+        color: '#fee2e2',
+        boxShadow: '0 18px 60px rgba(0,0,0,0.35)',
+      }}>
+        <div style={{ color: '#fca5a5', fontSize: 11, fontWeight: 900, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 10 }}>
+          Page failed safely
+        </div>
+        <h2 style={{ margin: '0 0 8px', color: '#fff', fontSize: 24 }}>
+          {page === 'trending' ? 'Trending hit a data/render error.' : 'This page hit a render error.'}
+        </h2>
+        <p style={{ margin: '0 0 18px', color: '#fecaca', lineHeight: 1.6 }}>
+          The live customer view is still protected. Return to Live View while this page is repaired.
+        </p>
+        <button
+          type="button"
+          onClick={onReturnLive}
+          style={{
+            border: '1px solid rgba(73,208,226,0.5)',
+            borderRadius: 999,
+            background: 'rgba(73,208,226,0.12)',
+            color: '#7dd3fc',
+            cursor: 'pointer',
+            fontSize: 11,
+            fontWeight: 900,
+            letterSpacing: '0.14em',
+            padding: '10px 16px',
+            textTransform: 'uppercase',
+          }}
+        >
+          Return to Live View
+        </button>
+      </div>
+    </div>
+  )
+}
+
+class PageErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Halfmann page render failed:', error, info)
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false })
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <PageCrashFallback page={this.props.page} onReturnLive={this.props.onReturnLive} />
+    }
+    return this.props.children
+  }
+}
 
 function getPage() {
   const path = window.location.pathname.toLowerCase()
@@ -272,17 +370,21 @@ function AppShell() {
         </div>
       </nav>
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        {page === 'live'
-          ? <HalfmannLiveView />
-          : page === 'trending'
-            ? <HalfmannTrendingView />
-          : page === 'telemetry'
-            ? <HalfmannTelemetryView />
-            : page === 'diagnostics'
-              ? <HalfmannDiagnosticsView />
-              : page === 'performance-report'
-                ? <HalfmannPerformanceReportView />
-                : <HalfmannOptimizationView />}
+        <PageErrorBoundary page={page} resetKey={page} onReturnLive={() => goTo('live')}>
+          <Suspense fallback={<PageLoadingFallback label={page.replace('-', ' ')} />}>
+            {page === 'live'
+              ? <HalfmannLiveView />
+              : page === 'trending'
+                ? <HalfmannTrendingView />
+              : page === 'telemetry'
+                ? <HalfmannTelemetryView />
+                : page === 'diagnostics'
+                  ? <HalfmannDiagnosticsView />
+                  : page === 'performance-report'
+                    ? <HalfmannPerformanceReportView />
+                    : <HalfmannOptimizationView />}
+          </Suspense>
+        </PageErrorBoundary>
       </div>
     </div>
   )

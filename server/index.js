@@ -56,6 +56,7 @@ const HALFMANN_BACKGROUND_JOBS_ENABLED = parseEnvFlag('HALFMANN_BACKGROUND_JOBS_
 const HALFMANN_HISTORY_CAPTURE_INTERVAL_MS = parseEnvIntervalMs('HALFMANN_HISTORY_CAPTURE_INTERVAL_MS', 30000, 10000)
 const HALFMANN_HISTORY_CAPTURE_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_HISTORY_CAPTURE_START_DELAY_MS', 60000, 10000)
 const HALFMANN_REPORT_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_REPORT_START_DELAY_MS', 120000, 30000)
+const EXTERNAL_FETCH_TIMEOUT_MS = parseEnvIntervalMs('HALFMANN_EXTERNAL_FETCH_TIMEOUT_MS', 8000, 1000)
 
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
@@ -456,7 +457,7 @@ function mergeDatapointsWithFallback(primaryDatapoints = [], fallbackDatapoints 
 }
 
 async function fetchTextOrJson(url, options = {}) {
-  const response = await fetch(url, options)
+  const response = await fetchWithTimeout(url, options)
   const text = await response.text()
   let data = text
   try { data = JSON.parse(text) } catch {}
@@ -466,6 +467,26 @@ async function fetchTextOrJson(url, options = {}) {
     contentType: response.headers.get('content-type') || '',
     text,
     data,
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = EXTERNAL_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  if (typeof timer.unref === 'function') timer.unref()
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || controller.signal,
+    })
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`External request timed out after ${timeoutMs}ms`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -701,7 +722,7 @@ app.get('/api/mlink/device', async (req, res) => {
   const { deviceId } = req.query
   if (!deviceId) return res.status(400).json({ error: 'deviceId required' })
   try {
-    const r = await fetch(`${MLINK_BASE}/LatestDeviceData?deviceId=${deviceId}&code=${key}`)
+    const r = await fetchWithTimeout(`${MLINK_BASE}/LatestDeviceData?deviceId=${deviceId}&code=${key}`)
     if (!r.ok) {
       const body = await r.text().catch(() => '')
       return res.status(r.status).json({ error: 'MLINK error', status: r.status, details: body.slice(0, 500) })
@@ -746,7 +767,7 @@ app.get('/api/mlink/device/full', async (req, res) => {
     runReportNote = runReportDps.length ? 'Yesterday RunReport cache hit' : runReportNote
   } else {
     try {
-      const r = await fetch(
+      const r = await fetchWithTimeout(
         `${MLINK_BASE}/RunReport?deviceId=${encodeURIComponent(deviceId)}&startTs=${yesterdayStartUTC}&endTs=${yesterdayEndUTC}&code=${key}`
       )
       if (r.ok) {
@@ -815,7 +836,7 @@ app.get('/api/mlink/probe', async (req, res) => {
   const extraParams = Object.entries(rest).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')
   const url = `${baseUrl}/${endpoint}?${devicePart}code=${key}${extraParams}`
   try {
-    const r = await fetch(url, { method: httpMethod || 'GET' })
+    const r = await fetchWithTimeout(url, { method: httpMethod || 'GET' })
     const text = await r.text()
     let parsed
     try { parsed = JSON.parse(text) } catch { parsed = text }
@@ -834,7 +855,7 @@ app.get('/api/mlink/device/keys', async (req, res) => {
   const { deviceId } = req.query
   if (!deviceId) return res.status(400).json({ error: 'deviceId required' })
   try {
-    const r = await fetch(`${MLINK_BASE}/LatestDeviceData?deviceId=${deviceId}&code=${key}`)
+    const r = await fetchWithTimeout(`${MLINK_BASE}/LatestDeviceData?deviceId=${deviceId}&code=${key}`)
     if (!r.ok) return res.status(r.status).json({ error: 'MLINK error' })
     const data = await r.json()
     const keys = (data?.datapoints || [])
