@@ -342,6 +342,11 @@ function estimateTailLineBudget({ startAt, endAt, cadenceSeconds = 2, multiplier
   return Math.max(minimum, Math.min(maximum, estimated))
 }
 
+function getEnvNumber(name, fallback) {
+  const parsed = Number(process.env[name])
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 function findDatapoint(snapshot, address) {
   const datapoints = Array.isArray(snapshot?.datapoints) ? snapshot.datapoints : []
   return datapoints.find((datapoint) =>
@@ -712,12 +717,12 @@ export function loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback 
   const maxLines = estimateTailLineBudget({
     startAt,
     endAt,
-    // Request-time trending does not need every 2-second point to stay usable.
-    // Keep this bounded so one trending request cannot stall the whole server.
-    cadenceSeconds: 10,
-    multiplier: 1.2,
+    // Request-time reports and optimization pages do not need every 2-second
+    // point. Keep this bounded so they cannot stall the customer Live View.
+    cadenceSeconds: getEnvNumber('HALFMANN_PANEL_HISTORY_READ_CADENCE_SECONDS', 30),
+    multiplier: 1.1,
     minimum: 360,
-    maximum: 12000,
+    maximum: getEnvNumber('HALFMANN_PANEL_HISTORY_MAX_READ_LINES', 5000),
   })
 
   return readJsonLinesTail(PANEL_MATCH_HISTORY_PATH, maxLines)
@@ -745,7 +750,7 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
     cadenceSeconds: 12,
     multiplier: 1.15,
     minimum: 180,
-    maximum: 900,
+    maximum: getEnvNumber('HALFMANN_RAW_HISTORY_MAX_READ_LINES', 600),
   })
 
   return readJsonLinesTail(RAW_HISTORY_PATH, maxLines)
@@ -770,10 +775,10 @@ export function loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback
     // Lightweight trend rows are safe to read more densely than raw snapshots.
     // Still keep request-time parsing bounded so opening Trending cannot block
     // Live View/static requests on Railway's single Node event loop.
-    cadenceSeconds: 5,
+    cadenceSeconds: getEnvNumber('HALFMANN_TREND_HISTORY_READ_CADENCE_SECONDS', 10),
     multiplier: 1.08,
     minimum: 600,
-    maximum: 24000,
+    maximum: getEnvNumber('HALFMANN_TREND_HISTORY_MAX_READ_LINES', 12000),
   })
 
   return readJsonLinesTail(TREND_HISTORY_PATH, maxLines)

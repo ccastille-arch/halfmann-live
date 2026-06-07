@@ -10,6 +10,7 @@ const PANEL_DESIRED_FLOW_ADDRESSES = ['460002', '460004', '460006', '460008']
 const UNIT_ACTUAL_FLOW_ADDRESSES = ['400656']
 const PANEL_RECYCLE_ADDRESSES = ['400189', '460618']
 const PANEL_OVERRIDE_LATCH_ADDRESS = '460018'
+const CONSUMER_HISTORY_TIMEOUT_MS = Math.max(1000, Number(process.env.HALFMANN_OPTIMIZATION_CONSUMER_TIMEOUT_MS) || 6000)
 
 function normalizeEnvValue(value) {
   let normalized = String(value || '').trim()
@@ -33,6 +34,19 @@ function buildHeaders(token) {
     'content-type': 'application/json',
     'x-api-token': normalized,
     authorization: `Bearer ${normalized}`,
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = CONSUMER_HISTORY_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -366,7 +380,7 @@ export async function getOptimizationHistory({
   const token = normalizeToken(apiToken)
   if (token) {
     try {
-      const response = await fetch(`${accessBase}/api/access/sources/${encodeURIComponent(sourceKey)}/query`, {
+      const response = await fetchWithTimeout(`${accessBase}/api/access/sources/${encodeURIComponent(sourceKey)}/query`, {
         method: 'POST',
         headers: buildHeaders(token),
         body: JSON.stringify({
