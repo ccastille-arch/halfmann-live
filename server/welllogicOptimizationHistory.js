@@ -12,6 +12,12 @@ const PANEL_RECYCLE_ADDRESSES = ['400189', '460618']
 const PANEL_OVERRIDE_LATCH_ADDRESS = '460018'
 const CONSUMER_HISTORY_TIMEOUT_MS = Math.max(1000, Number(process.env.HALFMANN_OPTIMIZATION_CONSUMER_TIMEOUT_MS) || 6000)
 
+function parseEnvFlag(name, fallback = false) {
+  const raw = process.env[name]
+  if (raw == null || raw === '') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase())
+}
+
 function normalizeEnvValue(value) {
   let normalized = String(value || '').trim()
   if (!normalized) return ''
@@ -377,7 +383,14 @@ export async function getOptimizationHistory({
   }
   let consumerError = null
 
-  const token = normalizeToken(apiToken)
+  const consumerHistoryEnabled = parseEnvFlag('HALFMANN_OPTIMIZATION_CONSUMER_HISTORY_ENABLED', false)
+  const token = consumerHistoryEnabled ? normalizeToken(apiToken) : ''
+  if (!consumerHistoryEnabled && apiToken) {
+    consumerError = {
+      status: null,
+      message: 'External consumer optimization history disabled for site reliability',
+    }
+  }
   if (token) {
     try {
       const response = await fetchWithTimeout(`${accessBase}/api/access/sources/${encodeURIComponent(sourceKey)}/query`, {

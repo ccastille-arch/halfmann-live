@@ -722,7 +722,7 @@ export function loadHalfmannPanelMatchHistory({ startAt, endAt, includeFallback 
     cadenceSeconds: getEnvNumber('HALFMANN_PANEL_HISTORY_READ_CADENCE_SECONDS', 30),
     multiplier: 1.1,
     minimum: 360,
-    maximum: getEnvNumber('HALFMANN_PANEL_HISTORY_MAX_READ_LINES', 5000),
+    maximum: getEnvNumber('HALFMANN_PANEL_HISTORY_MAX_READ_LINES', 2500),
   })
 
   return readJsonLinesTail(PANEL_MATCH_HISTORY_PATH, maxLines)
@@ -750,7 +750,7 @@ export function loadHalfmannRawHistory({ startAt, endAt } = {}) {
     cadenceSeconds: 12,
     multiplier: 1.15,
     minimum: 180,
-    maximum: getEnvNumber('HALFMANN_RAW_HISTORY_MAX_READ_LINES', 600),
+    maximum: getEnvNumber('HALFMANN_RAW_HISTORY_MAX_READ_LINES', 300),
   })
 
   return readJsonLinesTail(RAW_HISTORY_PATH, maxLines)
@@ -778,7 +778,7 @@ export function loadHalfmannTrendSampleHistory({ startAt, endAt, includeFallback
     cadenceSeconds: getEnvNumber('HALFMANN_TREND_HISTORY_READ_CADENCE_SECONDS', 10),
     multiplier: 1.08,
     minimum: 600,
-    maximum: getEnvNumber('HALFMANN_TREND_HISTORY_MAX_READ_LINES', 12000),
+    maximum: getEnvNumber('HALFMANN_TREND_HISTORY_MAX_READ_LINES', 6000),
   })
 
   return readJsonLinesTail(TREND_HISTORY_PATH, maxLines)
