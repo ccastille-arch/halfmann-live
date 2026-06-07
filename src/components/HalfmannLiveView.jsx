@@ -591,7 +591,11 @@ export default function HalfmannLiveView() {
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const wellLabel = LIVE_WELL_DISPLAY_NAMES[index] ?? String(wellNumber)
-    const actual = getFreshNumericByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredFreshDatapoint(panelData, panel, keys)?.value)
+    const actualAddressDatapoint = resolveDatapointByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]])
+    const actualFreshDatapoint = isFallbackCacheDatapoint(panelData, actualAddressDatapoint) ? null : actualAddressDatapoint
+    const actualTextDatapoint = resolvePreferredFreshDatapoint(panelData, panel, keys)
+    const actual = parseLiveNumeric(actualFreshDatapoint?.value) ?? parseLiveNumeric(actualTextDatapoint?.value)
+    const actualHiddenAsStale = actual == null && isFallbackCacheDatapoint(panelData, actualAddressDatapoint)
     const desiredInfo = getWellSetpointInfo(panelData, panel, wellNumber, perWellTarget)
     const calculatedDesired = getWellCalculatedDesiredFlow(panelData, panel, wellNumber)
     const desired = desiredInfo.value
@@ -613,15 +617,15 @@ export default function HalfmannLiveView() {
       `Wellhead #${wellNumber} Tubing Pressure`,
     ])
     const oilPriority = getFreshNumericByAddress(panelData, [LIVE_WELL_OIL_PRIORITY_ADDRESSES[index]])
-    const liveInjectionMatchPct = parsePercentNumeric(
-      resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]])?.value
-        ?? resolvePreferredDatapoint(panel, [
-          `Wellhead #${wellLabel} Live Injection Match Percentage`,
-          `Wellhead #${wellNumber} Live Injection Match Percentage`,
-          `Well ${wellLabel} Live Injection Match Percentage`,
-          `Well ${wellNumber} Live Injection Match Percentage`,
-        ])?.value,
-    )
+    const liveInjectionMatchDatapoint = resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]])
+    const liveInjectionMatchTextDatapoint = resolvePreferredDatapoint(panel, [
+      `Wellhead #${wellLabel} Live Injection Match Percentage`,
+      `Wellhead #${wellNumber} Live Injection Match Percentage`,
+      `Well ${wellLabel} Live Injection Match Percentage`,
+      `Well ${wellNumber} Live Injection Match Percentage`,
+    ])
+    const liveInjectionMatchPct = parsePercentNumeric(liveInjectionMatchDatapoint?.value ?? liveInjectionMatchTextDatapoint?.value)
+    const liveInjectionMatchFallback = isFallbackCacheDatapoint(panelData, liveInjectionMatchDatapoint)
     const liveMatchAtTarget = liveInjectionMatchPct != null ? liveInjectionMatchPct >= (100 - wellTargetPct) : null
     return {
       wellNumber,
@@ -637,7 +641,9 @@ export default function HalfmannLiveView() {
       tubingPres,
       oilPriority,
       gap: actual != null && desired != null ? actual - desired : null,
+      actualHiddenAsStale,
       matchPct: liveInjectionMatchPct,
+      matchPctFallback: liveInjectionMatchFallback,
       atTarget: liveMatchAtTarget,
       sacrificed: calculatedDesired != null && desired != null && calculatedDesired < desired,
     }
@@ -868,9 +874,10 @@ export default function HalfmannLiveView() {
                     const hasData = well.actual != null
                     const onTarget = well.atTarget === true
                     const hasMatchPct = well.matchPct != null
-                    const tone = !hasData ? 'none' : !hasMatchPct ? 'neutral' : onTarget ? 'good' : 'bad'
-                    const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'bad' ? '#7a1a1a' : tone === 'neutral' ? '#2d3a52' : '#1a1a2a'
-                    const bgColor = tone === 'good' ? '#071410' : tone === 'bad' ? '#180909' : tone === 'neutral' ? '#101827' : '#0a0a14'
+                    const liveFeedGap = !hasData && well.actualHiddenAsStale
+                    const tone = liveFeedGap ? 'warning' : !hasData ? 'none' : !hasMatchPct ? 'neutral' : onTarget ? 'good' : 'bad'
+                    const borderColor = tone === 'good' ? '#1d6c3d' : tone === 'bad' ? '#7a1a1a' : tone === 'warning' ? '#9a6a00' : tone === 'neutral' ? '#2d3a52' : '#1a1a2a'
+                    const bgColor = tone === 'good' ? '#071410' : tone === 'bad' ? '#180909' : tone === 'warning' ? '#160f03' : tone === 'neutral' ? '#101827' : '#0a0a14'
                     return (
                       <div key={well.wellNumber} className="rounded-xl border p-4 flex flex-col gap-0"
                         style={{ borderColor, background: bgColor }}>
@@ -881,18 +888,19 @@ export default function HalfmannLiveView() {
                           {well.matchPct != null ? (
                             <div
                               className="text-[9px] font-bold uppercase tracking-wider shrink-0"
-                              style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : '#93c5fd' }}
+                              style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : tone === 'warning' ? '#facc15' : '#93c5fd' }}
                             >
-                              {well.matchPct.toFixed(1)}% on target
+                              {well.matchPct.toFixed(1)}% {well.matchPctFallback ? 'last match' : 'on target'}
                             </div>
                           ) : null}
                         </div>
                         <div className="mb-1">
                           <div className="text-[24px] font-black leading-none"
-                            style={{ color: !hasData ? '#333' : tone === 'good' ? '#22c55e' : tone === 'bad' ? '#ef4444' : '#93c5fd', fontFamily: "'Arial Black'" }}>
-                            {hasData ? well.actual.toFixed(3) : 'NO DATA'}
+                            style={{ color: liveFeedGap ? '#facc15' : !hasData ? '#333' : tone === 'good' ? '#22c55e' : tone === 'bad' ? '#ef4444' : '#93c5fd', fontFamily: "'Arial Black'" }}>
+                            {hasData ? well.actual.toFixed(3) : liveFeedGap ? 'FEED GAP' : 'NO DATA'}
                           </div>
                           {hasData && <div className="text-[9px] mt-0.5" style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : '#93c5fd' }}>MMSCFD actual</div>}
+                          {liveFeedGap && <div className="text-[9px] mt-0.5 text-[#facc15]">Actual flow not posted in current live feed</div>}
                         </div>
                         {well.desired != null ? (
                           <div className="mb-2">
@@ -913,7 +921,9 @@ export default function HalfmannLiveView() {
                                   background: onTarget ? 'linear-gradient(to right, #22c55e, #4fc3f7)' : '#ef4444',
                                 }} />
                             </div>
-                            <div className="text-[9px] text-[#555] mt-0.5">Direct MLink injection match register</div>
+                            <div className="text-[9px] text-[#555] mt-0.5">
+                              {well.matchPctFallback ? 'Last cached panel match register' : 'Direct MLink injection match register'}
+                            </div>
                           </div>
                         )}
                         {hasData && hasMatchPct && (
