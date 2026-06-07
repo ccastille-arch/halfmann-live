@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { ensureScheduledPerformanceArchives, generatePerformanceReport, getPerformanceReportMeta } from './welllogicPerformanceReport.js'
 import { getOptimizationHistory } from './welllogicOptimizationHistory.js'
 import { ensureHalfmannHistoryBootstrapped, loadHalfmannTrendingHistory, recordHalfmannPanelMatchSnapshot, recordHalfmannRawSnapshot } from './halfmannHistoryStore.js'
@@ -121,6 +121,13 @@ function applyLegacySettingsToDerived(input = {}) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() })
+})
+
+app.get('/api/public/pad-visibility', (_req, res) => {
+  res.json({
+    halfmann: parseEnvFlag('HALFMANN_PAD_VISIBLE', true),
+    fetchedAt: new Date().toISOString(),
+  })
 })
 
 app.get('/api/settings', (_req, res) => {
