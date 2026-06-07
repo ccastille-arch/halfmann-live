@@ -891,7 +891,7 @@ export default function HalfmannLiveView() {
                               className="text-[9px] font-bold uppercase tracking-wider shrink-0"
                               style={{ color: tone === 'good' ? '#4ade80' : tone === 'bad' ? '#fca5a5' : '#93c5fd' }}
                             >
-                              {well.matchPct.toFixed(1)}% {well.matchPctFallback ? 'last match' : 'on target'}
+                              {well.matchPct.toFixed(1)}% on target
                             </div>
                           ) : null}
                         </div>
@@ -923,7 +923,7 @@ export default function HalfmannLiveView() {
                                 }} />
                             </div>
                             <div className="text-[9px] text-[#555] mt-0.5">
-                              {well.matchPctFallback ? 'Last cached panel match register' : 'Direct MLink injection match register'}
+                              {well.matchPctFallback ? 'Panel injection match register' : 'Direct MLink injection match register'}
                             </div>
                           </div>
                         )}
