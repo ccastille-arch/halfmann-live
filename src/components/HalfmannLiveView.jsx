@@ -586,6 +586,7 @@ export default function HalfmannLiveView() {
   // Individual well setpoints vary (e.g. 1.225 / 1.100 / 1.450 / 1.000 / 1.350 MMSCFD from Altronic panel).
   // Dividing total by 5 produces wrong ON TARGET / LOW per well - do not use as a per-well fallback.
   const totalDesiredSite = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, ['Total Desired Site Flow'])?.value)
+  const panelTotalActualFlow = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalSiteFlow]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, ['Total Site Flow'])?.value)
   const perWellTarget = null
 
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
@@ -666,7 +667,9 @@ export default function HalfmannLiveView() {
   const hourMeterRegister = visibleRegisters.find(meta => meta.label === 'Hour Meter')
   const recommendedCompressors = getNumericByAddress(panelData, [PANEL_ADDRESSES.recommendedCompressors]) ?? getNumeric(panel, ['Recommended Number Of Compressors'])
 
-  const totalActualFlow = liveWellPerformance.reduce((sum, w) => sum + (w.actual ?? 0), 0)
+  const visibleWellActualFlow = liveWellPerformance.reduce((sum, w) => sum + (w.actual ?? 0), 0)
+  const siteActualFlow = panelTotalActualFlow ?? visibleWellActualFlow
+  const siteActualFlowSource = panelTotalActualFlow != null ? 'panel total' : 'visible well sum'
   const wellsWithBoth = liveWellPerformance.filter(w => w.actual != null && w.desired != null)
   const totalDesiredFromWells = wellsWithBoth.reduce((sum, w) => sum + (w.desired ?? 0), 0)
   const effectiveTotalDesired = totalDesiredSite ?? (wellsWithBoth.length > 0 ? totalDesiredFromWells : null)
@@ -692,12 +695,12 @@ export default function HalfmannLiveView() {
   // Site on target: compare total actual vs Total Desired Site Flow panel register.
   // Per-well individual setpoints may still be missing, but the site total can still be valid.
   const siteOnTarget = feedStaleOrDown ? null : totalDesiredSite != null && totalDesiredSite > 0
-    ? Math.abs(totalActualFlow - totalDesiredSite) / totalDesiredSite <= 0.05
+    ? Math.abs(siteActualFlow - totalDesiredSite) / totalDesiredSite <= 0.05
     : wellsWithBoth.length > 0 && totalDesiredFromWells > 0
-      ? Math.abs(totalActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
+      ? Math.abs(siteActualFlow - totalDesiredFromWells) / totalDesiredFromWells <= 0.05
       : null
 
-  const unitActualFlows = deriveMissingCompressorFlowDatapoints(rawUnitActualFlows, totalActualFlow, HALFMANN_UNITS)
+  const unitActualFlows = deriveMissingCompressorFlowDatapoints(rawUnitActualFlows, visibleWellActualFlow, HALFMANN_UNITS)
   const primaryUnitIndexes = HALFMANN_UNITS.map((unit, index) => (!unit.standby ? index : null)).filter(index => index != null)
   const compressorCommandScores = primaryUnitIndexes.map((index) => {
     const actual = parseLiveNumeric(unitActualFlows[index]?.value)
@@ -836,11 +839,11 @@ export default function HalfmannLiveView() {
                   good={siteOnTarget}
                   value={feedStaleOrDown ? 'STALE' : undefined}
                   detail={feedStaleOrDown
-                    ? `Latest good totals are ${totalActualFlow.toFixed(3)} actual${totalDesiredSite != null ? ` vs ${totalDesiredSite.toFixed(3)} MMSCFD desired` : ''}, but live site health is not proven while the feed is stale/down.`
+                    ? `Latest good totals are ${siteActualFlow.toFixed(3)} actual${totalDesiredSite != null ? ` vs ${totalDesiredSite.toFixed(3)} MMSCFD desired` : ''}, but live site health is not proven while the feed is stale/down.`
                     : totalDesiredSite != null
-                    ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredSite.toFixed(3)} MMSCFD site total`
+                    ? `${siteActualFlow.toFixed(3)} actual vs ${totalDesiredSite.toFixed(3)} MMSCFD site total (${siteActualFlowSource})`
                     : wellsWithBoth.length > 0
-                      ? `${totalActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired`
+                      ? `${siteActualFlow.toFixed(3)} actual vs ${totalDesiredFromWells.toFixed(3)} MMSCFD desired (${siteActualFlowSource})`
                       : activeWells.length > 0
                         ? 'Well targets are not available yet'
                         : 'Waiting for flow data...'}
@@ -865,7 +868,7 @@ export default function HalfmannLiveView() {
                     Well-by-Well Status
                   </div>
                   <div className="text-[10px] text-[#555]">
-                    Total: <span className="text-white font-bold">{totalActualFlow.toFixed(3)}</span>
+                    Total: <span className="text-white font-bold">{siteActualFlow.toFixed(3)}</span>
                     {effectiveTotalDesired != null && <span className="text-[#555]"> / {effectiveTotalDesired.toFixed(3)} MMSCFD desired</span>}
                   </div>
                 </div>
@@ -1082,7 +1085,7 @@ export default function HalfmannLiveView() {
                     Well-by-Well Status
                   </div>
                   <div className="text-[10px] text-[#555]">
-                    Total: <span className="text-white font-bold">{totalActualFlow.toFixed(3)}</span>
+                    Total: <span className="text-white font-bold">{siteActualFlow.toFixed(3)}</span>
                     {effectiveTotalDesired != null && <span className="text-[#555]"> / {effectiveTotalDesired.toFixed(3)} MMSCFD desired</span>}
                   </div>
                 </div>
