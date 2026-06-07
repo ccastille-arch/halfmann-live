@@ -226,7 +226,8 @@ function getPanelCompressorMeetingSignals(data, dataMap) {
 
 function getTimestamp(data) {
   if (!data?.timestamps?.[0]) return null
-  return new Date(data.timestamps[0] * 1000)
+  const timestamp = new Date(data.timestamps[0] * 1000)
+  return Number.isFinite(timestamp.getTime()) ? timestamp : null
 }
 
 function deriveMissingCompressorFlows(unitFlows, totalActualFlow, units) {
@@ -821,7 +822,9 @@ export default function HalfmannDiagnosticsView() {
       }
     })
 
-    const totalActual = wells.reduce((sum, well) => sum + (well.actual ?? 0), 0)
+    const visibleWellActual = wells.reduce((sum, well) => sum + (well.actual ?? 0), 0)
+    const panelTotalActual = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalSiteFlow]) ?? getNumeric(panel, ['Total Site Flow'])
+    const totalActual = panelTotalActual ?? visibleWellActual
     const totalDesiredSite = getNumericByAddress(panelData, [PANEL_ADDRESSES.totalDesiredSiteFlow]) ?? getNumeric(panel, ['Total Desired Site Flow'])
     const totalDesiredFromWells = wells.reduce((sum, well) => sum + (well.desired ?? 0), 0)
     const totalDesired = totalDesiredSite ?? (totalDesiredFromWells > 0 ? totalDesiredFromWells : null)
@@ -844,7 +847,7 @@ export default function HalfmannDiagnosticsView() {
 
     const rawUnitActualFlows = HALFMANN_UNITS.map((unit, index) =>
       getNumericByAddress(unitDataRaw[unit.key], UNIT_ADDRESSES.actualFlow) ?? getNumeric(unitMaps[index], ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV']))
-    const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, totalActual, HALFMANN_UNITS)
+    const unitActualFlows = deriveMissingCompressorFlows(rawUnitActualFlows, visibleWellActual, HALFMANN_UNITS)
     const panelUnitCurrentFlowOutputs = HALFMANN_UNITS.map((unit) => {
       const compressorNumber = UNIT_TO_COMP_NUM[unit.key]
       const unitNumber = unit.label.match(/\d{4}/)?.[0]
@@ -1129,7 +1132,7 @@ export default function HalfmannDiagnosticsView() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: isNarrow ? 'space-between' : 'flex-end', gap: 10, flexWrap: 'wrap' }}>
             <CommsIndicator commsStatus={commsStatus} />
-            {pageTime && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
+            {pageTime instanceof Date && Number.isFinite(pageTime.getTime()) && <span style={{ fontSize: 10, color: '#64748b' }}>Updated {pageTime.toLocaleTimeString()}</span>}
             <button
               onClick={refresh}
               disabled={loading}
