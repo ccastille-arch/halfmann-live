@@ -281,6 +281,9 @@ export function parseLiveDatapoints(data) {
       value,
       units: dp.units || dp.unit,
       desc: dp.desc || dp.dataSourceName,
+      address: dp.address,
+      addressStr: dp.addressStr,
+      _source: dp._source,
     }
     // Index by alias (primary key used by MLink cloud)
     result[alias] = dpObj

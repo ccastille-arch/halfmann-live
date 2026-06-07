@@ -211,6 +211,18 @@ function getUnitActualFlow(unitData, unitMap) {
   return getNumericByAddress(unitData, UNIT_ADDRESSES.actualFlow) ?? getNumeric(unitMap, ['Flow Rate', 'Flow Rate PID PV', 'Flow Rate PV', 'Flow PID PV', 'Compressor Flow Rate PID PV', 'Stage 3 Flow Rate'])
 }
 
+function getUnitEngineSpeed(unitData, unitMap) {
+  return getNumericByAddress(unitData, UNIT_ADDRESSES.engineSpeed) ?? getNumeric(unitMap, ['RPM', 'Driver Speed', 'ENGINE RPM', 'Engine Speed', 'Engine Speed From EICS'])
+}
+
+function shouldUseCurrentOnlySnapshot(unit, data) {
+  if (!unit?.standby || !data) return false
+  const dataMap = parseLiveDatapoints(data)
+  const engineSpeed = getUnitEngineSpeed(data, dataMap)
+  const actualFlow = getUnitActualFlow(data, dataMap)
+  return engineSpeed != null && engineSpeed <= 0 && (actualFlow == null || actualFlow <= 0.01)
+}
+
 function isWellMeetingTarget(actual, desired, tolerancePct) {
   if (actual == null || desired == null || desired <= 0) return null
   return actual >= desired * (1 - (tolerancePct / 100))
@@ -361,7 +373,9 @@ export function HalfmannDataProvider({ children }) {
       const unitHardFailure = !!unitResults[index].error || unitCount === 0
       const usable = isUsableDeviceSnapshot(unit.key, unitResults[index].data)
       if (usable) {
-        nextUnits[unit.key] = mergeSnapshotData(previousUnits[unit.key], unitResults[index].data)
+        nextUnits[unit.key] = shouldUseCurrentOnlySnapshot(unit, unitResults[index].data)
+          ? mergeSnapshotData(null, unitResults[index].data)
+          : mergeSnapshotData(previousUnits[unit.key], unitResults[index].data)
         healthyDevices.push(unit.label)
       } else if (unitHardFailure && previousUnits[unit.key]) {
         heldDevices.push(unit.label)

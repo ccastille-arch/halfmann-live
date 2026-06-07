@@ -117,11 +117,33 @@ function resolvePreferredDatapoint(dataMap, labels) {
 
 function resolveDatapointByAddress(data, addresses) { return sharedResolveDatapointByAddress(data, addresses) }
 
+function isFallbackCacheDatapoint(data, datapoint) {
+  return getSourceState(data, 'dashboardSnapshot') === 'fallback-cache' && datapoint?._source === 'dashboardSnapshot'
+}
+
+function resolveFreshDatapointByAddress(data, addresses) {
+  const datapoint = resolveDatapointByAddress(data, addresses)
+  return isFallbackCacheDatapoint(data, datapoint) ? null : datapoint
+}
+
+function resolvePreferredFreshDatapoint(data, dataMap, labels) {
+  const datapoint = resolvePreferredDatapoint(dataMap, labels)
+  return isFallbackCacheDatapoint(data, datapoint) ? null : datapoint
+}
+
 function getNumeric(dataMap, labels) {
   return parseLiveNumeric(resolvePreferredDatapoint(dataMap, labels)?.value)
 }
 
 function getNumericByAddress(data, addresses) { return sharedGetNumericByAddress(data, addresses) }
+
+function getFreshNumericByAddress(data, addresses) {
+  return parseLiveNumeric(resolveFreshDatapointByAddress(data, addresses)?.value)
+}
+
+function getFreshNumeric(data, dataMap, labels) {
+  return parseLiveNumeric(resolvePreferredFreshDatapoint(data, dataMap, labels)?.value)
+}
 
 function parsePanelBooleanValue(raw) {
   if (raw == null) return null
@@ -168,7 +190,7 @@ function getPanelCompressorMeetingSignals(data, dataMap) {
 }
 
 function getWellSetpointInfo(data, dataMap, wellNumber) {
-  const customerTargetDatapoint = resolveDatapointByAddress(data, [LIVE_WELL_SETPOINT_ADDRESSES[wellNumber - 1]]) ?? resolvePreferredDatapoint(dataMap, [
+  const customerTargetDatapoint = resolveFreshDatapointByAddress(data, [LIVE_WELL_SETPOINT_ADDRESSES[wellNumber - 1]]) ?? resolvePreferredFreshDatapoint(data, dataMap, [
     `Wellhead #${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint From Customer PLC`,
     `Well ${wellNumber} Setpoint`,
@@ -179,7 +201,7 @@ function getWellSetpointInfo(data, dataMap, wellNumber) {
 }
 
 function getWellCalculatedDesiredFlow(data, dataMap, wellNumber) {
-  return getNumericByAddress(data, [LIVE_WELL_CALCULATED_DESIRED_ADDRESSES[wellNumber - 1]]) ?? parseLiveNumeric(resolvePreferredDatapoint(dataMap, [
+  return getFreshNumericByAddress(data, [LIVE_WELL_CALCULATED_DESIRED_ADDRESSES[wellNumber - 1]]) ?? parseLiveNumeric(resolvePreferredFreshDatapoint(data, dataMap, [
     `Wellhead #${wellNumber} Calculated Desired Flow`,
     `Well ${wellNumber} Calculated Desired Flow`,
   ])?.value)
@@ -188,7 +210,7 @@ function getWellCalculatedDesiredFlow(data, dataMap, wellNumber) {
 function getUnitDesiredFlowDatapoint(panelData, panelDataMap, unitData, unitDataMap, unitKey, unitLabel) {
   const compNum = { unit2128: 1, unit2130: 2, unit2127: 3, unit2129: 4 }[unitKey]
   const unitNum = unitLabel.match(/\d{4}/)?.[0]
-  return resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.unitDesiredFlowSetpoints[compNum - 1]]) ?? resolvePreferredDatapoint(panelDataMap, [
+  return resolveFreshDatapointByAddress(panelData, [PANEL_ADDRESSES.unitDesiredFlowSetpoints[compNum - 1]]) ?? resolvePreferredFreshDatapoint(panelData, panelDataMap, [
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desire Flow SP For PID Murphy`] : []),
     ...(compNum && unitNum ? [`Compressor #${compNum} Unit ${unitNum} Desired Flow SP For PID Murphy`] : []),
     ...(compNum ? [
@@ -543,6 +565,7 @@ export default function HalfmannLiveView() {
   const compressorCommandTolerancePct = Number(siteSettings?.derivedTriggerSettings?.compressorDispatch?.compressorCommandMatchTolerancePct) || 5
   const feedLimited = !commsStatus?.isHolding && (commsStatus?.limitedDevices?.length ?? 0) > 0
   const feedStaleOrDown = Boolean(commsStatus?.siteDown || commsStatus?.allHeld || commsStatus?.isStale)
+  const dashboardFallbackActive = getSourceState(panelData, 'dashboardSnapshot') === 'fallback-cache'
 
   useEffect(() => {
     fetch(`${API_BASE}/api/public/pad-visibility`)
@@ -568,28 +591,28 @@ export default function HalfmannLiveView() {
   const liveWellPerformance = LIVE_WELL_FLOW_KEYS.map((keys, index) => {
     const wellNumber = index + 1
     const wellLabel = LIVE_WELL_DISPLAY_NAMES[index] ?? String(wellNumber)
-    const actual = getNumericByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, keys)?.value)
+    const actual = getFreshNumericByAddress(panelData, [LIVE_WELL_FLOW_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredFreshDatapoint(panelData, panel, keys)?.value)
     const desiredInfo = getWellSetpointInfo(panelData, panel, wellNumber, perWellTarget)
     const calculatedDesired = getWellCalculatedDesiredFlow(panelData, panel, wellNumber)
     const desired = desiredInfo.value
-    const yesterday = getNumericByAddress(panelData, [LIVE_WELL_YESTERDAY_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredDatapoint(panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
-    const staticPres = getNumericByAddress(panelData, [LIVE_WELL_STATIC_ADDRESSES[index]]) ?? getNumeric(panel, [
+    const yesterday = getFreshNumericByAddress(panelData, [LIVE_WELL_YESTERDAY_ADDRESSES[index]]) ?? parseLiveNumeric(resolvePreferredFreshDatapoint(panelData, panel, LIVE_WELL_YESTERDAY_KEYS[index])?.value)
+    const staticPres = getFreshNumericByAddress(panelData, [LIVE_WELL_STATIC_ADDRESSES[index]]) ?? getFreshNumeric(panelData, panel, [
       `Wellhead #${wellNumber} Injection Static Pressure From Customer PLC`,
       `Well ${wellNumber} Static Pressure`, `Well #${wellNumber} Static Pressure`,
     ])
-    const diffPres = getNumericByAddress(panelData, [LIVE_WELL_DIFF_ADDRESSES[index]]) ?? getNumeric(panel, [
+    const diffPres = getFreshNumericByAddress(panelData, [LIVE_WELL_DIFF_ADDRESSES[index]]) ?? getFreshNumeric(panelData, panel, [
       `Wellhead #${wellNumber} Injection Differential Prs From Customer PLC`,
       `Well ${wellNumber} Differential Pressure`,
     ])
-    const casingPres = getNumericByAddress(panelData, [LIVE_WELL_CASING_ADDRESSES[index]]) ?? getNumeric(panel, [
+    const casingPres = getFreshNumericByAddress(panelData, [LIVE_WELL_CASING_ADDRESSES[index]]) ?? getFreshNumeric(panelData, panel, [
       `Well ${wellNumber} Casing Pressure`, `Well #${wellNumber} Casing Pressure`,
       `Wellhead #${wellNumber} Casing Pressure`,
     ])
-    const tubingPres = getNumericByAddress(panelData, [LIVE_WELL_TUBING_ADDRESSES[index]]) ?? getNumeric(panel, [
+    const tubingPres = getFreshNumericByAddress(panelData, [LIVE_WELL_TUBING_ADDRESSES[index]]) ?? getFreshNumeric(panelData, panel, [
       `Well ${wellNumber} Tubing Pressure`, `Well #${wellNumber} Tubing Pressure`,
       `Wellhead #${wellNumber} Tubing Pressure`,
     ])
-    const oilPriority = getNumericByAddress(panelData, [LIVE_WELL_OIL_PRIORITY_ADDRESSES[index]])
+    const oilPriority = getFreshNumericByAddress(panelData, [LIVE_WELL_OIL_PRIORITY_ADDRESSES[index]])
     const liveInjectionMatchPct = parsePercentNumeric(
       resolveDatapointByAddress(panelData, [PANEL_ADDRESSES.wellLiveInjectionMatchPct[index]])?.value
         ?? resolvePreferredDatapoint(panel, [
@@ -782,6 +805,11 @@ export default function HalfmannLiveView() {
                     : 'border border-[#5d4b12] bg-[#17140a] text-[#fde68a]'
                 }`}>
                   {commsStatus.message}
+                </div>
+              )}
+              {dashboardFallbackActive && (
+                <div className="mb-4 rounded-lg border border-[#8a5b10] bg-[#171107] px-4 py-3 text-[11px] leading-relaxed text-[#fef3c7]">
+                  Murphy dashboard auth is unavailable, so dashboard-only panel values are hidden instead of showing old cached readings. Live values still shown are from the current MLink feed.
                 </div>
               )}
 
