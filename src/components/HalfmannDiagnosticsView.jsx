@@ -1008,6 +1008,8 @@ export default function HalfmannDiagnosticsView() {
         outputTimestamp: outputDatapoint?.timestampIdx != null ? panelData?.timestamps?.[outputDatapoint.timestampIdx] : null,
       }
     })
+    const aoCommandMismatchCount = aoCommandChecks.filter((check) => check.mismatch).length
+    const aoCommandVisibleCount = aoCommandChecks.filter((check) => check.visible).length
     return {
       timestamp: getTimestamp(panelData),
       wells,
