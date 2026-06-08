@@ -1055,9 +1055,6 @@ app.get('/api/halfmann/trending', async (req, res) => {
   try {
     const hours = Number(req.query.hours) > 0 ? Number(req.query.hours) : 24
     const includeFallback = String(req.query.includeFallback || '').toLowerCase() === 'true'
-    const endAt = new Date()
-    const startAt = new Date(endAt.getTime() - hours * 60 * 60 * 1000)
-    const settingsState = loadDerivedTriggerSettingsState().derivedTriggerSettings
     if (HALFMANN_TRENDING_ON_DEMAND_CAPTURE_ENABLED) {
       const nowMs = Date.now()
       if (nowMs - lastHalfmannTrendingOnDemandCaptureAtMs >= HALFMANN_TRENDING_ON_DEMAND_CAPTURE_INTERVAL_MS) {
@@ -1065,6 +1062,9 @@ app.get('/api/halfmann/trending', async (req, res) => {
         await captureHalfmannRuntimeHistory()
       }
     }
+    const endAt = new Date()
+    const startAt = new Date(endAt.getTime() - hours * 60 * 60 * 1000)
+    const settingsState = loadDerivedTriggerSettingsState().derivedTriggerSettings
     const samples = loadHalfmannTrendingHistory({
       startAt,
       endAt,
