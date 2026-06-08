@@ -194,14 +194,15 @@ class PageErrorBoundary extends Component {
 
 function getPage() {
   const path = window.location.pathname.toLowerCase()
+  const hash = window.location.hash.toLowerCase()
   if (path.includes('/admin/alert-rules')) return 'admin-alert-rules'
   if (path.includes('/admin/derived-trigger-settings')) return 'admin-derived-trigger-settings'
   if (path.includes('/admin/login')) return 'admin-login'
-  if (path.includes('performance-report') || path.includes('welllogic-performance-report')) return 'performance-report'
-  if (window.location.hash.includes('trending')) return 'trending'
-  if (window.location.hash.includes('optimization')) return 'optimization'
-  if (window.location.hash.includes('diagnostics')) return 'diagnostics'
-  if (window.location.hash.includes('telemetry')) return 'telemetry'
+  if (path.includes('performance-report') || path.includes('welllogic-performance-report') || hash.includes('performance-report') || hash.includes('welllogic-performance-report')) return 'performance-report'
+  if (hash.includes('trending')) return 'trending'
+  if (hash.includes('optimization')) return 'optimization'
+  if (hash.includes('diagnostics')) return 'diagnostics'
+  if (hash.includes('telemetry')) return 'telemetry'
   return 'live'
 }
 
@@ -299,7 +300,6 @@ function UtilityButton({ children, onClick, active = false }) {
 function AppShell() {
   const [page, setPage] = useState(getPage)
   const [adminAuthenticated, setAdminAuthenticated] = useState(false)
-  const [fullTrendingRequested, setFullTrendingRequested] = useState(() => window.location.search.includes('fullTrending=1'))
   const { panelData, meetingState, liveError, commsStatus } = useHalfmannData()
   const isNarrow = useIsNarrowViewport()
 
@@ -329,7 +329,6 @@ function AppShell() {
   }, [page])
 
   function goTo(p) {
-    if (p !== 'trending') setFullTrendingRequested(false)
     if (p === 'performance-report') {
       window.history.pushState({}, '', '/performance-report')
     } else if (p === 'admin-alert-rules') {
@@ -458,9 +457,7 @@ function AppShell() {
             {page === 'live'
               ? <HalfmannLiveView />
               : page === 'trending'
-                ? fullTrendingRequested
-                  ? <HalfmannTrendingView />
-                  : <HalfmannTrendingSafeView onReturnLive={() => goTo('live')} onOpenFullTrending={() => setFullTrendingRequested(true)} />
+                ? <HalfmannTrendingView />
               : page === 'telemetry'
                 ? <HalfmannTelemetryView />
                 : page === 'diagnostics'

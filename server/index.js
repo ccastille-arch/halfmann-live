@@ -57,6 +57,8 @@ const HALFMANN_HISTORY_CAPTURE_INTERVAL_MS = parseEnvIntervalMs('HALFMANN_HISTOR
 const HALFMANN_HISTORY_CAPTURE_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_HISTORY_CAPTURE_START_DELAY_MS', 60000, 10000)
 const HALFMANN_REPORT_START_DELAY_MS = parseEnvIntervalMs('HALFMANN_REPORT_START_DELAY_MS', 120000, 30000)
 const EXTERNAL_FETCH_TIMEOUT_MS = parseEnvIntervalMs('HALFMANN_EXTERNAL_FETCH_TIMEOUT_MS', 8000, 1000)
+const HALFMANN_TRENDING_ON_DEMAND_CAPTURE_ENABLED = parseEnvFlag('HALFMANN_TRENDING_ON_DEMAND_CAPTURE_ENABLED', true)
+const HALFMANN_TRENDING_ON_DEMAND_CAPTURE_INTERVAL_MS = parseEnvIntervalMs('HALFMANN_TRENDING_ON_DEMAND_CAPTURE_INTERVAL_MS', 15000, 10000)
 
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
@@ -651,6 +653,7 @@ function buildSourceSummary(latestResult, runReportDps, runReportState, runRepor
 
 let halfmannHistoryCaptureInFlight = false
 let halfmannMonthlyReportMaterializeInFlight = false
+let lastHalfmannTrendingOnDemandCaptureAtMs = 0
 
 async function captureHalfmannRuntimeHistory() {
   if (halfmannHistoryCaptureInFlight) return
@@ -1055,6 +1058,13 @@ app.get('/api/halfmann/trending', async (req, res) => {
     const endAt = new Date()
     const startAt = new Date(endAt.getTime() - hours * 60 * 60 * 1000)
     const settingsState = loadDerivedTriggerSettingsState().derivedTriggerSettings
+    if (HALFMANN_TRENDING_ON_DEMAND_CAPTURE_ENABLED) {
+      const nowMs = Date.now()
+      if (nowMs - lastHalfmannTrendingOnDemandCaptureAtMs >= HALFMANN_TRENDING_ON_DEMAND_CAPTURE_INTERVAL_MS) {
+        lastHalfmannTrendingOnDemandCaptureAtMs = nowMs
+        await captureHalfmannRuntimeHistory()
+      }
+    }
     const samples = loadHalfmannTrendingHistory({
       startAt,
       endAt,
